@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linear Attention</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #4facfe, #00f2fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #4facfe; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; }
+.key-point { background: #4facfe0a; border: 1px solid #4facfe22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #4facfe; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #4facfe; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #4facfe; line-height: 2.2; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Linear Attention</h1>
+<p class="subtitle">从 O(N²) 到 O(N) — 用核技巧消除 softmax，实现线性复杂度注意力</p>
+
+<!-- ===== 1. Problem ===== -->
+<h2>1. 标准 Attention 的问题</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0.5 L9,3.5 L0,6.5 Z" fill="#4facfe" stroke="none"/></marker></defs>
+
+  <!-- Standard -->
+  <rect x="50" y="30" width="380" height="150" rx="10" fill="#1e1e2e" stroke="#f5576c33"/>
+  <text x="240" y="55" text-anchor="middle" fill="#f5576c" font-size="12" font-weight="bold">Standard Attention</text>
+  <text x="240" y="90" text-anchor="middle" fill="#a8a8be" font-size="11">QK^T → N×N 矩阵 → O(N²) 时间和空间</text>
+  <text x="240" y="115" text-anchor="middle" fill="#f5576c" font-size="11">N=128K 时: 128K × 128K × 2B ≈ 32GB 单层!</text>
+  <text x="240" y="140" text-anchor="middle" fill="#a8a8be" font-size="10">计算顺序: (Q × K^T) × V — 必须先算 N×N</text>
+  <text x="240" y="165" text-anchor="middle" fill="#c4c4e0" font-size="11">O = softmax(QK^T / √d) · V</text>
+
+  <!-- Linear -->
+  <rect x="470" y="30" width="380" height="150" rx="10" fill="#1e1e2e" stroke="#4facfe33"/>
+  <text x="660" y="55" text-anchor="middle" fill="#4facfe" font-size="12" font-weight="bold">Linear Attention</text>
+  <text x="660" y="90" text-anchor="middle" fill="#a8a8be" font-size="11">先算 K^T·V → d×d 矩阵 → O(N·d²) ≈ O(N)</text>
+  <text x="660" y="115" text-anchor="middle" fill="#4facfe" font-size="11">N=128K 时: 只需 d×d 状态 ≈ 几 MB</text>
+  <text x="660" y="140" text-anchor="middle" fill="#a8a8be" font-size="10">计算顺序: Q × (K^T × V) — 结合律改变顺序</text>
+  <text x="660" y="165" text-anchor="middle" fill="#c4c4e0" font-size="11">O = φ(Q) · (φ(K)^T · V)</text>
+</svg>
+<p class="caption">核心洞察：去掉 softmax 后矩阵乘法满足结合律，可以先算 KᵀV (d×d) 再乘 Q，避免 N×N</p>
+</div>
+
+<div class="formula">
+$\text{Standard: } \mathbf{O} = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right) V \quad \Rightarrow \quad O(N^2)$
+$\text{Linear: } \mathbf{O} = \varphi(Q) \cdot \bigl(\varphi(K)^\top V\bigr) \quad \Rightarrow \quad O(N \cdot d^2)$
+</div>
+
+<!-- ===== 2. Core Idea ===== -->
+<h2>2. 核心推导</h2>
+
+<div style="display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 24px; margin: 24px 0; align-items: start;">
+<div style="min-width:0;">
+
+<h3 style="color:#f5576c; margin-bottom:12px;">Step 1 — Standard Attention (逐 token 输出)</h3>
+<div class="formula">
+$o_i = \sum_{j=1}^{N} \frac{\exp(q_i^\top k_j)}{\sum_{m=1}^{N} \exp(q_i^\top k_m)} \cdot v_j$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:8px 0 4px;">展开形式：对第 \(i\) 个 query，遍历<strong>所有</strong> \(N\) 个 key 算 softmax 权重，再加权求和所有 value。</p>
+<p style="color:#a8a8be; font-size:0.85rem; margin:4px 0 4px;"><strong style="color:#f5576c;">关键观察：</strong>分母 \(\sum_m \exp(q_i^\top k_m)\) 对求和变量 \(j\) 来说是<strong>常数</strong>（它独立遍历所有 \(m\)），可提到 \(\sum_j\) 外面：</p>
+<div class="formula">
+$= \frac{\sum_{j=1}^{N} \exp(q_i^\top k_j) \cdot v_j}{\underbrace{\sum_{m=1}^{N} \exp(q_i^\top k_m)}_{= \sum_{j=1}^{N} \exp(q_i^\top k_j) \text{ (哑变量改名)}}}$
+$= \frac{\sum_j \exp(q_i^\top k_j) \cdot v_j}{\sum_j \exp(q_i^\top k_j)}$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:4px 0 24px;">现在分子和分母是<strong>两个独立的求和</strong>，可以分别做 kernel trick 替换。这一步是从 "softmax 在求和内部" 变为 "分子/分母分离" 的关键。</p>
+
+<h3 style="color:#667eea; margin-bottom:12px;">Step 2 — Kernel Trick (去 softmax 化)</h3>
+<div class="formula">
+$\exp(q_i^\top k_j) \approx \varphi(q_i)^\top \varphi(k_j)$
+$\varphi: \mathbb{R}^d \to \mathbb{R}^D, \quad \text{(非负特征映射)}$
+$\Rightarrow o_i = \frac{\sum_{j=1}^{N} \varphi(q_i)^\top \varphi(k_j) \cdot v_j}{\sum_{j=1}^{N} \varphi(q_i)^\top \varphi(k_j)}$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:8px 0 24px;">Kernel trick：用特征映射 \(\varphi\) 将指数内积分解为两个映射后向量的内积。分子分母已经分离，直接逐项替换即可。此时公式结构不变，但为下一步的结合律创造条件。</p>
+
+<h3 style="color:#4facfe; margin-bottom:12px;">Step 3 — Rearrange (交换求和顺序)</h3>
+<div class="formula">
+$\text{分子} = \sum_{j=1}^{N} \underbrace{\varphi(q_i)^\top \varphi(k_j)}_{\text{标量 (D 维内积)}} \cdot v_j$
+$= \sum_{j=1}^{N} \left( \sum_{m=1}^{D} \varphi(q_i)_m \cdot \varphi(k_j)_m \right) \cdot v_j$
+$\text{交换 } \sum_j \text{ 和 } \sum_m \text{ (有限求和交换律):}$
+$= \sum_{m=1}^{D} \varphi(q_i)_m \cdot \left( \sum_{j=1}^{N} \varphi(k_j)_m \cdot v_j \right)$
+$= \varphi(q_i)^\top \cdot \left[ \sum_{j=1}^{N} \varphi(k_j) \otimes v_j \right]$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:8px 0 4px;">同理分母：</p>
+<div class="formula">
+$\text{分母} = \sum_{j=1}^{N} \varphi(q_i)^\top \varphi(k_j) = \varphi(q_i)^\top \left( \sum_{j=1}^{N} \varphi(k_j) \right)$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:8px 0 24px;">核心：\(\varphi(q_i)\) 对 \(j\) 是常数 → 可以提到 \(\sum_j\) 外面。结果变成 \(\varphi(q_i)^\top\) 乘以一个<strong>与 \(i\) 无关</strong>的累加矩阵。</p>
+
+<h3 style="color:#00f2fe; margin-bottom:12px;">Step 4 — State Matrix (定义全局状态)</h3>
+<div class="formula">
+$S = \sum_{j=1}^{N} \varphi(k_j) \otimes v_j \quad \in \mathbb{R}^{D \times d_v}$
+$z = \sum_{j=1}^{N} \varphi(k_j) \quad \in \mathbb{R}^{D}$
+$o_i = \frac{\varphi(q_i)^\top \cdot S}{\varphi(q_i)^\top \cdot z}$
+</div>
+<p style="color:#a8a8be; font-size:0.85rem; margin:8px 0 4px;">\(S\) 和 \(z\) 只需算一次 (\(O(N \cdot D \cdot d_v)\))，之后每个 \(o_i\) 只需 \(O(D \cdot d_v)\) 查询。总复杂度 \(O(N \cdot D^2)\)，当 \(D \ll N\) 时为线性。</p>
+
+</div>
+<div style="min-width:0; background:#11111a; border:1px solid #1e1e30; border-radius:12px; padding:20px;">
+
+<h3 style="color:#fff; margin-top:0; font-size:1rem;">符号表</h3>
+<table style="font-size:0.82rem; margin:12px 0;">
+<tr><th>符号</th><th>含义</th></tr>
+<tr><td style="color:#f5576c;">\(i\)</td><td>当前要计算输出的 query 位置 (1 到 N)</td></tr>
+<tr><td style="color:#f5576c;">\(j\)</td><td>被 attend 到的 key/value 位置 (遍历 1 到 N)</td></tr>
+<tr><td style="color:#667eea;">\(m\)</td><td>特征映射 \(\varphi\) 输出的维度索引 (1 到 D)</td></tr>
+<tr><td style="color:#4facfe;">\(N\)</td><td>序列长度 (token 总数)</td></tr>
+<tr><td style="color:#4facfe;">\(d\)</td><td>原始 head 维度 (如 64/128)</td></tr>
+<tr><td style="color:#4facfe;">\(D\)</td><td>特征映射后维度 (通常 = d)</td></tr>
+<tr><td style="color:#4facfe;">\(d_v\)</td><td>value 向量维度 (通常 = d)</td></tr>
+</table>
+
+<h3 style="color:#fff; font-size:1rem;">关键量</h3>
+<table style="font-size:0.82rem; margin:12px 0;">
+<tr><th>量</th><th>形状</th><th>说明</th></tr>
+<tr><td>\(q_i, k_j\)</td><td>\(\mathbb{R}^d\)</td><td>第 i/j 个位置的 query/key</td></tr>
+<tr><td>\(v_j\)</td><td>\(\mathbb{R}^{d_v}\)</td><td>第 j 个位置的 value</td></tr>
+<tr><td>\(\varphi(q_i)\)</td><td>\(\mathbb{R}^D\)</td><td>映射后的 query (非负)</td></tr>
+<tr><td>\(S\)</td><td>\(\mathbb{R}^{D \times d_v}\)</td><td>全局状态 (外积累加)</td></tr>
+<tr><td>\(z\)</td><td>\(\mathbb{R}^D\)</td><td>归一化因子</td></tr>
+<tr><td>\(o_i\)</td><td>\(\mathbb{R}^{d_v}\)</td><td>第 i 个位置的输出</td></tr>
+</table>
+
+<h3 style="color:#fff; font-size:1rem;">复杂度对比</h3>
+<table style="font-size:0.82rem; margin:12px 0;">
+<tr><th></th><th>Standard</th><th>Linear</th></tr>
+<tr><td>每个 \(o_i\)</td><td>\(O(N \cdot d)\)</td><td>\(O(D \cdot d_v)\)</td></tr>
+<tr><td>所有 N 个输出</td><td>\(O(N^2 \cdot d)\)</td><td>\(O(N \cdot D^2)\)</td></tr>
+<tr><td>推理 1 token</td><td>\(O(N)\) (KV cache)</td><td>\(O(1)\) (查 S)</td></tr>
+</table>
+
+<div class="key-point" style="margin-top:16px;"><strong>Step 3 为什么成立：</strong><br>
+\(\varphi(q_i)^\top \varphi(k_j)\) 是<strong>标量</strong>，所以 \(\sum_j (\text{scalar}_j) \cdot v_j\) 可以把标量拆开，把跟 \(i\) 无关的部分 (\(\varphi(k_j), v_j\)) 预先累加成矩阵 \(S\)。本质是<strong>矩阵乘法结合律</strong>：先算 \(K^\top V\) 再乘 \(Q\)。</div>
+</div>
+</div>
+
+<!-- ===== 3. RNN View ===== -->
+<h2>3. 递推形式（RNN 视角）</h2>
+
+<div style="display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 24px; margin: 24px 0; align-items: start;">
+<div style="min-width:0;">
+
+<h3 style="color:#667eea; margin-bottom:12px;">RNN 基础结构回顾</h3>
+<p>任何 RNN 都由三个核心概念组成：</p>
+<div class="formula">
+$h_t = f(h_{t-1}, x_t) \quad \text{— 状态更新规则}$
+$y_t = g(h_t) \quad \text{— 输出读取规则}$
+</div>
+
+<table style="font-size:0.85rem; margin:12px 0;">
+<tr><th>RNN 概念</th><th>物理意义</th><th>类比</th></tr>
+<tr><td style="color:#4facfe;"><strong>隐状态 \(h_t\)</strong></td><td>对历史信息的<strong>压缩记忆</strong>，有限容量的"记忆体"</td><td>人脑的工作记忆</td></tr>
+<tr><td style="color:#38d9a9;"><strong>输入 \(x_t\)</strong></td><td>当前时刻新到达的信息</td><td>当前读到的单词</td></tr>
+<tr><td style="color:#667eea;"><strong>更新规则 \(f\)</strong></td><td>如何把新信息<strong>写入</strong>记忆</td><td>决定记住什么</td></tr>
+<tr><td style="color:#00f2fe;"><strong>输出规则 \(g\)</strong></td><td>如何从记忆中<strong>读取</strong>相关信息</td><td>回忆相关内容</td></tr>
+<tr><td style="color:#f5576c;"><strong>容量瓶颈</strong></td><td>\(h_t\) 的大小固定 → 越老的信息越模糊</td><td>记忆遗忘</td></tr>
+</table>
+
+<p>经典 RNN 的隐状态是一个 \(d\) 维向量，容量极小。Linear Attention 的突破在于：<strong>将隐状态升级为 \(d \times d\) 矩阵</strong>，容量从 \(O(d)\) 提升到 \(O(d^2)\)。</p>
+
+<h3 style="color:#4facfe; margin-bottom:12px; margin-top:28px;">Linear Attention 的递推形式</h3>
+<div class="formula">
+$\text{写入 (Write): } S_t = S_{t-1} + \varphi(k_t) \otimes v_t$
+$\text{归一化更新: } z_t = z_{t-1} + \varphi(k_t)$
+$\text{读取 (Read): } o_t = \frac{\varphi(q_t)^\top \cdot S_t}{\varphi(q_t)^\top \cdot z_t}$
+</div>
+
+<p>对比经典 RNN 的 \(h_t = \tanh(W_h h_{t-1} + W_x x_t)\)，Linear Attention 的更新是<strong>纯加法</strong>（无非线性激活、无矩阵乘），这使得：</p>
+<ul style="color:#a8a8be; font-size:0.88rem; padding-left:20px; margin:8px 0;">
+<li>训练时可以<strong>并行</strong>展开（前缀和 / chunk-wise）</li>
+<li>推理时等价为 RNN（逐步更新 \(S_t\)）</li>
+<li>但缺点：纯加法 → 只能累加，不能覆盖旧记忆 (DeltaNet 解决此问题)</li>
+</ul>
+
+<h3 style="color:#00f2fe; margin-bottom:12px; margin-top:28px;">从 Step 4 到递推：因果约束</h3>
+<div class="formula">
+$\text{非因果 (全局): } S = \sum_{j=1}^{N} \varphi(k_j) \otimes v_j \quad \text{(一次性算完)}$
+$\text{因果 (递推): } S_t = \sum_{j=1}^{t} \varphi(k_j) \otimes v_j = S_{t-1} + \varphi(k_t) \otimes v_t$
+</div>
+<p>因果约束要求第 \(t\) 步只看前 \(t\) 个 token，所以 \(S\) 的求和上界从 \(N\) 变为 \(t\) → 自然得到递推更新。</p>
+
+</div>
+<div style="min-width:0; background:#11111a; border:1px solid #1e1e30; border-radius:12px; padding:20px;">
+
+<h3 style="color:#fff; margin-top:0; font-size:1rem;">各量的物理意义</h3>
+<table style="font-size:0.82rem; margin:12px 0;">
+<tr><th>量</th><th>形状</th><th>物理意义</th></tr>
+<tr><td style="color:#4facfe;">\(S_t\)</td><td>\(\mathbb{R}^{D \times d_v}\)</td><td><strong>记忆矩阵</strong> — 存储截至 \(t\) 步的所有 key-value 关联。第 \(m\) 行 = "第 \(m\) 种特征对应的所有 value 加权和"</td></tr>
+<tr><td style="color:#38d9a9;">\(z_t\)</td><td>\(\mathbb{R}^D\)</td><td><strong>访问计数器</strong> — 记录每个特征维度被"写入"了多少次，用于归一化防止输出过大</td></tr>
+<tr><td style="color:#667eea;">\(\varphi(k_t)\)</td><td>\(\mathbb{R}^D\)</td><td><strong>写地址</strong> — 决定当前 value 写入记忆矩阵的哪些"槽位"（哪些行）</td></tr>
+<tr><td style="color:#f7971e;">\(v_t\)</td><td>\(\mathbb{R}^{d_v}\)</td><td><strong>写内容</strong> — 要存入记忆的信息</td></tr>
+<tr><td style="color:#00f2fe;">\(\varphi(q_t)\)</td><td>\(\mathbb{R}^D\)</td><td><strong>读地址</strong> — 决定从记忆矩阵的哪些"槽位"读取信息</td></tr>
+<tr><td style="color:#e599f7;">\(o_t\)</td><td>\(\mathbb{R}^{d_v}\)</td><td><strong>读出结果</strong> — 从记忆中提取出的 value 组合</td></tr>
+</table>
+
+<h3 style="color:#fff; font-size:1rem;">记忆机制类比</h3>
+<div style="background:#1e1e2e; border-radius:8px; padding:14px; margin:12px 0; font-size:0.82rem; color:#c4c4e0;">
+<p style="margin:0 0 8px;"><strong style="color:#667eea;">写操作</strong> \(\varphi(k_t) \otimes v_t\)：</p>
+<p style="margin:0 0 12px; color:#a8a8be;">= "在地址 \(\varphi(k_t)\) 处存入内容 \(v_t\)"<br>外积 = 将 \(v_t\) 广播写入到 \(\varphi(k_t)\) 指定的所有行</p>
+<p style="margin:0 0 8px;"><strong style="color:#00f2fe;">读操作</strong> \(\varphi(q_t)^\top S_t\)：</p>
+<p style="margin:0 0 12px; color:#a8a8be;">= "用地址 \(\varphi(q_t)\) 查询记忆"<br>内积 = 按 \(\varphi(q_t)\) 的权重加权所有行</p>
+<p style="margin:0 0 8px;"><strong style="color:#f5576c;">核心限制</strong>：</p>
+<p style="margin:0; color:#a8a8be;">写操作只能 += (累加)，不能覆盖<br>→ 记忆只增不删 → 老信息永不消失但被稀释<br>→ GLA 加衰减门控, DeltaNet 加擦除</p>
+</div>
+
+<h3 style="color:#fff; font-size:1rem;">与经典 RNN 对比</h3>
+<table style="font-size:0.82rem; margin:12px 0;">
+<tr><th></th><th>经典 RNN</th><th>Linear Attn</th></tr>
+<tr><td>状态</td><td>\(h \in \mathbb{R}^d\)</td><td>\(S \in \mathbb{R}^{d \times d}\)</td></tr>
+<tr><td>容量</td><td>\(O(d)\)</td><td>\(O(d^2)\)</td></tr>
+<tr><td>更新</td><td>非线性 (tanh)</td><td>线性 (加法)</td></tr>
+<tr><td>训练并行</td><td>不可</td><td>可 (前缀和)</td></tr>
+<tr><td>梯度消失</td><td>严重</td><td>无 (线性链)</td></tr>
+<tr><td>遗忘机制</td><td>LSTM gate</td><td>无 (需要 GLA)</td></tr>
+</table>
+
+<div class="key-point" style="margin-top:16px;"><strong>为什么是 "线性" RNN：</strong><br>
+更新规则 \(S_t = S_{t-1} + \varphi(k_t) \otimes v_t\) 对 \(S_{t-1}\) 是<strong>线性变换</strong>（系数为 1 的恒等映射 + 加法）。这使得整条链可以用前缀和 (cumsum) 并行计算，不像经典 RNN 那样必须串行展开。</div>
+</div>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0.5 L9,3.5 L0,6.5 Z" fill="#4facfe" stroke="none"/></marker>
+    <marker id="arr-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0.5 L9,3.5 L0,6.5 Z" fill="#00f2fe" stroke="none"/></marker>
+    <marker id="arr-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0.5 L9,3.5 L0,6.5 Z" fill="#38d9a9" stroke="none"/></marker>
+  </defs>
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">Linear Attention RNN 展开 — 写入 / 更新 / 读取</text>
+
+  <!-- Time step t-1 state -->
+  <rect x="30" y="55" width="100" height="55" rx="6" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="80" y="75" text-anchor="middle" fill="#4facfe" font-size="11" font-weight="bold">S_{t-1}</text>
+  <text x="80" y="95" text-anchor="middle" fill="#a8a8be" font-size="8">D×d_v 记忆矩阵</text>
+
+  <!-- Arrow -->
+  <path d="M 130 82 L 172 82" stroke="#4facfe" stroke-width="2" fill="none" marker-end="url(#arr-blue)"/>
+
+  <!-- Write operation box -->
+  <rect x="185" y="35" width="230" height="95" rx="6" fill="#1e1e2e" stroke="#667eea"/>
+  <text x="300" y="55" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">Write (写入新记忆)</text>
+  <text x="300" y="76" text-anchor="middle" fill="#e0e0ea" font-size="10">S_t = S_{t-1} + φ(k_t) ⊗ v_t</text>
+  <text x="300" y="94" text-anchor="middle" fill="#a8a8be" font-size="8">写地址 = φ(k_t) ∈ R^D</text>
+  <text x="300" y="108" text-anchor="middle" fill="#a8a8be" font-size="8">写内容 = v_t ∈ R^{d_v}</text>
+  <text x="300" y="122" text-anchor="middle" fill="#a8a8be" font-size="8">z_t = z_{t-1} + φ(k_t)</text>
+
+  <!-- Arrow -->
+  <path d="M 415 82 L 457 82" stroke="#4facfe" stroke-width="2" fill="none" marker-end="url(#arr-blue)"/>
+
+  <!-- New state -->
+  <rect x="470" y="55" width="100" height="55" rx="6" fill="#4facfe33" stroke="#4facfe"/>
+  <text x="520" y="75" text-anchor="middle" fill="#4facfe" font-size="11" font-weight="bold">S_t</text>
+  <text x="520" y="95" text-anchor="middle" fill="#a8a8be" font-size="8">更新后记忆</text>
+
+  <!-- Arrow down to read -->
+  <path d="M 520 110 L 520 138" stroke="#00f2fe" stroke-width="1.5" fill="none" marker-end="url(#arr-cyan)"/>
+
+  <!-- Read operation box -->
+  <rect x="445" y="150" width="150" height="60" rx="6" fill="#00f2fe11" stroke="#00f2fe"/>
+  <text x="520" y="170" text-anchor="middle" fill="#00f2fe" font-size="10" font-weight="bold">Read (读取输出)</text>
+  <text x="520" y="188" text-anchor="middle" fill="#e0e0ea" font-size="9">o_t = φ(q_t)ᵀ · S_t / φ(q_t)ᵀ · z_t</text>
+  <text x="520" y="204" text-anchor="middle" fill="#a8a8be" font-size="8">读地址 = φ(q_t) ∈ R^D</text>
+
+  <!-- Input token feeding into Write -->
+  <rect x="235" y="155" width="130" height="40" rx="4" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="300" y="173" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">Input: token x_t</text>
+  <text x="300" y="189" text-anchor="middle" fill="#a8a8be" font-size="8">线性投影 → q_t, k_t, v_t</text>
+  <path d="M 300 155 L 300 137" stroke="#38d9a9" stroke-width="1" stroke-dasharray="3" fill="none" marker-end="url(#arr-green)"/>
+
+  <!-- Loop arrow (S_t feeds back as S_{t+1-1}) -->
+  <path d="M 570 82 L 610 82 L 610 235 L 80 235 L 80 122" stroke="#4facfe" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#arr-blue)"/>
+  <text x="345" y="245" text-anchor="middle" fill="#4facfe" font-size="8">下一步: S_t 成为新的 S_{t-1} (循环)</text>
+
+  <!-- Annotations box -->
+  <rect x="650" y="40" width="230" height="170" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="765" y="62" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">每步计算开销</text>
+  <text x="670" y="84" fill="#667eea" font-size="9">Write: O(D · d_v) 外积加法</text>
+  <text x="670" y="104" fill="#00f2fe" font-size="9">Read:  O(D · d_v) 向量乘矩阵</text>
+  <text x="670" y="124" fill="#4facfe" font-size="9">总计: O(d²) per token — 恒定!</text>
+  <text x="670" y="152" fill="#a8a8be" font-size="9">对比 Transformer 推理:</text>
+  <text x="670" y="170" fill="#f5576c" font-size="9">KV cache 查询: O(N·d) 且随 N 增长</text>
+  <text x="670" y="188" fill="#38d9a9" font-size="9">Linear RNN: O(d²) 固定, 不随 N 变</text>
+  <text x="670" y="206" fill="#a8a8be" font-size="8">→ 推理无需 KV cache!</text>
+</svg>
+<p class="caption">每个 token 到达时：(1) 输入产生 q,k,v → (2) 用 k,v 写入记忆 S → (3) 用 q 读取输出 o → (4) S 传递到下一步（循环）</p>
+</div>
+
+<!-- ===== 4. Code ===== -->
+<h2>4. 实现代码</h2>
+
+<pre><span class="kw">import</span> torch
+<span class="kw">import</span> torch.nn.functional <span class="kw">as</span> F
+
+<span class="kw">def</span> <span class="fn">phi</span>(x):
+    <span class="cm">"""Feature map: 1 + elu ensures non-negative (causal-compatible)"""</span>
+    <span class="kw">return</span> <span class="num">1</span> + F.elu(x)
+
+<span class="kw">def</span> <span class="fn">linear_attention_parallel</span>(q, k, v):
+    <span class="cm">"""Parallel mode — for training (processes full sequence at once)"""</span>
+    q, k = phi(q), phi(k)              <span class="cm"># [B, H, N, d]</span>
+    kv = torch.einsum(<span class="st">'bhnd,bhnm->bhdm'</span>, k, v)  <span class="cm"># S = K^T V: [B,H,d,d]</span>
+    z = k.sum(dim=<span class="num">2</span>)                    <span class="cm"># normalizer: [B,H,d]</span>
+    out = torch.einsum(<span class="st">'bhnd,bhdm->bhnm'</span>, q, kv)  <span class="cm"># Q·S</span>
+    out = out / torch.einsum(<span class="st">'bhnd,bhd->bhn'</span>, q, z).unsqueeze(-<span class="num">1</span>)
+    <span class="kw">return</span> out
+
+<span class="kw">def</span> <span class="fn">linear_attention_recurrent</span>(q, k, v):
+    <span class="cm">"""Recurrent mode — for inference (O(1) per token, no KV cache)"""</span>
+    B, H, N, d = q.shape
+    q, k = phi(q), phi(k)
+    S = torch.zeros(B, H, d, d, device=q.device)  <span class="cm"># state matrix</span>
+    z = torch.zeros(B, H, d, device=q.device)      <span class="cm"># normalizer</span>
+    outputs = []
+    <span class="kw">for</span> t <span class="kw">in</span> range(N):
+        S = S + torch.einsum(<span class="st">'bhd,bhm->bhdm'</span>, k[:,:,t], v[:,:,t])
+        z = z + k[:,:,t]
+        o_t = torch.einsum(<span class="st">'bhd,bhdm->bhm'</span>, q[:,:,t], S)
+        o_t = o_t / torch.einsum(<span class="st">'bhd,bhd->bh'</span>, q[:,:,t], z).unsqueeze(-<span class="num">1</span>)
+        outputs.append(o_t)
+    <span class="kw">return</span> torch.stack(outputs, dim=<span class="num">2</span>)</pre>
+
+<div class="key-point"><strong>双模式：</strong>训练用 parallel 模式（矩阵乘，GPU 友好）；推理用 recurrent 模式（O(1) per token，无需 KV cache，恒定显存）。</div>
+
+<!-- ===== 5. Causal Masking ===== -->
+<h2>5. Causal Linear Attention</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Standard causal -->
+  <rect x="50" y="20" width="380" height="160" rx="10" fill="#1e1e2e" stroke="#f5576c33"/>
+  <text x="240" y="45" text-anchor="middle" fill="#f5576c" font-size="11" font-weight="bold">Standard Causal: cumsum trick</text>
+  <text x="240" y="75" text-anchor="middle" fill="#c4c4e0" font-size="10">S_t = Σ_{j≤t} φ(k_j)⊗v_j (只看过去)</text>
+  <text x="240" y="100" text-anchor="middle" fill="#c4c4e0" font-size="10">递推: S_t = S_{t-1} + φ(k_t) ⊗ v_t</text>
+  <text x="240" y="125" text-anchor="middle" fill="#a8a8be" font-size="10">训练时用 cumsum 并行化</text>
+  <text x="240" y="150" text-anchor="middle" fill="#f5576c" font-size="10">问题: cumsum 在 GPU 上效率低</text>
+  <text x="240" y="170" text-anchor="middle" fill="#a8a8be" font-size="10">→ 引出 chunk-wise 并行</text>
+
+  <!-- Chunk-wise -->
+  <rect x="470" y="20" width="380" height="160" rx="10" fill="#1e1e2e" stroke="#4facfe33"/>
+  <text x="660" y="45" text-anchor="middle" fill="#4facfe" font-size="11" font-weight="bold">Chunk-wise Parallel (实际使用)</text>
+  <text x="660" y="75" text-anchor="middle" fill="#e0e0ea" font-size="11">将序列分为 chunks (如 C=64)</text>
+  <text x="660" y="100" text-anchor="middle" fill="#c4c4e0" font-size="10">chunk 内: 用标准 QK^T attention (小矩阵)</text>
+  <text x="660" y="125" text-anchor="middle" fill="#c4c4e0" font-size="10">chunk 间: 用递推状态传递 S</text>
+  <text x="660" y="150" text-anchor="middle" fill="#4facfe" font-size="10">兼顾 GPU 并行性 + 线性复杂度</text>
+  <text x="660" y="170" text-anchor="middle" fill="#a8a8be" font-size="10">GLA, Mamba-2, Lightning Attention 均采用</text>
+</svg>
+<p class="caption">Causal 场景下，chunk-wise 方法是实际标准：chunk 内用 quadratic attention 保持 GPU 效率，chunk 间用线性递推</p>
+</div>
+
+<div class="formula">
+$\text{Causal: } S_t = \sum_{j \leq t} \varphi(k_j) \otimes v_j \quad \text{(只看过去)}$
+$\text{Chunk-wise: } S_{\text{chunk}} = S_{\text{prev}} + \sum_{j \in \text{chunk}} \varphi(k_j) \otimes v_j$
+$\text{Chunk 内用 } O(C^2) \text{ 标准 attention}, \quad \text{Chunk 间传递 } O(d^2) \text{ 状态}$
+</div>
+
+<!-- ===== 6. Models ===== -->
+<h2>6. 代表模型</h2>
+
+<table>
+<thead><tr><th>模型</th><th>年份</th><th>核心设计</th><th>特点</th></tr></thead>
+<tbody>
+<tr><td><strong>Linear Transformer</strong></td><td>2020</td><td>\(\varphi(x) = \text{elu}(x)+1\)</td><td>最早的 linear attention，质量差距大</td></tr>
+<tr><td><strong>RWKV</strong></td><td>2023</td><td>时间衰减 + channel mixing</td><td>纯 RNN 形式，无 attention 矩阵</td></tr>
+<tr><td><strong>RetNet</strong></td><td>2023</td><td>多尺度指数衰减 \(\gamma\)</td><td>parallel/recurrent/chunk 三模式</td></tr>
+<tr><td><strong>Mamba (S6)</strong></td><td>2023</td><td>选择性状态空间 (SSM)</td><td>输入依赖的衰减，硬件感知 scan</td></tr>
+<tr><td><strong>GLA</strong></td><td>2024</td><td>Gated Linear Attention</td><td>数据依赖的门控衰减 + chunk-wise</td></tr>
+<tr><td><strong>Mamba-2</strong></td><td>2024</td><td>SSD = structured SSM = linear attn</td><td>证明 SSM ≡ linear attention + 衰减</td></tr>
+<tr><td><strong>DeltaNet</strong></td><td>2024</td><td>Delta rule 更新状态</td><td>\(S_t = S_{t-1} - \beta(S \cdot \varphi(k))\otimes\varphi(k) + \varphi(k)\otimes v\)</td></tr>
+<tr><td><strong>Based</strong></td><td>2024</td><td>Taylor exp 特征映射</td><td>\(\varphi(x) = [1,\; x,\; x \otimes x / \sqrt{2}]\) 二阶近似</td></tr>
+<tr><td><strong>HGRN-2 / Griffin</strong></td><td>2024</td><td>Linear attn + local sliding window</td><td>混合架构：全局线性 + 局部精确</td></tr>
+</tbody>
+</table>
+
+<div class="formula">
+$\text{DeltaNet: } S_t = S_{t-1} - \beta \cdot (S_{t-1} \cdot \varphi(k_t)) \otimes \varphi(k_t) + \varphi(k_t) \otimes v_t$
+$\text{Based: } \varphi(x) = \left[1,\; x,\; \frac{x \otimes x}{\sqrt{2}}\right] \quad \text{(二阶 Taylor 展开近似 } e^{q \cdot k}\text{)}$
+$\text{RetNet: } S_t = \gamma \cdot S_{t-1} + k_t \otimes v_t, \quad \gamma \in (0,1) \text{ 指数衰减遗忘}$
+</div>
+
+<!-- ===== 7. Tradeoffs ===== -->
+<h2>7. 优劣对比</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 250" xmlns="http://www.w3.org/2000/svg">
+  <!-- Softmax Attention -->
+  <rect x="50" y="20" width="380" height="210" rx="10" fill="#1e1e2e" stroke="#f093fb33"/>
+  <text x="240" y="48" text-anchor="middle" fill="#f093fb" font-size="12" font-weight="bold">Softmax Attention</text>
+  <text x="240" y="75" fill="#8b8b9e" font-size="10">✓ 表达力最强（任意注意力模式）</text>
+  <text x="240" y="95" fill="#8b8b9e" font-size="10">✓ 训练质量最高（scaling law 验证）</text>
+  <text x="240" y="115" fill="#8b8b9e" font-size="10">✓ 生态成熟（FlashAttention 优化）</text>
+  <text x="240" y="145" fill="#555" font-size="10">✗ 训练 O(N²)，推理需 KV cache</text>
+  <text x="240" y="165" fill="#555" font-size="10">✗ KV cache 随序列线性增长</text>
+  <text x="240" y="185" fill="#555" font-size="10">✗ 长序列推理吞吐受限于显存</text>
+  <text x="240" y="215" fill="#f093fb" font-size="10">适合: 质量优先、序列 ≤128K</text>
+
+  <!-- Linear Attention -->
+  <rect x="470" y="20" width="380" height="210" rx="10" fill="#1e1e2e" stroke="#4facfe33"/>
+  <text x="660" y="48" text-anchor="middle" fill="#4facfe" font-size="12" font-weight="bold">Linear Attention / SSM</text>
+  <text x="660" y="75" fill="#8b8b9e" font-size="10">✓ 训练 O(N)，推理 O(1) per token</text>
+  <text x="660" y="95" fill="#8b8b9e" font-size="10">✓ 恒定显存推理（无 KV cache）</text>
+  <text x="660" y="115" fill="#8b8b9e" font-size="10">✓ 超长序列友好（1M+ tokens）</text>
+  <text x="660" y="145" fill="#555" font-size="10">✗ 有限状态 d×d 压缩信息有损</text>
+  <text x="660" y="165" fill="#555" font-size="10">✗ recall 能力弱（精确检索差）</text>
+  <text x="660" y="185" fill="#555" font-size="10">✗ 短序列下不比 FlashAttn 快</text>
+  <text x="660" y="215" fill="#4facfe" font-size="10">适合: 吞吐优先、超长序列、端侧部署</text>
+</svg>
+<p class="caption">核心 tradeoff：softmax attention 用 O(N) 显存换精确 recall；linear attention 用 O(d²) 固定状态换线性复杂度</p>
+</div>
+
+<div class="formula">
+$\text{Softmax Attention — 训练: } O(N^2 d), \quad \text{推理 KV cache: } O(N \cdot d)$
+$\text{Linear Attention — 训练: } O(N d^2), \quad \text{推理状态: } O(d^2) \text{ (恒定)}$
+$\text{当 } d \ll N \text{ 时 (如 } d{=}128,\; N{=}128\text{K)}: \quad N d^2 \ll N^2 d$
+</div>
+
+<div class="key-point"><strong>2025-2026 趋势：</strong>混合架构成为主流 — 大部分层用 linear attention/SSM 处理长距离依赖，少数层（如每 4-8 层）插入 softmax attention 保证精确 recall。代表：Jamba (Mamba+Attention)、Zamba、Griffin、NVIDIA Hymba。</div>
+
+<footer><p>Generated 2026.05.27</p></footer>
+</div>
+</body>
+</html>

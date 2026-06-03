@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unified-IO 2 — Any-to-Any Multimodal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #00f2fe, #4facfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #00f2fe; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #00f2fe0a; border: 1px solid #00f2fe22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #00f2fe; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #00f2fe; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #00f2fe; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Unified-IO 2 — Any-to-Any Multimodal</h1>
+<p class="subtitle">AI2 / Allen Institute | Encoder-Decoder | 7+ Modalities | Image, Text, Audio, Video, 3D, Actions | Single Weights for All Tasks</p>
+
+<!-- ===== 1. Core Idea ===== -->
+<h2>1. 核心理念 — Any-to-Any 统一 I/O</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Unified-IO 2: Any-to-Any Architecture</span>
+<span class="cm"># 核心: 所有模态 → 离散 token → 单一 Encoder-Decoder</span>
+
+<span class="cm"># 支持的输入模态</span>
+input_modalities = [
+    <span class="st">"image"</span>,       <span class="cm"># 自然图像</span>
+    <span class="st">"text"</span>,        <span class="cm"># 自然语言</span>
+    <span class="st">"audio"</span>,       <span class="cm"># 语音/声音</span>
+    <span class="st">"video"</span>,       <span class="cm"># 视频帧序列</span>
+    <span class="st">"3d_mesh"</span>,     <span class="cm"># 3D 点云/网格</span>
+    <span class="st">"actions"</span>,     <span class="cm"># 机器人动作</span>
+    <span class="st">"depth"</span>,       <span class="cm"># 深度图</span>
+]
+
+<span class="cm"># 支持的输出模态</span>
+output_modalities = [
+    <span class="st">"text"</span>,           <span class="cm"># 文本回答</span>
+    <span class="st">"image"</span>,          <span class="cm"># 图像生成</span>
+    <span class="st">"audio"</span>,          <span class="cm"># 音频生成</span>
+    <span class="st">"segmentation"</span>,   <span class="cm"># 语义分割</span>
+    <span class="st">"depth"</span>,          <span class="cm"># 深度估计</span>
+    <span class="st">"surface_normal"</span>, <span class="cm"># 法线估计</span>
+    <span class="st">"keypoints"</span>,      <span class="cm"># 关键点检测</span>
+    <span class="st">"actions"</span>,        <span class="cm"># 动作预测</span>
+]
+
+<span class="cm"># 架构: T5-style Encoder-Decoder</span>
+<span class="kw">class</span> <span class="fn">UnifiedIO2</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, n_layers):
+        <span class="cm"># 模态特定 tokenizer (frozen)</span>
+        self.tokenizers = {
+            <span class="st">"image"</span>: VQGANTokenizer(codebook=<span class="num">16384</span>),
+            <span class="st">"audio"</span>: AudioVQGAN(codebook=<span class="num">16384</span>),
+            <span class="st">"video"</span>: PerFrameVQGAN(codebook=<span class="num">16384</span>),
+            <span class="st">"3d"</span>:    PointCloudQuantizer(codebook=<span class="num">16384</span>),
+        }
+        <span class="cm"># 单一 Encoder-Decoder Transformer</span>
+        self.encoder = TransformerEncoder(
+            layers=n_layers, d_model=d_model
+        )
+        self.decoder = TransformerDecoder(
+            layers=n_layers, d_model=d_model
+        )
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, input_tokens, target_tokens):
+        <span class="cm"># input: 任意模态组合的 tokens</span>
+        enc_out = self.encoder(input_tokens)
+        <span class="cm"># decoder: 生成任意模态的 tokens</span>
+        logits = self.decoder(target_tokens, enc_out)
+        <span class="kw">return</span> logits
+        <span class="cm"># seq2seq loss 统一所有任务!</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#00f2fe"/></marker>
+    <marker id="ar1w" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#e0e0ea"/></marker>
+  </defs>
+
+  <text x="200" y="18" text-anchor="middle" fill="#00f2fe" font-size="9" font-weight="bold">Unified-IO 2: Star Topology — Any-to-Any</text>
+
+  <!-- Input modalities (left side, star pattern) -->
+  <rect x="5" y="290" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="32" y="304" text-anchor="middle" fill="#4facfe" font-size="6">Image</text>
+
+  <rect x="5" y="320" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="32" y="334" text-anchor="middle" fill="#98c379" font-size="6">Text</text>
+
+  <rect x="5" y="350" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="32" y="364" text-anchor="middle" fill="#e599f7" font-size="6">Audio</text>
+
+  <rect x="5" y="380" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#ffd200"/>
+  <text x="32" y="394" text-anchor="middle" fill="#ffd200" font-size="6">Video</text>
+
+  <rect x="70" y="395" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#ff6b6b"/>
+  <text x="97" y="409" text-anchor="middle" fill="#ff6b6b" font-size="6">3D Mesh</text>
+
+  <rect x="135" y="395" width="55" height="22" rx="4" fill="#1e1e2e" stroke="#f7971e"/>
+  <text x="162" y="409" text-anchor="middle" fill="#f7971e" font-size="6">Actions</text>
+
+  <!-- Tokenizers block -->
+  <rect x="75" y="290" width="95" height="95" rx="8" fill="#16162a" stroke="#00f2fe44"/>
+  <text x="122" y="310" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Modality</text>
+  <text x="122" y="323" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Tokenizers</text>
+  <text x="122" y="340" text-anchor="middle" fill="#a8a8be" font-size="5">VQGAN (image)</text>
+  <text x="122" y="353" text-anchor="middle" fill="#a8a8be" font-size="5">Spec+VQGAN (audio)</text>
+  <text x="122" y="366" text-anchor="middle" fill="#a8a8be" font-size="5">Frame VQGAN (video)</text>
+  <text x="122" y="379" text-anchor="middle" fill="#a8a8be" font-size="5">Quantizer (3D/actions)</text>
+
+  <!-- Arrows from inputs to tokenizers -->
+  <path d="M 60 301 L 75 310" stroke="#4facfe" stroke-width="0.8" marker-end="url(#ar1)"/>
+  <path d="M 60 331 L 75 330" stroke="#98c379" stroke-width="0.8" marker-end="url(#ar1)"/>
+  <path d="M 60 361 L 75 350" stroke="#e599f7" stroke-width="0.8" marker-end="url(#ar1)"/>
+  <path d="M 60 391 L 75 370" stroke="#ffd200" stroke-width="0.8" marker-end="url(#ar1)"/>
+  <path d="M 97 395 L 110 385" stroke="#ff6b6b" stroke-width="0.8" marker-end="url(#ar1)"/>
+  <path d="M 162 395 L 145 385" stroke="#f7971e" stroke-width="0.8" marker-end="url(#ar1)"/>
+
+  <!-- Arrow from tokenizers to unified tokens -->
+  <path d="M 122 290 L 200 265" stroke="#00f2fe" stroke-width="1.2" marker-end="url(#ar1)"/>
+
+  <!-- Unified token sequence -->
+  <rect x="100" y="240" width="200" height="24" rx="5" fill="#00f2fe11" stroke="#00f2fe66"/>
+  <text x="200" y="255" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Unified Discrete Tokens [0..16384]</text>
+
+  <!-- Arrow to encoder -->
+  <path d="M 200 240 L 200 218" stroke="#00f2fe" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+  <!-- Encoder block -->
+  <rect x="80" y="150" width="240" height="66" rx="8" fill="#1e1e2e" stroke="#00f2fe"/>
+  <text x="200" y="170" text-anchor="middle" fill="#00f2fe" font-size="9" font-weight="bold">Encoder-Decoder Transformer</text>
+  <text x="200" y="186" text-anchor="middle" fill="#a8a8be" font-size="6">Single set of weights for ALL modalities</text>
+  <text x="200" y="200" text-anchor="middle" fill="#a8a8be" font-size="6">No modality-specific heads or adapters</text>
+  <text x="200" y="212" text-anchor="middle" fill="#6b6b80" font-size="5">1B / 3B / 7B parameters (T5-style)</text>
+
+  <!-- Arrow to output -->
+  <path d="M 200 150 L 200 130" stroke="#00f2fe" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+  <!-- Output modalities -->
+  <rect x="80" y="90" width="240" height="38" rx="6" fill="#00f2fe11" stroke="#00f2fe44"/>
+  <text x="200" y="107" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Any Output Modality</text>
+  <text x="200" y="122" text-anchor="middle" fill="#a8a8be" font-size="5">Text | Image | Audio | Segmentation | Depth | Normals | Keypoints | Actions</text>
+
+  <!-- Output modality boxes (top) -->
+  <rect x="30" y="40" width="50" height="20" rx="3" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="55" y="53" text-anchor="middle" fill="#98c379" font-size="5">Text</text>
+
+  <rect x="90" y="40" width="50" height="20" rx="3" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="115" y="53" text-anchor="middle" fill="#4facfe" font-size="5">Image</text>
+
+  <rect x="150" y="40" width="50" height="20" rx="3" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="175" y="53" text-anchor="middle" fill="#e599f7" font-size="5">Audio</text>
+
+  <rect x="210" y="40" width="55" height="20" rx="3" fill="#1e1e2e" stroke="#ffd200"/>
+  <text x="237" y="53" text-anchor="middle" fill="#ffd200" font-size="5">Segment</text>
+
+  <rect x="275" y="40" width="50" height="20" rx="3" fill="#1e1e2e" stroke="#ff6b6b"/>
+  <text x="300" y="53" text-anchor="middle" fill="#ff6b6b" font-size="5">Depth</text>
+
+  <rect x="335" y="40" width="55" height="20" rx="3" fill="#1e1e2e" stroke="#f7971e"/>
+  <text x="362" y="53" text-anchor="middle" fill="#f7971e" font-size="5">Normals</text>
+
+  <!-- Arrows from output bar to individual outputs -->
+  <path d="M 130 90 L 55 60" stroke="#98c379" stroke-width="0.7"/>
+  <path d="M 150 90 L 115 60" stroke="#4facfe" stroke-width="0.7"/>
+  <path d="M 175 90 L 175 60" stroke="#e599f7" stroke-width="0.7"/>
+  <path d="M 220 90 L 237 60" stroke="#ffd200" stroke-width="0.7"/>
+  <path d="M 260 90 L 300 60" stroke="#ff6b6b" stroke-width="0.7"/>
+  <path d="M 290 90 L 362 60" stroke="#f7971e" stroke-width="0.7"/>
+
+  <!-- Key label -->
+  <rect x="260" y="295" width="130" height="45" rx="6" fill="#11111a" stroke="#00f2fe33"/>
+  <text x="325" y="312" text-anchor="middle" fill="#00f2fe" font-size="6" font-weight="bold">Key Difference</text>
+  <text x="325" y="326" text-anchor="middle" fill="#a8a8be" font-size="5">Most models: 2-3 modalities</text>
+  <text x="325" y="338" text-anchor="middle" fill="#00f2fe" font-size="5">UIO-2: 7+ modalities!</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Any-to-Any 统一架构</h3>
+<p><strong>核心洞察:</strong> 大多数"全能"模型实际只处理 2-3 种模态 (通常是 text + image)。Unified-IO 2 处理 7+ 种模态，包括非常规的 3D 网格、机器人动作、深度图、表面法线等。</p>
+<h3>与其他模型对比</h3>
+<table>
+<tr><th>模型</th><th>输入模态</th><th>输出模态</th></tr>
+<tr><td>LLaVA</td><td>Image + Text</td><td>Text only</td></tr>
+<tr><td>Chameleon</td><td>Image + Text</td><td>Image + Text</td></tr>
+<tr><td>Gemini</td><td>I/T/A/V</td><td>Text (+ Image)</td></tr>
+<tr><td><strong>UIO-2</strong></td><td><strong>7+ modalities</strong></td><td><strong>7+ modalities</strong></td></tr>
+</table>
+<h3>设计原则</h3>
+<p>1. <strong>单一权重</strong> — 所有任务共享同一个 Encoder-Decoder，无模态特定 head</p>
+<p>2. <strong>离散化统一</strong> — 所有非文本模态通过 VQGAN 类 tokenizer 转为离散 token</p>
+<p>3. <strong>Seq2Seq 范式</strong> — 输入 = prompted multimodal tokens，输出 = target multimodal tokens</p>
+<div class="formula">
+$\mathcal{L} = -\sum_{t=1}^{T} \log P(y_t \mid y_{\lt t}, \text{enc}(x))$
+</div>
+<p>标准 encoder-decoder seq2seq loss 统一覆盖所有模态的所有任务。</p>
+</div>
+</div>
+
+<!-- ===== 2. Modality Tokenizers ===== -->
+<h2>2. 模态 Tokenizer 设计</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Unified-IO 2: Modality Tokenizers</span>
+<span class="cm"># 关键: 所有模态共享同一个 codebook (16384 entries)</span>
+
+<span class="cm"># === Image Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">ImageTokenizer</span>:
+    <span class="cm"># VQGAN with 16384 codebook entries</span>
+    <span class="cm"># Input: [B, 3, 256, 256]</span>
+    <span class="cm"># Output: [B, 1024] discrete tokens (32x32 grid)</span>
+    codebook_size = <span class="num">16384</span>
+    spatial_grid = <span class="num">32</span> * <span class="num">32</span>  <span class="cm"># = 1024 tokens</span>
+
+<span class="cm"># === Audio Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">AudioTokenizer</span>:
+    <span class="cm"># Step 1: Audio → Mel Spectrogram</span>
+    <span class="cm"># Step 2: Spectrogram → VQGAN → tokens</span>
+    <span class="cm"># Treats spectrogram as a 2D "image"</span>
+    codebook_size = <span class="num">16384</span>  <span class="cm"># shared!</span>
+    <span class="cm"># Output: variable-length tokens</span>
+
+<span class="cm"># === Video Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">VideoTokenizer</span>:
+    <span class="cm"># Per-frame VQGAN tokenization</span>
+    <span class="cm"># Each frame → 1024 tokens</span>
+    <span class="cm"># 8 frames → 8192 tokens total</span>
+    codebook_size = <span class="num">16384</span>  <span class="cm"># shared!</span>
+    tokens_per_frame = <span class="num">1024</span>
+    num_frames = <span class="num">8</span>
+
+<span class="cm"># === Depth/Normal Map Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">DepthTokenizer</span>:
+    <span class="cm"># Normalize depth to [0, 1] range</span>
+    <span class="cm"># Treat as single-channel "image"</span>
+    <span class="cm"># Apply same VQGAN pipeline</span>
+    codebook_size = <span class="num">16384</span>  <span class="cm"># shared!</span>
+
+<span class="cm"># === 3D Point Cloud Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">PointCloudTokenizer</span>:
+    <span class="cm"># Voxelize 3D space into grid</span>
+    <span class="cm"># Quantize occupancy → discrete tokens</span>
+    <span class="cm"># Map to shared codebook range</span>
+    codebook_size = <span class="num">16384</span>  <span class="cm"># shared!</span>
+
+<span class="cm"># === Action Tokenizer ===</span>
+<span class="kw">class</span> <span class="fn">ActionTokenizer</span>:
+    <span class="cm"># Robot actions: continuous → discrete</span>
+    <span class="cm"># Each DOF discretized into bins</span>
+    <span class="cm"># [x, y, z, rx, ry, rz, grip]</span>
+    <span class="cm"># → 7 discrete token ids in [0, 16384]</span>
+    bins_per_dim = <span class="num">256</span>
+    codebook_size = <span class="num">16384</span>  <span class="cm"># shared!</span>
+
+<span class="cm"># === 统一 Vocabulary ===</span>
+<span class="cm"># Total vocab = text_vocab + shared_codebook</span>
+text_vocab = <span class="num">32128</span>   <span class="cm"># SentencePiece (T5)</span>
+modality_vocab = <span class="num">16384</span>  <span class="cm"># shared across ALL</span>
+<span class="cm"># 文本和非文本共用输出 softmax</span>
+total_vocab = text_vocab + modality_vocab
+<span class="cm"># = 48512 total tokens</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 410 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#00f2fe"/></marker>
+    <marker id="ar2g" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#98c379"/></marker>
+  </defs>
+
+  <text x="205" y="18" text-anchor="middle" fill="#00f2fe" font-size="9" font-weight="bold">Modality Tokenizer Grid</text>
+
+  <!-- Image tokenizer -->
+  <rect x="10" y="35" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="102" y="52" text-anchor="middle" fill="#4facfe" font-size="7" font-weight="bold">Image Tokenizer</text>
+  <text x="30" y="67" fill="#a8a8be" font-size="5">Image [256x256]</text>
+  <path d="M 90 64 L 110 64" stroke="#4facfe" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="118" y="67" fill="#a8a8be" font-size="5">VQGAN</text>
+  <path d="M 145 64 L 158 64" stroke="#4facfe" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="165" y="67" fill="#4facfe" font-size="5" font-weight="bold">1024 tokens</text>
+  <text x="102" y="82" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | grid: 32x32</text>
+
+  <!-- Audio tokenizer -->
+  <rect x="10" y="100" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="102" y="117" text-anchor="middle" fill="#e599f7" font-size="7" font-weight="bold">Audio Tokenizer</text>
+  <text x="22" y="132" fill="#a8a8be" font-size="5">Audio</text>
+  <path d="M 45 129 L 58 129" stroke="#e599f7" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="65" y="132" fill="#a8a8be" font-size="5">Mel Spec</text>
+  <path d="M 100 129 L 113 129" stroke="#e599f7" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="120" y="132" fill="#a8a8be" font-size="5">VQGAN</text>
+  <path d="M 147 129 L 160 129" stroke="#e599f7" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="168" y="132" fill="#e599f7" font-size="5" font-weight="bold">N tokens</text>
+  <text x="102" y="147" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | spectrogram as 2D image</text>
+
+  <!-- Video tokenizer -->
+  <rect x="10" y="165" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#ffd200"/>
+  <text x="102" y="182" text-anchor="middle" fill="#ffd200" font-size="7" font-weight="bold">Video Tokenizer</text>
+  <text x="22" y="197" fill="#a8a8be" font-size="5">Frames</text>
+  <path d="M 55 194 L 68 194" stroke="#ffd200" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="76" y="197" fill="#a8a8be" font-size="5">per-frame VQGAN</text>
+  <path d="M 140 194 L 153 194" stroke="#ffd200" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="162" y="197" fill="#ffd200" font-size="5" font-weight="bold">8K tokens</text>
+  <text x="102" y="212" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | 8 frames x 1024 tokens/frame</text>
+
+  <!-- Depth tokenizer -->
+  <rect x="210" y="35" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#ff6b6b"/>
+  <text x="302" y="52" text-anchor="middle" fill="#ff6b6b" font-size="7" font-weight="bold">Depth/Normal Tokenizer</text>
+  <text x="225" y="67" fill="#a8a8be" font-size="5">Depth map</text>
+  <path d="M 275 64 L 288 64" stroke="#ff6b6b" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="296" y="67" fill="#a8a8be" font-size="5">Normalize</text>
+  <path d="M 332 64 L 345 64" stroke="#ff6b6b" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="360" y="67" fill="#ff6b6b" font-size="5" font-weight="bold">1024 tok</text>
+  <text x="302" y="82" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | treat as 1-ch image</text>
+
+  <!-- 3D tokenizer -->
+  <rect x="210" y="100" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#f7971e"/>
+  <text x="302" y="117" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">3D Point Cloud Tokenizer</text>
+  <text x="225" y="132" fill="#a8a8be" font-size="5">Mesh</text>
+  <path d="M 250 129 L 263 129" stroke="#f7971e" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="275" y="132" fill="#a8a8be" font-size="5">Voxelize</text>
+  <path d="M 305 129 L 318 129" stroke="#f7971e" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="325" y="132" fill="#a8a8be" font-size="5">Quantize</text>
+  <path d="M 356 129 L 369 129" stroke="#f7971e" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="380" y="132" fill="#f7971e" font-size="5" font-weight="bold">tok</text>
+  <text x="302" y="147" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | voxel grid discretization</text>
+
+  <!-- Action tokenizer -->
+  <rect x="210" y="165" width="185" height="55" rx="6" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="302" y="182" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">Action Tokenizer</text>
+  <text x="225" y="197" fill="#a8a8be" font-size="5">[x,y,z,r,g]</text>
+  <path d="M 275 194 L 288 194" stroke="#98c379" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="300" y="197" fill="#a8a8be" font-size="5">Discretize</text>
+  <path d="M 340 194 L 353 194" stroke="#98c379" stroke-width="0.8" marker-end="url(#ar2)"/>
+  <text x="368" y="197" fill="#98c379" font-size="5" font-weight="bold">7 tok</text>
+  <text x="302" y="212" text-anchor="middle" fill="#6b6b80" font-size="4">codebook: 16384 | bins per DOF</text>
+
+  <!-- Convergence arrow -->
+  <path d="M 102 220 L 205 255" stroke="#00f2fe" stroke-width="1" marker-end="url(#ar2)"/>
+  <path d="M 302 220 L 205 255" stroke="#00f2fe" stroke-width="1" marker-end="url(#ar2)"/>
+
+  <!-- Shared codebook -->
+  <rect x="105" y="258" width="200" height="50" rx="8" fill="#00f2fe11" stroke="#00f2fe"/>
+  <text x="205" y="278" text-anchor="middle" fill="#00f2fe" font-size="8" font-weight="bold">Shared Codebook: 16384 entries</text>
+  <text x="205" y="295" text-anchor="middle" fill="#a8a8be" font-size="6">ALL modalities map to same token ID space [0, 16383]</text>
+
+  <!-- Vocabulary breakdown -->
+  <rect x="55" y="325" width="300" height="85" rx="8" fill="#11111a" stroke="#00f2fe44"/>
+  <text x="205" y="345" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Unified Vocabulary</text>
+
+  <rect x="70" y="355" width="120" height="22" rx="4" fill="#98c37922" stroke="#98c37944"/>
+  <text x="130" y="370" text-anchor="middle" fill="#98c379" font-size="6">Text: 32128 (SentencePiece)</text>
+
+  <rect x="70" y="382" width="120" height="22" rx="4" fill="#00f2fe22" stroke="#00f2fe44"/>
+  <text x="130" y="397" text-anchor="middle" fill="#00f2fe" font-size="6">Modality: 16384 (shared)</text>
+
+  <text x="250" y="370" fill="#a8a8be" font-size="5">Decoder output softmax</text>
+  <text x="250" y="385" fill="#a8a8be" font-size="5">covers BOTH text and</text>
+  <text x="250" y="400" fill="#a8a8be" font-size="5">non-text tokens freely</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Shared Codebook 设计</h3>
+<p><strong>关键创新:</strong> 所有非文本模态共享同一个 16384-entry codebook。这意味着模型的词表仅为:</p>
+<div class="formula">
+$V = V_{\text{text}} + V_{\text{modality}} = 32128 + 16384 = 48512$
+</div>
+<p>Decoder 可以在输出中自由混合文本和非文本 token。</p>
+<h3>各模态 Token 数量</h3>
+<table>
+<tr><th>模态</th><th>Tokens</th><th>方法</th></tr>
+<tr><td>Image</td><td>1024</td><td>VQGAN 32x32</td></tr>
+<tr><td>Audio</td><td>variable</td><td>Spectrogram + VQGAN</td></tr>
+<tr><td>Video</td><td>~8192</td><td>8 frames x 1024</td></tr>
+<tr><td>Depth</td><td>1024</td><td>Normalized + VQGAN</td></tr>
+<tr><td>3D</td><td>variable</td><td>Voxelize + Quantize</td></tr>
+<tr><td>Actions</td><td>7</td><td>Discretize per-DOF</td></tr>
+</table>
+<h3>VQGAN Codebook 选择</h3>
+<p><strong>为什么 16384?</strong> 比 Chameleon (8192) 更大的 codebook 允许更高保真度的重建。更大的 codebook 意味着更细粒度的量化，减少信息损失。</p>
+<p><strong>共享 vs 独立 codebook:</strong> 共享 codebook 的好处是 decoder 不需要知道输出是哪种模态 — 它只生成 token ids，由下游 detokenizer 解释。</p>
+</div>
+</div>
+
+<!-- ===== 3. Training ===== -->
+<h2>3. 训练 — 多任务统一</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Unified-IO 2: Multi-task Training</span>
+<span class="cm"># 120+ diverse datasets, single seq2seq objective</span>
+
+<span class="cm"># === 训练数据来源 ===</span>
+datasets = {
+    <span class="cm"># Vision</span>
+    <span class="st">"COCO"</span>: <span class="st">"image captioning, detection, segmentation"</span>,
+    <span class="st">"VG"</span>: <span class="st">"visual genome, scene graphs"</span>,
+    <span class="st">"ADE20K"</span>: <span class="st">"semantic segmentation"</span>,
+    <span class="st">"NYUv2"</span>: <span class="st">"depth estimation, surface normals"</span>,
+    <span class="cm"># Audio</span>
+    <span class="st">"AudioCaps"</span>: <span class="st">"audio captioning"</span>,
+    <span class="st">"AudioSet"</span>: <span class="st">"audio classification"</span>,
+    <span class="cm"># Video</span>
+    <span class="st">"MSR-VTT"</span>: <span class="st">"video QA, captioning"</span>,
+    <span class="st">"ActivityNet"</span>: <span class="st">"temporal grounding"</span>,
+    <span class="cm"># 3D</span>
+    <span class="st">"ScanNet"</span>: <span class="st">"3D scene understanding"</span>,
+    <span class="st">"ShapeNet"</span>: <span class="st">"3D object recognition"</span>,
+    <span class="cm"># Robotics</span>
+    <span class="st">"RoboMimic"</span>: <span class="st">"robot manipulation"</span>,
+    <span class="st">"Language Table"</span>: <span class="st">"language-conditioned control"</span>,
+    <span class="cm"># ... 120+ total datasets</span>
+}
+
+<span class="cm"># === 统一 Input-Output 格式 ===</span>
+<span class="cm"># 所有任务转换为: prompt + input → output</span>
+
+<span class="cm"># Example 1: Image Captioning</span>
+input_seq = <span class="st">"Describe this image:"</span> + img_tokens
+output_seq = text_tokens  <span class="cm"># "A dog playing..."</span>
+
+<span class="cm"># Example 2: Image Segmentation</span>
+input_seq = <span class="st">"Segment the cat:"</span> + img_tokens
+output_seq = mask_tokens  <span class="cm"># VQGAN encoded mask</span>
+
+<span class="cm"># Example 3: Depth Estimation</span>
+input_seq = <span class="st">"Estimate depth:"</span> + img_tokens
+output_seq = depth_tokens  <span class="cm"># quantized depth map</span>
+
+<span class="cm"># Example 4: Image Generation</span>
+input_seq = <span class="st">"Generate: a cat on a chair"</span>
+output_seq = img_tokens  <span class="cm"># VQGAN image tokens</span>
+
+<span class="cm"># Example 5: Audio Captioning</span>
+input_seq = <span class="st">"Describe this audio:"</span> + audio_tokens
+output_seq = text_tokens  <span class="cm"># "Birds chirping..."</span>
+
+<span class="cm"># Example 6: Robot Action Prediction</span>
+input_seq = <span class="st">"Pick up red block:"</span> + img_tokens
+output_seq = action_tokens  <span class="cm"># [dx, dy, dz, ...]</span>
+
+<span class="cm"># === Training Objective ===</span>
+<span class="cm"># Standard seq2seq cross-entropy loss</span>
+<span class="kw">def</span> <span class="fn">compute_loss</span>(model, batch):
+    logits = model(batch.input_tokens, batch.target_tokens)
+    loss = F.cross_entropy(
+        logits.view(-<span class="num">1</span>, vocab_size),
+        batch.target_tokens.view(-<span class="num">1</span>),
+        ignore_index=PAD_ID,
+    )
+    <span class="kw">return</span> loss
+    <span class="cm"># Same loss for ALL tasks, ALL modalities!</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar3" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#00f2fe"/></marker>
+  </defs>
+
+  <text x="200" y="18" text-anchor="middle" fill="#00f2fe" font-size="9" font-weight="bold">Multi-Task Training: 120+ Datasets → Single Loss</text>
+
+  <!-- Dataset sources -->
+  <rect x="10" y="30" width="380" height="90" rx="8" fill="#1e1e2e" stroke="#00f2fe44"/>
+  <text x="200" y="48" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">120+ Training Datasets</text>
+
+  <!-- Dataset categories -->
+  <rect x="20" y="55" width="70" height="18" rx="3" fill="#4facfe22" stroke="#4facfe44"/>
+  <text x="55" y="67" text-anchor="middle" fill="#4facfe" font-size="5">COCO, VG</text>
+
+  <rect x="95" y="55" width="70" height="18" rx="3" fill="#e599f722" stroke="#e599f744"/>
+  <text x="130" y="67" text-anchor="middle" fill="#e599f7" font-size="5">AudioCaps</text>
+
+  <rect x="170" y="55" width="70" height="18" rx="3" fill="#ffd20022" stroke="#ffd20044"/>
+  <text x="205" y="67" text-anchor="middle" fill="#ffd200" font-size="5">MSR-VTT</text>
+
+  <rect x="245" y="55" width="70" height="18" rx="3" fill="#ff6b6b22" stroke="#ff6b6b44"/>
+  <text x="280" y="67" text-anchor="middle" fill="#ff6b6b" font-size="5">ScanNet</text>
+
+  <rect x="320" y="55" width="65" height="18" rx="3" fill="#f7971e22" stroke="#f7971e44"/>
+  <text x="352" y="67" text-anchor="middle" fill="#f7971e" font-size="5">RoboMimic</text>
+
+  <rect x="20" y="78" width="70" height="18" rx="3" fill="#4facfe22" stroke="#4facfe44"/>
+  <text x="55" y="90" text-anchor="middle" fill="#4facfe" font-size="5">ADE20K</text>
+
+  <rect x="95" y="78" width="70" height="18" rx="3" fill="#e599f722" stroke="#e599f744"/>
+  <text x="130" y="90" text-anchor="middle" fill="#e599f7" font-size="5">AudioSet</text>
+
+  <rect x="170" y="78" width="70" height="18" rx="3" fill="#ffd20022" stroke="#ffd20044"/>
+  <text x="205" y="90" text-anchor="middle" fill="#ffd200" font-size="5">ActivityNet</text>
+
+  <rect x="245" y="78" width="70" height="18" rx="3" fill="#ff6b6b22" stroke="#ff6b6b44"/>
+  <text x="280" y="90" text-anchor="middle" fill="#ff6b6b" font-size="5">ShapeNet</text>
+
+  <rect x="320" y="78" width="65" height="18" rx="3" fill="#98c37922" stroke="#98c37944"/>
+  <text x="352" y="90" text-anchor="middle" fill="#98c379" font-size="5">NYUv2 ...</text>
+
+  <!-- Category labels -->
+  <text x="55" y="110" text-anchor="middle" fill="#4facfe" font-size="4">Vision</text>
+  <text x="130" y="110" text-anchor="middle" fill="#e599f7" font-size="4">Audio</text>
+  <text x="205" y="110" text-anchor="middle" fill="#ffd200" font-size="4">Video</text>
+  <text x="280" y="110" text-anchor="middle" fill="#ff6b6b" font-size="4">3D</text>
+  <text x="352" y="110" text-anchor="middle" fill="#f7971e" font-size="4">Robot</text>
+
+  <!-- Arrow down -->
+  <path d="M 200 120 L 200 138" stroke="#00f2fe" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+  <!-- Unified format -->
+  <rect x="50" y="140" width="300" height="30" rx="6" fill="#00f2fe11" stroke="#00f2fe"/>
+  <text x="200" y="158" text-anchor="middle" fill="#00f2fe" font-size="7" font-weight="bold">Unified Seq2Seq Format: Input Tokens → Output Tokens</text>
+
+  <!-- Arrow down -->
+  <path d="M 200 170 L 200 188" stroke="#00f2fe" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+  <!-- Example tasks -->
+  <rect x="10" y="190" width="380" height="145" rx="8" fill="#11111a" stroke="#00f2fe44"/>
+  <text x="200" y="208" text-anchor="middle" fill="#e0e0ea" font-size="7" font-weight="bold">Example Task Formulations</text>
+
+  <!-- Task 1 -->
+  <rect x="20" y="215" width="170" height="35" rx="4" fill="#16162a" stroke="#4facfe44"/>
+  <text x="105" y="228" text-anchor="middle" fill="#4facfe" font-size="5" font-weight="bold">"Describe image:" + [img_tok]</text>
+  <path d="M 135 238 L 145 238" stroke="#98c379" stroke-width="0.8" marker-end="url(#ar3)"/>
+  <text x="105" y="245" text-anchor="middle" fill="#98c379" font-size="5">→ "A dog playing in park"</text>
+
+  <!-- Task 2 -->
+  <rect x="200" y="215" width="180" height="35" rx="4" fill="#16162a" stroke="#ffd20044"/>
+  <text x="290" y="228" text-anchor="middle" fill="#ffd200" font-size="5" font-weight="bold">"Segment the cat:" + [img_tok]</text>
+  <text x="290" y="245" text-anchor="middle" fill="#ffd200" font-size="5">→ [mask_tokens] (VQGAN)</text>
+
+  <!-- Task 3 -->
+  <rect x="20" y="258" width="170" height="35" rx="4" fill="#16162a" stroke="#ff6b6b44"/>
+  <text x="105" y="271" text-anchor="middle" fill="#ff6b6b" font-size="5" font-weight="bold">"Estimate depth:" + [img_tok]</text>
+  <text x="105" y="288" text-anchor="middle" fill="#ff6b6b" font-size="5">→ [depth_tokens] (quantized)</text>
+
+  <!-- Task 4 -->
+  <rect x="200" y="258" width="180" height="35" rx="4" fill="#16162a" stroke="#e599f744"/>
+  <text x="290" y="271" text-anchor="middle" fill="#e599f7" font-size="5" font-weight="bold">"Generate: a sunset beach"</text>
+  <text x="290" y="288" text-anchor="middle" fill="#e599f7" font-size="5">→ [image_tokens] (1024 VQGAN)</text>
+
+  <!-- Task 5 -->
+  <rect x="20" y="301" width="170" height="28" rx="4" fill="#16162a" stroke="#f7971e44"/>
+  <text x="105" y="318" text-anchor="middle" fill="#f7971e" font-size="5" font-weight="bold">"Pick red block:" + [img] → [actions]</text>
+
+  <!-- Task 6 -->
+  <rect x="200" y="301" width="180" height="28" rx="4" fill="#16162a" stroke="#98c37944"/>
+  <text x="290" y="318" text-anchor="middle" fill="#98c379" font-size="5" font-weight="bold">"Caption audio:" + [aud] → text</text>
+
+  <!-- Arrow to loss -->
+  <path d="M 200 335 L 200 353" stroke="#00f2fe" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+  <!-- Loss -->
+  <rect x="80" y="355" width="240" height="55" rx="8" fill="#1e1e2e" stroke="#00f2fe"/>
+  <text x="200" y="373" text-anchor="middle" fill="#00f2fe" font-size="8" font-weight="bold">Single Cross-Entropy Loss</text>
+  <text x="200" y="390" text-anchor="middle" fill="#a8a8be" font-size="6">L = -sum log P(y_t | y_&lt;t, enc(x))</text>
+  <text x="200" y="405" text-anchor="middle" fill="#6b6b80" font-size="5">Same objective for ALL tasks, ALL modalities, ALL datasets</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>多任务训练策略</h3>
+<p><strong>核心思路:</strong> 将所有任务统一为 seq2seq 格式 — input tokens (prompt + multimodal) → output tokens (任意模态)。用文本 prompt 指定期望的输出模态。</p>
+<h3>模型规模</h3>
+<table>
+<tr><th>Variant</th><th>Params</th><th>Architecture</th></tr>
+<tr><td>UIO-2 Base</td><td>1B</td><td>T5-style Enc-Dec</td></tr>
+<tr><td>UIO-2 Large</td><td>3B</td><td>T5-style Enc-Dec</td></tr>
+<tr><td>UIO-2 XXL</td><td>7B</td><td>T5-style Enc-Dec</td></tr>
+</table>
+<h3>为什么 Encoder-Decoder?</h3>
+<p><strong>T5 架构优势:</strong> Encoder-Decoder 天然适合 "input → output" 的任务框架。Encoder 理解多模态输入，Decoder 生成多模态输出。</p>
+<div class="formula">
+$\mathcal{L} = -\sum_{t=1}^{T} \log P(y_t \mid y_{\lt t}, \text{Enc}(x_1, \ldots, x_n))$
+</div>
+<h3>训练技巧</h3>
+<p>1. <strong>Task mixing ratio:</strong> 精心调配 120+ 数据集的采样比例，防止大数据集主导</p>
+<p>2. <strong>Prompt engineering:</strong> 通过文本 prompt 指定期望输出 ("segment", "describe", "generate")</p>
+<p>3. <strong>No task heads:</strong> 没有任何任务特定的输出头 — 全部通过 sequence generation 实现</p>
+<h3>与 Chameleon 对比</h3>
+<p><strong>Chameleon:</strong> Decoder-only, 2 modalities (text + image)</p>
+<p><strong>UIO-2:</strong> Encoder-Decoder, 7+ modalities, 120+ tasks, 更全面但生成质量相对较低 (codebook 重建瓶颈)</p>
+</div>
+</div>
+
+<footer>
+Generated 2026.06.01 | AI2 Unified-IO 2 Architecture Analysis
+</footer>
+
+</div>
+</body>
+</html>

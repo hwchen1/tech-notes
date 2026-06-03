@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attention 机制 / MoE vs MoT / RoPE 详解</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', monospace;
+            background: #0a0a14; color: #e0e0e0; line-height: 1.8; padding: 40px 20px;
+        }
+        .container { max-width: 100%; margin: 0; padding: 40px 40px; }
+        h1 {
+            text-align: center; font-size: 2.1em; margin-bottom: 10px;
+            background: linear-gradient(135deg, #ff6b6b, #ffd93d, #6bcb77, #4d96ff);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .subtitle { text-align: center; color: #888; margin-bottom: 50px; font-size: 1.05em; }
+        h2 {
+            font-size: 1.6em; margin: 60px 0 20px; padding-left: 15px;
+            border-left: 4px solid #ff6b6b;
+        }
+        h3 { font-size: 1.25em; margin: 35px 0 15px; color: #ffd93d; }
+        h4 { font-size: 1.1em; margin: 25px 0 10px; color: #6bcb77; }
+
+        .svg-container {
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px; padding: 30px; margin: 25px 0; text-align: center;
+            overflow-x: auto;
+        }
+        .caption {
+            text-align: center; color: #999; font-size: 0.9em; margin-top: 12px;
+            font-style: italic;
+        }
+
+        .insight {
+            background: linear-gradient(135deg, rgba(255,107,107,0.08), rgba(255,217,61,0.05));
+            border-left: 4px solid #ff6b6b; border-radius: 0 12px 12px 0;
+            padding: 20px 25px; margin: 25px 0;
+        }
+        .insight-title { color: #ff6b6b; font-weight: bold; margin-bottom: 8px; }
+
+        .config-table {
+            width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.92em;
+        }
+        .config-table th {
+            background: rgba(255,107,107,0.15); padding: 12px 16px;
+            text-align: left; border-bottom: 2px solid #ff6b6b;
+        }
+        .config-table td {
+            padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .config-table tr:hover td { background: rgba(255,255,255,0.03); }
+        .highlight { color: #ffd93d; font-weight: bold; }
+        .tag {
+            display: inline-block; border-radius: 6px;
+            padding: 2px 8px; font-size: 0.8em; margin: 2px;
+        }
+        .tag-red { background: rgba(255,107,107,0.2); border: 1px solid #ff6b6b; }
+        .tag-yellow { background: rgba(255,217,61,0.2); border: 1px solid #ffd93d; }
+        .tag-green { background: rgba(107,203,119,0.2); border: 1px solid #6bcb77; }
+        .tag-blue { background: rgba(77,150,255,0.2); border: 1px solid #4d96ff; }
+
+        pre {
+            background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px; padding: 20px; margin: 20px 0;
+            overflow-x: auto; font-size: 0.88em; line-height: 1.6;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+        pre .kw { color: #ff6b6b; }
+        pre .fn { color: #ffd93d; }
+        pre .str { color: #6bcb77; }
+        pre .cm { color: #666; font-style: italic; }
+        pre .num { color: #4d96ff; }
+        pre .var { color: #e0e0e0; }
+
+        .separator { height: 1px; background: linear-gradient(90deg, transparent, #444, transparent); margin: 60px 0; }
+        code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+
+        .formula {
+            background: rgba(77,150,255,0.08); border: 1px solid rgba(77,150,255,0.3);
+            border-radius: 8px; padding: 15px 20px; margin: 15px 0;
+            font-family: 'Times New Roman', serif; font-size: 1.1em;
+            text-align: center; color: #4d96ff;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>Attention / MoE / RoPE 架构详解</h1>
+<p class="subtitle">MHA · MQA · GQA · MLA | MoE · MoT | Rotary Position Embedding</p>
+
+<!-- =============================================================== -->
+<!-- PART 1: ATTENTION VARIANTS                                       -->
+<!-- =============================================================== -->
+<h2>Part 1: Attention 机制演进</h2>
+
+<h3>从 MHA 到 MLA：KV Cache 优化之路</h3>
+<p>推理时，每个 token 生成都需要缓存之前所有 token 的 <strong>Key 和 Value</strong>（KV Cache）。随着序列变长、batch 变大，KV Cache 成为内存瓶颈。MQA → GQA → MLA 的演进核心目标：<strong>在保持表达能力的同时压缩 KV Cache</strong>。</p>
+
+<div class="svg-container">
+<svg viewBox="0 0 920 440" xmlns="http://www.w3.org/2000/svg">
+  <text x="460" y="25" text-anchor="middle" fill="#ccc" font-size="14" font-weight="bold">四种 Attention 机制对比 (num_heads=8 示例)</text>
+
+  <!-- ======= MHA ======= -->
+  <rect x="20" y="45" width="200" height="380" rx="10" fill="rgba(255,107,107,0.08)" stroke="#ff6b6b" stroke-width="1.5"/>
+  <text x="120" y="70" text-anchor="middle" fill="#ff6b6b" font-size="13" font-weight="bold">MHA</text>
+  <text x="120" y="88" text-anchor="middle" fill="#aaa" font-size="9">Multi-Head Attention</text>
+
+  <!-- Q heads -->
+  <text x="55" y="115" fill="#aaa" font-size="9">Q Heads:</text>
+  <rect x="35" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="60" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="85" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="110" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="135" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="160" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <text x="190" y="136" fill="#aaa" font-size="8">×8</text>
+
+  <!-- K heads -->
+  <text x="55" y="165" fill="#aaa" font-size="9">K Heads:</text>
+  <rect x="35" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <rect x="60" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <rect x="85" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <rect x="110" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <rect x="135" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <rect x="160" y="170" width="22" height="22" rx="3" fill="rgba(77,150,255,0.4)" stroke="#4d96ff"/>
+  <text x="190" y="186" fill="#aaa" font-size="8">×8</text>
+
+  <!-- V heads -->
+  <text x="55" y="215" fill="#aaa" font-size="9">V Heads:</text>
+  <rect x="35" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <rect x="60" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <rect x="85" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <rect x="110" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <rect x="135" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <rect x="160" y="220" width="22" height="22" rx="3" fill="rgba(107,203,119,0.4)" stroke="#6bcb77"/>
+  <text x="190" y="236" fill="#aaa" font-size="8">×8</text>
+
+  <!-- Connection: 1-to-1 -->
+  <line x1="46" y1="142" x2="46" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="71" y1="142" x2="71" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="96" y1="142" x2="96" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="121" y1="142" x2="121" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="146" y1="142" x2="146" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="171" y1="142" x2="171" y2="170" stroke="#ffd93d" stroke-width="1"/>
+
+  <text x="120" y="275" text-anchor="middle" fill="#ffd93d" font-size="10">Q:K:V = 8:8:8</text>
+  <text x="120" y="295" text-anchor="middle" fill="#ccc" font-size="9">每个 Q head 对应</text>
+  <text x="120" y="310" text-anchor="middle" fill="#ccc" font-size="9">独立的 K, V head</text>
+
+  <rect x="40" y="330" width="160" height="40" rx="6" fill="rgba(255,107,107,0.1)" stroke="rgba(255,107,107,0.3)"/>
+  <text x="120" y="348" text-anchor="middle" fill="#ff6b6b" font-size="9">KV Cache: 8 × 2 × d</text>
+  <text x="120" y="363" text-anchor="middle" fill="#aaa" font-size="8">= 100% (基准)</text>
+
+  <text x="120" y="400" text-anchor="middle" fill="#888" font-size="9">GPT-3, BERT</text>
+  <text x="120" y="415" text-anchor="middle" fill="#888" font-size="9">Llama-1</text>
+
+  <!-- ======= MQA ======= -->
+  <rect x="240" y="45" width="200" height="380" rx="10" fill="rgba(255,217,61,0.08)" stroke="#ffd93d" stroke-width="1.5"/>
+  <text x="340" y="70" text-anchor="middle" fill="#ffd93d" font-size="13" font-weight="bold">MQA</text>
+  <text x="340" y="88" text-anchor="middle" fill="#aaa" font-size="9">Multi-Query Attention</text>
+
+  <!-- Q heads -->
+  <text x="275" y="115" fill="#aaa" font-size="9">Q Heads:</text>
+  <rect x="255" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="280" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="305" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="330" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="355" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="380" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <text x="410" y="136" fill="#aaa" font-size="8">×8</text>
+
+  <!-- K head: only 1 -->
+  <text x="275" y="165" fill="#aaa" font-size="9">K Head:</text>
+  <rect x="310" y="170" width="60" height="22" rx="3" fill="rgba(77,150,255,0.6)" stroke="#4d96ff" stroke-width="2"/>
+  <text x="340" y="185" text-anchor="middle" fill="#fff" font-size="9">×1</text>
+
+  <!-- V head: only 1 -->
+  <text x="275" y="215" fill="#aaa" font-size="9">V Head:</text>
+  <rect x="310" y="220" width="60" height="22" rx="3" fill="rgba(107,203,119,0.6)" stroke="#6bcb77" stroke-width="2"/>
+  <text x="340" y="235" text-anchor="middle" fill="#fff" font-size="9">×1</text>
+
+  <!-- Connection: all Q → 1 KV -->
+  <line x1="266" y1="142" x2="330" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="291" y1="142" x2="335" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="316" y1="142" x2="340" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="341" y1="142" x2="340" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="366" y1="142" x2="345" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="391" y1="142" x2="350" y2="170" stroke="#ffd93d" stroke-width="1"/>
+
+  <text x="340" y="275" text-anchor="middle" fill="#ffd93d" font-size="10">Q:K:V = 8:1:1</text>
+  <text x="340" y="295" text-anchor="middle" fill="#ccc" font-size="9">所有 Q head 共享</text>
+  <text x="340" y="310" text-anchor="middle" fill="#ccc" font-size="9">同一个 K, V head</text>
+
+  <rect x="260" y="330" width="160" height="40" rx="6" fill="rgba(255,217,61,0.1)" stroke="rgba(255,217,61,0.3)"/>
+  <text x="340" y="348" text-anchor="middle" fill="#ffd93d" font-size="9">KV Cache: 1 × 2 × d</text>
+  <text x="340" y="363" text-anchor="middle" fill="#3a9e5a" font-size="8">= 12.5% (↓87.5%)</text>
+
+  <text x="340" y="400" text-anchor="middle" fill="#888" font-size="9">PaLM, Gemini</text>
+  <text x="340" y="415" text-anchor="middle" fill="#888" font-size="9">Falcon</text>
+
+  <!-- ======= GQA ======= -->
+  <rect x="460" y="45" width="200" height="380" rx="10" fill="rgba(107,203,119,0.08)" stroke="#6bcb77" stroke-width="1.5"/>
+  <text x="560" y="70" text-anchor="middle" fill="#6bcb77" font-size="13" font-weight="bold">GQA</text>
+  <text x="560" y="88" text-anchor="middle" fill="#aaa" font-size="9">Grouped-Query Attention</text>
+
+  <!-- Q heads -->
+  <text x="495" y="115" fill="#aaa" font-size="9">Q Heads:</text>
+  <rect x="475" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="500" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="525" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="550" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="575" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="600" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <text x="630" y="136" fill="#aaa" font-size="8">×8</text>
+
+  <!-- K heads: 2 groups -->
+  <text x="495" y="165" fill="#aaa" font-size="9">K Heads:</text>
+  <rect x="490" y="170" width="40" height="22" rx="3" fill="rgba(77,150,255,0.5)" stroke="#4d96ff" stroke-width="1.5"/>
+  <text x="510" y="185" text-anchor="middle" fill="#fff" font-size="8">G1</text>
+  <rect x="545" y="170" width="40" height="22" rx="3" fill="rgba(77,150,255,0.5)" stroke="#4d96ff" stroke-width="1.5"/>
+  <text x="565" y="185" text-anchor="middle" fill="#fff" font-size="8">G2</text>
+  <text x="600" y="185" fill="#aaa" font-size="8">×2</text>
+
+  <!-- V heads: 2 groups -->
+  <text x="495" y="215" fill="#aaa" font-size="9">V Heads:</text>
+  <rect x="490" y="220" width="40" height="22" rx="3" fill="rgba(107,203,119,0.5)" stroke="#6bcb77" stroke-width="1.5"/>
+  <text x="510" y="235" text-anchor="middle" fill="#fff" font-size="8">G1</text>
+  <rect x="545" y="220" width="40" height="22" rx="3" fill="rgba(107,203,119,0.5)" stroke="#6bcb77" stroke-width="1.5"/>
+  <text x="565" y="235" text-anchor="middle" fill="#fff" font-size="8">G2</text>
+
+  <!-- Connection: groups -->
+  <line x1="486" y1="142" x2="505" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="511" y1="142" x2="510" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="536" y1="142" x2="515" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="561" y1="142" x2="520" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="586" y1="142" x2="560" y2="170" stroke="#ffd93d" stroke-width="1"/>
+  <line x1="611" y1="142" x2="565" y2="170" stroke="#ffd93d" stroke-width="1"/>
+
+  <text x="560" y="275" text-anchor="middle" fill="#ffd93d" font-size="10">Q:K:V = 8:2:2</text>
+  <text x="560" y="295" text-anchor="middle" fill="#ccc" font-size="9">每 4 个 Q head 共享</text>
+  <text x="560" y="310" text-anchor="middle" fill="#ccc" font-size="9">1 个 KV group</text>
+
+  <rect x="480" y="330" width="160" height="40" rx="6" fill="rgba(107,203,119,0.1)" stroke="rgba(107,203,119,0.3)"/>
+  <text x="560" y="348" text-anchor="middle" fill="#6bcb77" font-size="9">KV Cache: 2 × 2 × d</text>
+  <text x="560" y="363" text-anchor="middle" fill="#3a9e5a" font-size="8">= 25% (↓75%)</text>
+
+  <text x="560" y="400" text-anchor="middle" fill="#888" font-size="9">Llama-2/3, Qwen2/3</text>
+  <text x="560" y="415" text-anchor="middle" fill="#888" font-size="9">Mistral, Gemma</text>
+
+  <!-- ======= MLA ======= -->
+  <rect x="680" y="45" width="220" height="380" rx="10" fill="rgba(77,150,255,0.08)" stroke="#4d96ff" stroke-width="1.5"/>
+  <text x="790" y="70" text-anchor="middle" fill="#4d96ff" font-size="13" font-weight="bold">MLA</text>
+  <text x="790" y="88" text-anchor="middle" fill="#aaa" font-size="9">Multi-head Latent Attention</text>
+
+  <!-- Q heads -->
+  <text x="715" y="115" fill="#aaa" font-size="9">Q Heads:</text>
+  <rect x="695" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="720" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="745" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="770" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="795" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <rect x="820" y="120" width="22" height="22" rx="3" fill="rgba(255,107,107,0.4)" stroke="#ff6b6b"/>
+  <text x="850" y="136" fill="#aaa" font-size="8">×8</text>
+
+  <!-- Latent vector -->
+  <text x="715" y="170" fill="#aaa" font-size="9">KV Latent:</text>
+  <rect x="730" y="175" width="100" height="30" rx="6" fill="rgba(77,150,255,0.4)" stroke="#4d96ff" stroke-width="2"/>
+  <text x="780" y="194" text-anchor="middle" fill="#fff" font-size="9">c_kv (低维)</text>
+
+  <!-- Up projection arrows -->
+  <line x1="760" y1="205" x2="735" y2="225" stroke="#ffd93d" stroke-width="1.5" stroke-dasharray="3"/>
+  <line x1="780" y1="205" x2="780" y2="225" stroke="#ffd93d" stroke-width="1.5" stroke-dasharray="3"/>
+  <line x1="800" y1="205" x2="825" y2="225" stroke="#ffd93d" stroke-width="1.5" stroke-dasharray="3"/>
+  <text x="850" y="218" fill="#ffd93d" font-size="8">Up-Proj</text>
+
+  <!-- Reconstructed K, V -->
+  <rect x="710" y="228" width="50" height="20" rx="3" fill="rgba(77,150,255,0.3)" stroke="#4d96ff"/>
+  <text x="735" y="242" text-anchor="middle" fill="#aaa" font-size="8">K(×8)</text>
+  <rect x="770" y="228" width="50" height="20" rx="3" fill="rgba(107,203,119,0.3)" stroke="#6bcb77"/>
+  <text x="795" y="242" text-anchor="middle" fill="#aaa" font-size="8">V(×8)</text>
+
+  <text x="790" y="280" text-anchor="middle" fill="#ffd93d" font-size="10">Cache: c_kv (低维)</text>
+  <text x="790" y="300" text-anchor="middle" fill="#ccc" font-size="9">只缓存压缩的 latent</text>
+  <text x="790" y="315" text-anchor="middle" fill="#ccc" font-size="9">推理时 up-proj 恢复 KV</text>
+
+  <rect x="700" y="330" width="180" height="40" rx="6" fill="rgba(77,150,255,0.1)" stroke="rgba(77,150,255,0.3)"/>
+  <text x="790" y="348" text-anchor="middle" fill="#4d96ff" font-size="9">KV Cache: 1 × d_c (d_c ≪ d)</text>
+  <text x="790" y="363" text-anchor="middle" fill="#3a9e5a" font-size="8">≈ 5-10% (↓90%+)</text>
+
+  <text x="790" y="400" text-anchor="middle" fill="#888" font-size="9">DeepSeek-V2/V3</text>
+  <text x="790" y="415" text-anchor="middle" fill="#888" font-size="9">Kimi-K2</text>
+</svg>
+</div>
+<p class="caption">图 1: 四种 Attention 机制的 Q/K/V head 关系。从左到右：MHA(全独立) → MQA(全共享) → GQA(分组共享) → MLA(低秩压缩缓存)。</p>
+
+<h3>MLA 的核心创新：低秩 KV 压缩</h3>
+
+<div class="svg-container">
+<svg viewBox="0 0 880 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="20" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">MLA 计算流程 (DeepSeek-V2/V3)</text>
+
+  <!-- Input -->
+  <rect x="30" y="60" width="100" height="40" rx="6" fill="rgba(255,255,255,0.05)" stroke="#666"/>
+  <text x="80" y="85" text-anchor="middle" fill="#ccc" font-size="10">h (hidden)</text>
+
+  <!-- Down projection -->
+  <path d="M 130,80 L 180,80" stroke="#ffd93d" stroke-width="1.5" marker-end="url(#arr-y)"/>
+
+  <rect x="180" y="50" width="130" height="60" rx="8" fill="rgba(77,150,255,0.15)" stroke="#4d96ff"/>
+  <text x="245" y="72" text-anchor="middle" fill="#4d96ff" font-size="10" font-weight="bold">Down-Proj W_DKV</text>
+  <text x="245" y="90" text-anchor="middle" fill="#aaa" font-size="9">h (d) → c_kv (d_c)</text>
+  <text x="245" y="105" text-anchor="middle" fill="#888" font-size="8">d_c = 512 ≪ d = 5120</text>
+
+  <!-- Latent -->
+  <path d="M 310,80 L 360,80" stroke="#ffd93d" stroke-width="1.5" marker-end="url(#arr-y)"/>
+
+  <rect x="360" y="55" width="90" height="50" rx="8" fill="rgba(77,150,255,0.3)" stroke="#4d96ff" stroke-width="2"/>
+  <text x="405" y="78" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">c_kv</text>
+  <text x="405" y="95" text-anchor="middle" fill="#aaa" font-size="8">(只缓存这个!)</text>
+
+  <!-- Up projection -->
+  <path d="M 450,70 L 520,55" stroke="#6bcb77" stroke-width="1.5" marker-end="url(#arr-g)"/>
+  <path d="M 450,90 L 520,105" stroke="#6bcb77" stroke-width="1.5" marker-end="url(#arr-g)"/>
+
+  <rect x="520" y="35" width="120" height="35" rx="6" fill="rgba(77,150,255,0.1)" stroke="#4d96ff"/>
+  <text x="580" y="52" text-anchor="middle" fill="#4d96ff" font-size="9">Up-Proj W_UK</text>
+  <text x="580" y="66" text-anchor="middle" fill="#aaa" font-size="8">c_kv → K (all heads)</text>
+
+  <rect x="520" y="85" width="120" height="35" rx="6" fill="rgba(107,203,119,0.1)" stroke="#6bcb77"/>
+  <text x="580" y="102" text-anchor="middle" fill="#6bcb77" font-size="9">Up-Proj W_UV</text>
+  <text x="580" y="116" text-anchor="middle" fill="#aaa" font-size="8">c_kv → V (all heads)</text>
+
+  <!-- Attention -->
+  <path d="M 640,55 L 700,75" stroke="#ffd93d" stroke-width="1.5" marker-end="url(#arr-y)"/>
+  <path d="M 640,100 L 700,85" stroke="#ffd93d" stroke-width="1.5" marker-end="url(#arr-y)"/>
+
+  <rect x="700" y="55" width="150" height="50" rx="8" fill="rgba(255,107,107,0.15)" stroke="#ff6b6b"/>
+  <text x="775" y="77" text-anchor="middle" fill="#ff6b6b" font-size="10">Attention(Q, K, V)</text>
+  <text x="775" y="95" text-anchor="middle" fill="#aaa" font-size="8">标准 multi-head attention</text>
+
+  <!-- Key insight box -->
+  <rect x="30" y="150" width="820" height="110" rx="10" fill="rgba(77,150,255,0.05)" stroke="rgba(77,150,255,0.2)"/>
+  <text x="440" y="175" text-anchor="middle" fill="#4d96ff" font-size="11" font-weight="bold">MLA 的关键 trick: 吸收 W_UK 到 W_Q</text>
+
+  <text x="60" y="200" fill="#ccc" font-size="10">传统: score = Q · K^T = (x·W_Q) · (c_kv·W_UK)^T</text>
+  <text x="60" y="220" fill="#ffd93d" font-size="10">等价: score = (x · W_Q · W_UK^T) · c_kv^T = x · W_Q' · c_kv^T</text>
+  <text x="60" y="245" fill="#aaa" font-size="10">→ 推理时不需要真正展开 K! 直接用 c_kv 计算 Attention score, 合并矩阵乘法更高效</text>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arr-y" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ffd93d"/>
+    </marker>
+    <marker id="arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6bcb77"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<p class="caption">图 2: MLA 通过低秩压缩将 KV Cache 从 num_heads × head_dim 降到单个 d_c 维度（如 512）。推理时将 Up-Proj 矩阵"吸收"进 Q 的投影，避免真正恢复完整 KV。</p>
+
+<table class="config-table">
+    <tr><th>机制</th><th>KV Cache / token</th><th>参数效率</th><th>质量</th><th>代表模型</th></tr>
+    <tr>
+        <td><span class="tag tag-red">MHA</span></td>
+        <td>2 × n_heads × d_head</td>
+        <td>基准 (100%)</td>
+        <td>最高 (完全独立 KV)</td>
+        <td>GPT-3, Llama-1</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-yellow">MQA</span></td>
+        <td>2 × 1 × d_head</td>
+        <td>↓ 87.5% (8 heads)</td>
+        <td>有退化 (共享太激进)</td>
+        <td>PaLM, Falcon</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-green">GQA</span></td>
+        <td>2 × n_kv_groups × d_head</td>
+        <td>↓ 75% (typical)</td>
+        <td>接近 MHA</td>
+        <td>Llama-2/3, Qwen2/3</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-blue">MLA</span></td>
+        <td>1 × d_c (d_c ≪ n_h × d_h)</td>
+        <td>↓ 90%+</td>
+        <td>= MHA (理论无损)</td>
+        <td>DeepSeek-V2/V3, Kimi-K2</td>
+    </tr>
+</table>
+
+<div class="separator"></div>
+
+<!-- =============================================================== -->
+<!-- PART 2: MoE vs MoT                                              -->
+<!-- =============================================================== -->
+<h2>Part 2: MoE vs MoT</h2>
+
+<h3>MoE — Mixture of Experts (混合专家)</h3>
+<p>将 FFN 层替换为多个并行的"专家" FFN，每个 token 只激活 Top-K 个专家。总参数量大但激活参数少 → <strong>参数高效扩展</strong>。</p>
+
+<div class="svg-container">
+<svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="20" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">MoE Layer: Router + Sparse Expert Execution</text>
+
+  <!-- Input tokens -->
+  <rect x="50" y="45" width="780" height="30" rx="6" fill="rgba(255,255,255,0.05)" stroke="#666"/>
+  <text x="440" y="65" text-anchor="middle" fill="#ccc" font-size="10">Input Hidden States [batch × seq, hidden_dim]</text>
+
+  <!-- Router -->
+  <path d="M 440,75 L 440,95" stroke="#ffd93d" stroke-width="1.5" marker-end="url(#arr-y)"/>
+  <rect x="300" y="95" width="280" height="45" rx="8" fill="rgba(255,107,107,0.15)" stroke="#ff6b6b"/>
+  <text x="440" y="115" text-anchor="middle" fill="#ff6b6b" font-size="11" font-weight="bold">Router (Gate)</text>
+  <text x="440" y="132" text-anchor="middle" fill="#aaa" font-size="9">score = softmax(x · W_gate) → Top-K expert IDs + weights</text>
+
+  <!-- Arrows to experts -->
+  <path d="M 340,140 L 130,170" stroke="#ffd93d" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 400,140 L 320,170" stroke="#ffd93d" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 480,140 L 520,170" stroke="#ffd93d" stroke-width="1.5"/>
+  <path d="M 540,140 L 720,170" stroke="#ffd93d" stroke-width="1.5"/>
+
+  <!-- Experts -->
+  <rect x="60" y="170" width="120" height="55" rx="6" fill="rgba(200,200,200,0.05)" stroke="#555" stroke-dasharray="3"/>
+  <text x="120" y="192" text-anchor="middle" fill="#888" font-size="9">Expert 0 (FFN)</text>
+  <text x="120" y="210" text-anchor="middle" fill="#555" font-size="8">未被选中</text>
+
+  <rect x="210" y="170" width="120" height="55" rx="6" fill="rgba(200,200,200,0.05)" stroke="#555" stroke-dasharray="3"/>
+  <text x="270" y="192" text-anchor="middle" fill="#888" font-size="9">Expert 1 (FFN)</text>
+  <text x="270" y="210" text-anchor="middle" fill="#555" font-size="8">未被选中</text>
+
+  <rect x="450" y="170" width="120" height="55" rx="6" fill="rgba(107,203,119,0.2)" stroke="#6bcb77" stroke-width="2"/>
+  <text x="510" y="192" text-anchor="middle" fill="#6bcb77" font-size="9" font-weight="bold">Expert 2 (FFN)</text>
+  <text x="510" y="210" text-anchor="middle" fill="#6bcb77" font-size="8">✓ Top-1 选中</text>
+
+  <rect x="650" y="170" width="120" height="55" rx="6" fill="rgba(77,150,255,0.2)" stroke="#4d96ff" stroke-width="2"/>
+  <text x="710" y="192" text-anchor="middle" fill="#4d96ff" font-size="9" font-weight="bold">Expert 5 (FFN)</text>
+  <text x="710" y="210" text-anchor="middle" fill="#4d96ff" font-size="8">✓ Top-2 选中</text>
+
+  <!-- Shared Expert (DeepSeek style) -->
+  <rect x="320" y="240" width="200" height="40" rx="6" fill="rgba(255,217,61,0.15)" stroke="#ffd93d" stroke-dasharray="4"/>
+  <text x="420" y="260" text-anchor="middle" fill="#ffd93d" font-size="9">Shared Expert (所有 token 都经过)</text>
+  <text x="420" y="275" text-anchor="middle" fill="#888" font-size="8">DeepSeek-V2/V3 特有设计</text>
+
+  <!-- Combine -->
+  <path d="M 510,225 L 510,290" stroke="#6bcb77" stroke-width="1"/>
+  <path d="M 710,225 L 600,290" stroke="#4d96ff" stroke-width="1"/>
+  <path d="M 420,280 L 540,290" stroke="#ffd93d" stroke-width="1"/>
+
+  <rect x="450" y="290" width="200" height="25" rx="4" fill="rgba(255,255,255,0.05)" stroke="#666"/>
+  <text x="550" y="307" text-anchor="middle" fill="#ccc" font-size="9">output = w₂·E₂(x) + w₅·E₅(x) + shared(x)</text>
+</svg>
+</div>
+<p class="caption">图 3: MoE 层结构。Router 为每个 token 选择 Top-K 专家，只激活被选中的专家 FFN。DeepSeek 系列额外加入 Shared Expert 保证基础能力。</p>
+
+<h3>MoT — Mixture of Transformers</h3>
+<p><strong>MoT (Mixture of Transformers)</strong> 将 MoE 的"混合"思想从 FFN 层扩展到<strong>整个 Transformer Block</strong>（包含 Attention）。不同 modality 或 task 使用不同的 Transformer 专家。</p>
+
+<div class="svg-container">
+<svg viewBox="0 0 880 350" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="20" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">MoE vs MoT: 混合粒度对比</text>
+
+  <!-- MoE side -->
+  <rect x="30" y="45" width="380" height="290" rx="10" fill="rgba(107,203,119,0.05)" stroke="#6bcb77"/>
+  <text x="220" y="70" text-anchor="middle" fill="#6bcb77" font-size="12" font-weight="bold">MoE: 只在 FFN 层混合</text>
+
+  <!-- Transformer block -->
+  <rect x="80" y="90" width="280" height="230" rx="8" fill="rgba(255,255,255,0.02)" stroke="#444"/>
+  <text x="220" y="108" text-anchor="middle" fill="#aaa" font-size="10">Transformer Block</text>
+
+  <rect x="110" y="120" width="220" height="40" rx="6" fill="rgba(255,107,107,0.15)" stroke="#ff6b6b"/>
+  <text x="220" y="140" text-anchor="middle" fill="#ff6b6b" font-size="10">Self-Attention (共享)</text>
+  <text x="220" y="155" text-anchor="middle" fill="#aaa" font-size="8">所有 token 用同一个 Attention</text>
+
+  <rect x="110" y="175" width="220" height="60" rx="6" fill="rgba(107,203,119,0.2)" stroke="#6bcb77" stroke-width="2"/>
+  <text x="220" y="195" text-anchor="middle" fill="#6bcb77" font-size="10" font-weight="bold">MoE FFN (路由选择)</text>
+  <text x="220" y="215" text-anchor="middle" fill="#ccc" font-size="8">Expert₀ | Expert₁ | ... | Expert_N</text>
+  <text x="220" y="230" text-anchor="middle" fill="#888" font-size="8">只有 FFN 是 sparse 的</text>
+
+  <rect x="110" y="250" width="220" height="30" rx="6" fill="rgba(255,255,255,0.05)" stroke="#555"/>
+  <text x="220" y="270" text-anchor="middle" fill="#aaa" font-size="9">LayerNorm + Residual</text>
+
+  <text x="220" y="310" text-anchor="middle" fill="#6bcb77" font-size="9">代表: Mixtral, Qwen3-MoE, DeepSeek-V3</text>
+
+  <!-- MoT side -->
+  <rect x="450" y="45" width="400" height="290" rx="10" fill="rgba(77,150,255,0.05)" stroke="#4d96ff"/>
+  <text x="650" y="70" text-anchor="middle" fill="#4d96ff" font-size="12" font-weight="bold">MoT: 整个 Transformer Block 混合</text>
+
+  <!-- Multiple transformer blocks -->
+  <rect x="480" y="100" width="120" height="100" rx="6" fill="rgba(255,107,107,0.1)" stroke="#ff6b6b"/>
+  <text x="540" y="120" text-anchor="middle" fill="#ff6b6b" font-size="9">Text Expert</text>
+  <text x="540" y="140" text-anchor="middle" fill="#aaa" font-size="8">Attn + FFN</text>
+  <text x="540" y="158" text-anchor="middle" fill="#aaa" font-size="8">(文本特化)</text>
+  <text x="540" y="190" text-anchor="middle" fill="#888" font-size="8">text tokens →</text>
+
+  <rect x="620" y="100" width="120" height="100" rx="6" fill="rgba(107,203,119,0.1)" stroke="#6bcb77"/>
+  <text x="680" y="120" text-anchor="middle" fill="#6bcb77" font-size="9">Vision Expert</text>
+  <text x="680" y="140" text-anchor="middle" fill="#aaa" font-size="8">Attn + FFN</text>
+  <text x="680" y="158" text-anchor="middle" fill="#aaa" font-size="8">(视觉特化)</text>
+  <text x="680" y="190" text-anchor="middle" fill="#888" font-size="8">image tokens →</text>
+
+  <rect x="760" y="100" width="70" height="100" rx="6" fill="rgba(255,217,61,0.1)" stroke="#ffd93d"/>
+  <text x="795" y="130" text-anchor="middle" fill="#ffd93d" font-size="8">Shared</text>
+  <text x="795" y="150" text-anchor="middle" fill="#aaa" font-size="7">公共层</text>
+  <text x="795" y="170" text-anchor="middle" fill="#888" font-size="7">all →</text>
+
+  <!-- Router -->
+  <rect x="520" y="215" width="220" height="35" rx="6" fill="rgba(255,217,61,0.15)" stroke="#ffd93d"/>
+  <text x="630" y="237" text-anchor="middle" fill="#ffd93d" font-size="9">Router / Modality Tag 决定路径</text>
+
+  <text x="650" y="280" text-anchor="middle" fill="#ccc" font-size="9">Attention + FFN 整体都是"专家"</text>
+  <text x="650" y="298" text-anchor="middle" fill="#ccc" font-size="9">不同 modality/task 走不同路径</text>
+
+  <text x="650" y="325" text-anchor="middle" fill="#4d96ff" font-size="9">代表: Unified-IO, BEiT-3, Chameleon</text>
+</svg>
+</div>
+<p class="caption">图 4: MoE 只在 FFN 层做稀疏路由；MoT 将整个 Transformer Block 视为"专家"，不同 modality 使用不同的 Attention+FFN 组合。</p>
+
+<table class="config-table">
+    <tr><th>维度</th><th><span class="tag tag-green">MoE</span></th><th><span class="tag tag-blue">MoT</span></th></tr>
+    <tr><td><strong>混合层级</strong></td><td>FFN 层 (单层内)</td><td>整个 Transformer Block</td></tr>
+    <tr><td><strong>Attention 处理</strong></td><td>所有 token 共享同一 Attention</td><td>不同路径有独立 Attention</td></tr>
+    <tr><td><strong>路由依据</strong></td><td>学习的 Gate (token-level)</td><td>Modality/Task tag 或学习的 Router</td></tr>
+    <tr><td><strong>主要优势</strong></td><td>参数高效扩展 FFN 容量</td><td>Modality 专家化, 避免干扰</td></tr>
+    <tr><td><strong>主要场景</strong></td><td>纯文本 LLM 扩展</td><td>多模态模型 (Vision + Language + ...)</td></tr>
+    <tr><td><strong>通信模式</strong></td><td>AllToAll (EP)</td><td>取决于实现 (可静态分配)</td></tr>
+    <tr><td><strong>代表模型</strong></td><td>Mixtral, DeepSeek-V3, Qwen3-30B-A3B</td><td>Chameleon, Unified-IO 2, Transfusion</td></tr>
+</table>
+
+<div class="insight">
+    <div class="insight-title">MoE 的变体演进</div>
+    <p>
+    <strong>Fine-grained MoE</strong> (DeepSeek-V3): 256 个小专家 + Top-8 routing, 比 8 大专家 + Top-2 更灵活<br>
+    <strong>Shared + Routed Expert</strong> (DeepSeek-V2/V3): 1-2 个共享专家保证基础能力 + N 个路由专家提供特化能力<br>
+    <strong>Expert Choice</strong> (Switch-C): 不是 token 选 expert, 而是 expert 选 token (更均衡)<br>
+    <strong>MoA (Mixture of Attention)</strong>: 将 MoE 思想应用于 Attention head (不同 head 处理不同子集)
+    </p>
+</div>
+
+<div class="separator"></div>
+
+<!-- =============================================================== -->
+<!-- PART 3: RoPE                                                    -->
+<!-- =============================================================== -->
+<h2>Part 3: RoPE — Rotary Position Embedding</h2>
+
+<h3>核心直觉</h3>
+<p>RoPE 的核心思想：<strong>用旋转矩阵编码位置信息</strong>。将 token 的 embedding 视为复数平面上的向量，不同位置施加不同角度的旋转。两个 token 的点积只取决于它们的<strong>相对位置</strong>（旋转角度差），而非绝对位置。</p>
+
+<div class="svg-container">
+<svg viewBox="0 0 880 360" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="20" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">RoPE: 二维旋转位置编码的几何直觉</text>
+
+  <!-- Left: 2D rotation -->
+  <text x="200" y="50" text-anchor="middle" fill="#ffd93d" font-size="12" font-weight="bold">2D 旋转 (单个维度对)</text>
+
+  <!-- Coordinate system -->
+  <line x1="100" y1="200" x2="300" y2="200" stroke="#444" stroke-width="1"/>
+  <line x1="200" y1="100" x2="200" y2="300" stroke="#444" stroke-width="1"/>
+  <text x="305" y="205" fill="#666" font-size="9">x₀</text>
+  <text x="205" y="95" fill="#666" font-size="9">x₁</text>
+
+  <!-- Original vector (position 0) -->
+  <line x1="200" y1="200" x2="280" y2="150" stroke="#ff6b6b" stroke-width="2.5" marker-end="url(#arr-r)"/>
+  <text x="285" y="145" fill="#ff6b6b" font-size="9">q (pos=0)</text>
+  <circle cx="280" cy="150" r="4" fill="#ff6b6b"/>
+
+  <!-- Rotated vector (position m) -->
+  <line x1="200" y1="200" x2="245" y2="120" stroke="#6bcb77" stroke-width="2.5" marker-end="url(#arr-g2)"/>
+  <text x="250" y="115" fill="#6bcb77" font-size="9">q' (pos=m)</text>
+  <circle cx="245" cy="120" r="4" fill="#6bcb77"/>
+
+  <!-- Angle arc -->
+  <path d="M 260,165 A 40,40 0 0,0 240,140" stroke="#ffd93d" stroke-width="1.5" fill="none"/>
+  <text x="270" y="155" fill="#ffd93d" font-size="9">mθ</text>
+
+  <!-- Circle (constant magnitude) -->
+  <circle cx="200" cy="200" r="80" stroke="#333" stroke-width="1" fill="none" stroke-dasharray="4"/>
+  <text x="200" y="290" text-anchor="middle" fill="#555" font-size="8">|q| 不变, 只旋转角度</text>
+
+  <!-- Right: Multi-dim -->
+  <text x="620" y="50" text-anchor="middle" fill="#ffd93d" font-size="12" font-weight="bold">高维: 多对维度独立旋转</text>
+
+  <!-- Dimension pairs -->
+  <rect x="480" y="75" width="280" height="250" rx="8" fill="rgba(255,255,255,0.02)" stroke="#444"/>
+
+  <text x="510" y="100" fill="#aaa" font-size="10">head_dim = 128 → 64 对维度</text>
+
+  <!-- Pair 0 -->
+  <rect x="500" y="115" width="80" height="30" rx="4" fill="rgba(255,107,107,0.15)" stroke="#ff6b6b"/>
+  <text x="540" y="134" text-anchor="middle" fill="#ff6b6b" font-size="9">(d₀, d₁)</text>
+  <text x="600" y="134" fill="#aaa" font-size="9">旋转角 = m·θ₀</text>
+  <text x="720" y="134" fill="#888" font-size="8">θ₀ = 1/10000^(0/128)</text>
+
+  <!-- Pair 1 -->
+  <rect x="500" y="155" width="80" height="30" rx="4" fill="rgba(255,217,61,0.15)" stroke="#ffd93d"/>
+  <text x="540" y="174" text-anchor="middle" fill="#ffd93d" font-size="9">(d₂, d₃)</text>
+  <text x="600" y="174" fill="#aaa" font-size="9">旋转角 = m·θ₁</text>
+  <text x="720" y="174" fill="#888" font-size="8">θ₁ = 1/10000^(2/128)</text>
+
+  <!-- Pair 2 -->
+  <rect x="500" y="195" width="80" height="30" rx="4" fill="rgba(107,203,119,0.15)" stroke="#6bcb77"/>
+  <text x="540" y="214" text-anchor="middle" fill="#6bcb77" font-size="9">(d₄, d₅)</text>
+  <text x="600" y="214" fill="#aaa" font-size="9">旋转角 = m·θ₂</text>
+  <text x="720" y="214" fill="#888" font-size="8">θ₂ = 1/10000^(4/128)</text>
+
+  <!-- ... -->
+  <text x="540" y="244" text-anchor="middle" fill="#666" font-size="12">⋮</text>
+
+  <!-- Pair 63 -->
+  <rect x="500" y="255" width="80" height="30" rx="4" fill="rgba(77,150,255,0.15)" stroke="#4d96ff"/>
+  <text x="540" y="274" text-anchor="middle" fill="#4d96ff" font-size="9">(d₁₂₆, d₁₂₇)</text>
+  <text x="600" y="274" fill="#aaa" font-size="9">旋转角 = m·θ₆₃</text>
+  <text x="720" y="274" fill="#888" font-size="8">θ₆₃ = 1/10000^(126/128)</text>
+
+  <!-- Key property -->
+  <text x="620" y="310" text-anchor="middle" fill="#ffd93d" font-size="10" font-weight="bold">关键性质: 低维对 → 高频旋转 (局部位置)</text>
+  <text x="620" y="328" text-anchor="middle" fill="#ffd93d" font-size="10" font-weight="bold">高维对 → 低频旋转 (全局位置)</text>
+
+  <!-- Arrow markers -->
+  <defs>
+    <marker id="arr-r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ff6b6b"/>
+    </marker>
+    <marker id="arr-g2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#6bcb77"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+<p class="caption">图 5: RoPE 将 head_dim 的维度两两配对，每对施加不同频率的旋转。低维对高频旋转编码近距离关系，高维对低频旋转编码远距离关系。</p>
+
+<h3>数学公式</h3>
+
+<div class="formula">
+$$\text{RoPE}(\mathbf{x}_m, m) = R(m \cdot \theta) \cdot \mathbf{x}_m \quad \text{where} \quad R(\alpha) = \begin{bmatrix} \cos\alpha & -\sin\alpha \\ \sin\alpha & \cos\alpha \end{bmatrix}$$
+</div>
+
+<div class="formula">
+$$\langle \text{RoPE}(\mathbf{q}, m),\ \text{RoPE}(\mathbf{k}, n) \rangle = \langle R((m-n)\cdot\theta) \cdot \mathbf{q},\ \mathbf{k} \rangle \quad \leftarrow \text{只依赖相对位置 } (m-n)$$
+</div>
+
+<div class="formula">
+$$\theta_i = \text{base}^{-2i/d} \quad \text{where base} = 10000,\quad i = 0, 1, \ldots, d/2-1$$
+</div>
+
+<h3>简洁实现</h3>
+
+<pre><span class="kw">import</span> torch
+
+<span class="kw">def</span> <span class="fn">precompute_freqs_cis</span>(dim: <span class="var">int</span>, seq_len: <span class="var">int</span>, base: <span class="var">float</span> = <span class="num">10000.0</span>):
+    <span class="cm">"""预计算 RoPE 的复数旋转因子 (cos + i*sin)"""</span>
+    <span class="cm"># θ_i = base^(-2i/dim), i = 0..dim/2-1</span>
+    freqs = <span class="num">1.0</span> / (base ** (torch.arange(<span class="num">0</span>, dim, <span class="num">2</span>).float() / dim))
+    <span class="cm"># 位置 m 的旋转角: m * θ_i</span>
+    t = torch.arange(seq_len)
+    angles = torch.outer(t, freqs)  <span class="cm"># [seq_len, dim/2]</span>
+    <span class="cm"># 复数形式: e^(i·angle) = cos(angle) + i·sin(angle)</span>
+    <span class="kw">return</span> torch.polar(torch.ones_like(angles), angles)  <span class="cm"># [seq_len, dim/2]</span>
+
+
+<span class="kw">def</span> <span class="fn">apply_rope</span>(x: torch.Tensor, freqs_cis: torch.Tensor):
+    <span class="cm">"""对 Q 或 K 应用 RoPE 旋转"""</span>
+    <span class="cm"># x: [batch, seq_len, n_heads, head_dim]</span>
+    <span class="cm"># 将相邻两个维度视为一个复数: (x0 + i*x1)</span>
+    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-<span class="num">1</span>], -<span class="num">1</span>, <span class="num">2</span>))
+    <span class="cm"># 复数乘法 = 旋转: (x0+i*x1) * (cos θ + i*sin θ)</span>
+    x_rotated = x_complex * freqs_cis.unsqueeze(<span class="num">0</span>).unsqueeze(<span class="num">2</span>)
+    <span class="cm"># 转回实数</span>
+    <span class="kw">return</span> torch.view_as_real(x_rotated).flatten(-<span class="num">2</span>).type_as(x)
+
+
+<span class="cm"># === 等价的 sin/cos 实现 (不用复数, 更直观) ===</span>
+
+<span class="kw">def</span> <span class="fn">apply_rope_sincos</span>(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+    <span class="cm">"""RoPE 的 sin/cos 形式: 旋转公式展开"""</span>
+    <span class="cm"># x: [batch, seq, heads, dim]</span>
+    <span class="cm"># cos, sin: [seq, dim/2] (预计算)</span>
+    d = x.shape[-<span class="num">1</span>] // <span class="num">2</span>
+    x1, x2 = x[..., :d], x[..., d:]  <span class="cm"># 前半/后半维度</span>
+    <span class="cm"># 旋转: [cos θ, -sin θ; sin θ, cos θ] · [x1; x2]</span>
+    out1 = x1 * cos - x2 * sin
+    out2 = x1 * sin + x2 * cos
+    <span class="kw">return</span> torch.cat([out1, out2], dim=-<span class="num">1</span>)
+</pre>
+
+<h3>RoPE 长度外推: NTK / YaRN</h3>
+
+<div class="svg-container">
+<svg viewBox="0 0 880 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="440" y="20" text-anchor="middle" fill="#ccc" font-size="13" font-weight="bold">RoPE 长度扩展方法对比</text>
+
+  <!-- Original RoPE -->
+  <rect x="30" y="45" width="250" height="220" rx="10" fill="rgba(255,107,107,0.05)" stroke="#ff6b6b"/>
+  <text x="155" y="70" text-anchor="middle" fill="#ff6b6b" font-size="11" font-weight="bold">原始 RoPE</text>
+  <text x="155" y="92" text-anchor="middle" fill="#aaa" font-size="9">base = 10000</text>
+  <text x="155" y="112" text-anchor="middle" fill="#aaa" font-size="9">max_pos = train_len (如 4K)</text>
+
+  <!-- Frequency spectrum -->
+  <line x1="60" y1="150" x2="250" y2="150" stroke="#555" stroke-width="1"/>
+  <line x1="60" y1="130" x2="60" y2="230" stroke="#555" stroke-width="1"/>
+  <text x="155" y="145" text-anchor="middle" fill="#666" font-size="8">维度 →</text>
+  <text x="50" y="180" fill="#666" font-size="8" transform="rotate(-90, 50, 180)">频率</text>
+
+  <!-- Frequency bars (exponential decay) -->
+  <rect x="70" y="155" width="8" height="70" fill="#ff6b6b" opacity="0.8"/>
+  <rect x="90" y="165" width="8" height="60" fill="#ff6b6b" opacity="0.7"/>
+  <rect x="110" y="175" width="8" height="50" fill="#ff6b6b" opacity="0.6"/>
+  <rect x="130" y="185" width="8" height="40" fill="#ff6b6b" opacity="0.5"/>
+  <rect x="150" y="192" width="8" height="33" fill="#ff6b6b" opacity="0.4"/>
+  <rect x="170" y="198" width="8" height="27" fill="#ff6b6b" opacity="0.35"/>
+  <rect x="190" y="204" width="8" height="21" fill="#ff6b6b" opacity="0.3"/>
+  <rect x="210" y="210" width="8" height="15" fill="#ff6b6b" opacity="0.25"/>
+  <rect x="230" y="214" width="8" height="11" fill="#ff6b6b" opacity="0.2"/>
+
+  <text x="155" y="250" text-anchor="middle" fill="#c85050" font-size="9">超出 train_len 后 → 外推崩溃</text>
+
+  <!-- NTK-aware -->
+  <rect x="310" y="45" width="250" height="220" rx="10" fill="rgba(255,217,61,0.05)" stroke="#ffd93d"/>
+  <text x="435" y="70" text-anchor="middle" fill="#ffd93d" font-size="11" font-weight="bold">NTK-Aware Scaling</text>
+  <text x="435" y="92" text-anchor="middle" fill="#aaa" font-size="9">base' = base × α^(d/(d-2))</text>
+  <text x="435" y="112" text-anchor="middle" fill="#aaa" font-size="9">所有频率均匀缩小</text>
+
+  <!-- Modified frequency bars -->
+  <line x1="340" y1="150" x2="530" y2="150" stroke="#555" stroke-width="1"/>
+  <line x1="340" y1="130" x2="340" y2="230" stroke="#555" stroke-width="1"/>
+
+  <rect x="350" y="165" width="8" height="55" fill="#ffd93d" opacity="0.8"/>
+  <rect x="370" y="172" width="8" height="48" fill="#ffd93d" opacity="0.7"/>
+  <rect x="390" y="180" width="8" height="40" fill="#ffd93d" opacity="0.6"/>
+  <rect x="410" y="187" width="8" height="33" fill="#ffd93d" opacity="0.5"/>
+  <rect x="430" y="193" width="8" height="27" fill="#ffd93d" opacity="0.4"/>
+  <rect x="450" y="198" width="8" height="22" fill="#ffd93d" opacity="0.35"/>
+  <rect x="470" y="203" width="8" height="17" fill="#ffd93d" opacity="0.3"/>
+  <rect x="490" y="208" width="8" height="12" fill="#ffd93d" opacity="0.25"/>
+  <rect x="510" y="212" width="8" height="8" fill="#ffd93d" opacity="0.2"/>
+
+  <text x="435" y="248" text-anchor="middle" fill="#ffd93d" font-size="9">高频维度被过度压缩</text>
+  <text x="435" y="262" text-anchor="middle" fill="#888" font-size="8">近距离分辨率下降</text>
+
+  <!-- YaRN -->
+  <rect x="590" y="45" width="270" height="220" rx="10" fill="rgba(107,203,119,0.05)" stroke="#6bcb77"/>
+  <text x="725" y="70" text-anchor="middle" fill="#6bcb77" font-size="11" font-weight="bold">YaRN (我们在用!)</text>
+  <text x="725" y="92" text-anchor="middle" fill="#aaa" font-size="9">高频不缩放 + 低频缩放 + 温度修正</text>
+  <text x="725" y="112" text-anchor="middle" fill="#aaa" font-size="9">分频段差异化处理</text>
+
+  <!-- YaRN frequency bars (hybrid) -->
+  <line x1="620" y1="150" x2="830" y2="150" stroke="#555" stroke-width="1"/>
+  <line x1="620" y1="130" x2="620" y2="230" stroke="#555" stroke-width="1"/>
+
+  <!-- High freq: unchanged -->
+  <rect x="630" y="155" width="8" height="70" fill="#ff6b6b" opacity="0.8"/>
+  <rect x="650" y="165" width="8" height="60" fill="#ff6b6b" opacity="0.7"/>
+  <rect x="670" y="175" width="8" height="50" fill="#ff6b6b" opacity="0.6"/>
+  <!-- Transition -->
+  <rect x="690" y="185" width="8" height="38" fill="#ffd93d" opacity="0.5"/>
+  <rect x="710" y="190" width="8" height="30" fill="#ffd93d" opacity="0.4"/>
+  <!-- Low freq: scaled -->
+  <rect x="730" y="198" width="8" height="20" fill="#6bcb77" opacity="0.5"/>
+  <rect x="750" y="203" width="8" height="15" fill="#6bcb77" opacity="0.4"/>
+  <rect x="770" y="207" width="8" height="11" fill="#6bcb77" opacity="0.3"/>
+  <rect x="790" y="210" width="8" height="8" fill="#6bcb77" opacity="0.25"/>
+
+  <!-- Legend under YaRN -->
+  <rect x="625" y="232" width="10" height="10" fill="#ff6b6b" opacity="0.7"/>
+  <text x="640" y="241" fill="#aaa" font-size="8">高频: 不缩放 (保持近距离精度)</text>
+  <rect x="625" y="247" width="10" height="10" fill="#ffd93d" opacity="0.5"/>
+  <text x="640" y="256" fill="#aaa" font-size="8">过渡: 部分缩放</text>
+  <rect x="625" y="262" width="10" height="10" fill="#6bcb77" opacity="0.5"/>
+  <text x="640" y="271" fill="#aaa" font-size="8">低频: 线性缩放 (扩展远距离)</text>
+</svg>
+</div>
+<p class="caption">图 6: RoPE 长度扩展方法。YaRN 的核心创新是分频段处理：保持高频维度不变（近距离精度），只缩放低频维度（远距离扩展），加温度修正补偿 softmax 分布变化。</p>
+
+<h3>YaRN 实现要点</h3>
+
+<pre><span class="cm"># YaRN RoPE 配置 (我们的 Qwen3-4B 128K 训练)</span>
+cfg.model.position_embedding_type = <span class="str">"yarn"</span>
+cfg.model.yarn_original_max_position_embeddings = <span class="num">40960</span>   <span class="cm"># 原始训练长度</span>
+cfg.model.yarn_rotary_scaling_factor = <span class="num">131072</span> / <span class="num">40960</span>    <span class="cm"># ≈ 3.2x 扩展</span>
+cfg.model.yarn_beta_fast = <span class="num">32.0</span>    <span class="cm"># 高频截止 (dim_i &lt; beta_fast → 不缩放)</span>
+cfg.model.yarn_beta_slow = <span class="num">1.0</span>     <span class="cm"># 低频截止 (dim_i &gt; beta_slow → 全缩放)</span>
+cfg.model.yarn_mscale = <span class="num">1.0</span>       <span class="cm"># attention temperature 修正系数</span>
+
+
+<span class="cm"># YaRN 频率计算核心逻辑</span>
+<span class="kw">def</span> <span class="fn">yarn_freqs</span>(dim, base, scale_factor, beta_fast, beta_slow, original_max_pos):
+    <span class="cm">"""YaRN: 分频段差异化缩放 + 温度修正"""</span>
+    freqs = <span class="num">1.0</span> / (base ** (torch.arange(<span class="num">0</span>, dim, <span class="num">2</span>).float() / dim))
+
+    <span class="cm"># 波长 = 2π/freq, 原始能覆盖的位置数 = wavelength / (2π)</span>
+    wavelengths = <span class="num">2</span> * math.pi / freqs
+    low_freq_wavelen = original_max_pos / beta_slow
+    high_freq_wavelen = original_max_pos / beta_fast
+
+    <span class="cm"># 三段: 高频(不缩放) / 过渡(插值) / 低频(全缩放)</span>
+    scaled_freqs = []
+    <span class="kw">for</span> freq, wl <span class="kw">in</span> zip(freqs, wavelengths):
+        <span class="kw">if</span> wl < high_freq_wavelen:
+            scaled_freqs.append(freq)           <span class="cm"># 高频: 保持原样</span>
+        <span class="kw">elif</span> wl > low_freq_wavelen:
+            scaled_freqs.append(freq / scale_factor)  <span class="cm"># 低频: 线性缩放</span>
+        <span class="kw">else</span>:
+            <span class="cm"># 过渡区: 线性插值</span>
+            ratio = (wl - high_freq_wavelen) / (low_freq_wavelen - high_freq_wavelen)
+            scaled_freqs.append(freq * (<span class="num">1</span> - ratio) + freq / scale_factor * ratio)
+
+    <span class="kw">return</span> torch.tensor(scaled_freqs)
+</pre>
+
+<table class="config-table">
+    <tr><th>方法</th><th>原理</th><th>优点</th><th>缺点</th><th>代表模型</th></tr>
+    <tr>
+        <td><span class="tag tag-red">Position Interpolation</span></td>
+        <td>所有位置线性压缩: pos' = pos / scale</td>
+        <td>简单</td>
+        <td>近距离精度大幅下降</td>
+        <td>CodeLlama</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-yellow">NTK-Aware</span></td>
+        <td>增大 base → 所有频率均匀降低</td>
+        <td>免训练即可外推</td>
+        <td>高频维度被不必要压缩</td>
+        <td>-</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-green">YaRN</span></td>
+        <td>分频段: 高频不动 + 低频缩放 + temperature</td>
+        <td>最优的精度-长度平衡</td>
+        <td>需要少量继续训练</td>
+        <td>Qwen2.5/3, 我们的 4B 128K</td>
+    </tr>
+    <tr>
+        <td><span class="tag tag-blue">LongRoPE</span></td>
+        <td>进化搜索每个维度的最优缩放因子</td>
+        <td>极长外推 (2M+)</td>
+        <td>搜索成本高</td>
+        <td>Phi-3</td>
+    </tr>
+</table>
+
+<div class="insight">
+    <div class="insight-title">为什么 RoPE 取代了 Learned / Sinusoidal PE？</div>
+    <p>
+    <strong>1. 相对位置编码</strong>：Attention score 自动只依赖 (m-n)，无需额外设计<br>
+    <strong>2. 无额外参数</strong>：不像 Learned PE 需要可训练的 embedding table<br>
+    <strong>3. 长度外推</strong>：通过调整 base / 频率可以扩展到训练时未见过的长度<br>
+    <strong>4. 计算高效</strong>：只需要逐元素乘法 (cos/sin)，可融合进 GEMM kernel<br>
+    <strong>5. 与 FlashAttention 兼容</strong>：可以在 kernel 内部 fused 应用
+    </p>
+</div>
+
+<div class="separator"></div>
+
+<!-- =============================================================== -->
+<!-- SUMMARY TABLE                                                   -->
+<!-- =============================================================== -->
+<h2>总结: 现代 LLM 架构选型</h2>
+
+<table class="config-table">
+    <tr><th>组件</th><th>经典选择</th><th>最新趋势 (2025-2026)</th><th>代表</th></tr>
+    <tr>
+        <td>Attention</td>
+        <td>MHA → GQA</td>
+        <td><span class="highlight">MLA</span> (极致 KV 压缩)</td>
+        <td>DeepSeek-V3, Kimi-K2</td>
+    </tr>
+    <tr>
+        <td>FFN</td>
+        <td>Dense SwiGLU</td>
+        <td><span class="highlight">Fine-grained MoE</span> (256E, Top-8)</td>
+        <td>DeepSeek-V3, Qwen3-MoE</td>
+    </tr>
+    <tr>
+        <td>位置编码</td>
+        <td>RoPE + NTK</td>
+        <td><span class="highlight">YaRN / LongRoPE</span> (128K-1M)</td>
+        <td>Qwen2.5/3, Llama-3.1</td>
+    </tr>
+    <tr>
+        <td>Norm</td>
+        <td>LayerNorm</td>
+        <td><span class="highlight">RMSNorm</span> (更高效)</td>
+        <td>几乎所有现代 LLM</td>
+    </tr>
+    <tr>
+        <td>多模态</td>
+        <td>Adapter (后插)</td>
+        <td><span class="highlight">MoT</span> (专家化 Transformer)</td>
+        <td>Chameleon, GLM-5V</td>
+    </tr>
+</table>
+
+<p class="note" style="margin-top: 50px; text-align: center;">
+    Attention Mechanisms / MoE Architecture / RoPE Position Encoding — Comprehensive Guide
+</p>
+
+<footer>Generated 2026.06.02 | Attention / MoE / RoPE</footer>
+</div>
+</body>
+</html>

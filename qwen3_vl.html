@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3-VL Architecture</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #38d9a9, #20c997); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #38d9a9; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: stretch; }
+.three-col .col-code { min-width: 0; }
+.three-col .col-svg { min-width: 0; }
+.three-col .col-caption { display: flex; flex-direction: column; justify-content: center; padding: 16px; background: #0f0f18; border: 1px solid #1e1e30; border-radius: 12px; }
+.three-col .col-caption h3 { margin-top: 0; color: #38d9a9; font-size: 1rem; }
+.three-col .col-caption p { font-size: 0.84rem; color: #9898b0; margin-bottom: 8px; }
+.three-col .col-caption .formula { color: #20c997; font-size: 0.88rem; background: #11111a; padding: 8px 12px; border-radius: 6px; margin: 6px 0; line-height: 2; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Qwen3-VL Architecture</h1>
+<p class="subtitle">Dense Transformer with GQA, mRoPE 3-way positional encoding, Deepstack visual injection, dynamic-resolution ViT</p>
+
+<!-- ===== 1. Multimodal RoPE (mRoPE) ===== -->
+<h2>1. Multimodal RoPE (mRoPE)</h2>
+<p>Qwen3-VL uses a 3-way split rotary positional embedding: [temporal=24, height=20, width=20] dimensions interleaved across the head_dim. For text tokens all 3 channels share the same position; for vision tokens each channel encodes spatial/temporal grid coordinates independently.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">Qwen3VLMultimodalRotaryEmbedding</span>(nn.Module):
+    <span class="cm"># mrope_section = [24, 20, 20]  # T, H, W</span>
+
+    <span class="kw">def</span> <span class="fn">apply_interleaved_mrope</span>(self, freqs, section):
+        <span class="cm">"""Interleave [T,H,W] freqs into head_dim."""</span>
+        freqs_t = freqs[<span class="num">0</span>]  <span class="cm"># start with temporal</span>
+        <span class="kw">for</span> dim, offset <span class="kw">in</span> enumerate((<span class="num">1</span>,<span class="num">2</span>), start=<span class="num">1</span>):
+            length = section[dim] * <span class="num">3</span>
+            idx = slice(offset, length, <span class="num">3</span>)
+            freqs_t[..., idx] = freqs[dim, ..., idx]
+        <span class="kw">return</span> freqs_t
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, position_ids, mrope_section):
+        <span class="cm"># position_ids: [3, batch, seq_len]</span>
+        seq = position_ids.float()
+        inv_freq = self.inv_freq  <span class="cm"># [dim//2]</span>
+        freqs = (inv_freq @ seq)  <span class="cm"># [3, bs, seq, dim]</span>
+        freqs = self.apply_interleaved_mrope(freqs, section)
+        emb = torch.cat((freqs, freqs), dim=-<span class="num">1</span>)
+        <span class="kw">return</span> emb  <span class="cm"># [seq, bs, 1, 2*dim]</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 380 300" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="190" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">mRoPE: 3-Way Position Encoding</text>
+
+  <!-- Position IDs input -->
+  <rect x="120" y="30" width="140" height="35" rx="6" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="190" y="52" text-anchor="middle" fill="#38d9a9" font-size="9">position_ids [3, B, S]</text>
+
+  <path d="M150 65 L150 85" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar1)"/>
+  <path d="M190 65 L190 85" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar1)"/>
+  <path d="M230 65 L230 85" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar1)"/>
+
+  <!-- Three channels -->
+  <rect x="110" y="90" width="50" height="30" rx="5" fill="#e0776622" stroke="#e07766"/>
+  <text x="135" y="109" text-anchor="middle" fill="#e07766" font-size="8">Temporal</text>
+  <rect x="165" y="90" width="50" height="30" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="190" y="109" text-anchor="middle" fill="#667eea" font-size="8">Height</text>
+  <rect x="220" y="90" width="50" height="30" rx="5" fill="#f5a62322" stroke="#f5a623"/>
+  <text x="245" y="109" text-anchor="middle" fill="#f5a623" font-size="8">Width</text>
+
+  <!-- Section sizes -->
+  <text x="135" y="135" text-anchor="middle" fill="#e07766" font-size="8">dim=24</text>
+  <text x="190" y="135" text-anchor="middle" fill="#667eea" font-size="8">dim=20</text>
+  <text x="245" y="135" text-anchor="middle" fill="#f5a623" font-size="8">dim=20</text>
+
+  <path d="M150 140 L190 160" stroke="#38d9a966" stroke-width="1"/>
+  <path d="M190 140 L190 160" stroke="#38d9a966" stroke-width="1"/>
+  <path d="M230 140 L190 160" stroke="#38d9a966" stroke-width="1"/>
+
+  <!-- Interleave -->
+  <rect x="130" y="160" width="120" height="30" rx="6" fill="#20c99722" stroke="#20c997"/>
+  <text x="190" y="179" text-anchor="middle" fill="#20c997" font-size="9">Interleave [T,H,W,T,H,W...]</text>
+
+  <path d="M190 190 L190 210" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar1)"/>
+
+  <!-- Output -->
+  <rect x="120" y="215" width="140" height="30" rx="6" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="190" y="234" text-anchor="middle" fill="#38d9a9" font-size="9">RoPE emb [S, B, 1, 2*dim]</text>
+
+  <!-- Text vs Vision difference -->
+  <rect x="50" y="260" width="130" height="30" rx="5" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="115" y="278" text-anchor="middle" fill="#9898b0" font-size="7.5">Text: T=H=W=same pos</text>
+  <rect x="200" y="260" width="130" height="30" rx="5" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="265" y="278" text-anchor="middle" fill="#9898b0" font-size="7.5">Vision: T,H,W=grid coords</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Why mRoPE?</h3>
+<p>Standard RoPE encodes 1D position. Vision tokens exist in a 3D grid (time, height, width). mRoPE assigns independent position IDs per axis.</p>
+<div class="formula">$\text{head\_dim} = 128$ $\text{section} = [24, 20, 20] \; (\text{sum}=64)$ $\text{interleaved: } [T,H,W,T,H,W\ldots]$</div>
+<p>Qwen3-VL uses <strong style="color:#38d9a9">timestamps</strong> for video frames (not absolute time positions), allowing variable frame rates.</p>
+<p>The interleaved layout ensures each frequency band mixes all 3 spatial dimensions for richer representations.</p>
+</div>
+</div>
+
+<!-- ===== 2. Vision Encoder (ViT) ===== -->
+<h2>2. Vision Encoder (ViT with 2D RoPE)</h2>
+<p>Conv3d patch embedding (kernel=[2,14,14]) handles both images and video. Learnable 2D positional embedding on a 48x48 grid with bilinear interpolation for dynamic resolution. 2D RoPE inside ViT attention blocks. Window attention via packed sequences (per-frame).</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">Qwen3VLVisionModel</span>(VisionModule):
+    <span class="cm"># patch_size=14, temporal_patch_size=2</span>
+    <span class="cm"># spatial_merge_size=2, num_pos_embed=2304</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, config):
+        self.patch_embed = Conv3d(
+            <span class="num">3</span>, hidden, kernel=[<span class="num">2</span>,<span class="num">14</span>,<span class="num">14</span>])
+        self.pos_embed = Embedding(<span class="num">2304</span>, hidden)
+        self.rotary_pos_emb = VisionRotaryEmb(
+            head_dim // <span class="num">2</span>)  <span class="cm"># 2D RoPE</span>
+        self.decoder = VisionTransformerBlock(...)
+        self.merger = PatchMerger(...)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, pixels, grid_thw):
+        x = self.patch_embed(pixels)
+        x += self.fast_pos_embed_interpolate(grid_thw)
+        rope = self.rot_pos_emb(grid_thw)  <span class="cm"># 2D</span>
+        x, deepstack = self.decoder(x, rope)
+        x = self.merger(x)  <span class="cm"># spatial merge 2x2</span>
+        <span class="kw">return</span> x, deepstack</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 380 320" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="190" y="16" text-anchor="middle" fill="#6b6b80" font-size="10">Vision Encoder Pipeline</text>
+
+  <!-- Input -->
+  <rect x="120" y="28" width="140" height="30" rx="6" fill="#e0776622" stroke="#e07766"/>
+  <text x="190" y="47" text-anchor="middle" fill="#e07766" font-size="9">Image/Video Pixels</text>
+  <path d="M190 58 L190 72" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- Conv3D -->
+  <rect x="120" y="76" width="140" height="28" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="190" y="94" text-anchor="middle" fill="#667eea" font-size="9">Conv3D Patch Embed [2,14,14]</text>
+  <path d="M190 104 L190 118" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- Pos embed add -->
+  <rect x="120" y="122" width="140" height="28" rx="6" fill="#20c99722" stroke="#20c997"/>
+  <text x="190" y="140" text-anchor="middle" fill="#20c997" font-size="9">+ 2D Pos Embed (interp 48x48)</text>
+  <path d="M190 150 L190 164" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- ViT Blocks -->
+  <rect x="100" y="168" width="180" height="50" rx="8" fill="#38d9a911" stroke="#38d9a9"/>
+  <text x="190" y="188" text-anchor="middle" fill="#38d9a9" font-size="9">ViT Transformer Blocks (N layers)</text>
+  <text x="190" y="205" text-anchor="middle" fill="#6b6b80" font-size="8">2D RoPE + Window Attn (per-frame)</text>
+
+  <!-- Deepstack arrows -->
+  <path d="M280 180 L320 180 L320 240" stroke="#f5a623" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="330" y="210" fill="#f5a623" font-size="7" text-anchor="start">deepstack</text>
+  <text x="330" y="220" fill="#f5a623" font-size="7" text-anchor="start">features</text>
+
+  <path d="M190 218 L190 235" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- Patch Merger -->
+  <rect x="120" y="239" width="140" height="28" rx="6" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="190" y="257" text-anchor="middle" fill="#c678dd" font-size="9">Patch Merger (2x2 spatial merge)</text>
+  <path d="M190 267 L190 281" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- Output -->
+  <rect x="120" y="285" width="140" height="25" rx="6" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="190" y="301" text-anchor="middle" fill="#38d9a9" font-size="9">Vision Tokens [N_vis, D_llm]</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Dynamic Resolution</h3>
+<p>No fixed image size. The 48x48 learned position grid is bilinearly interpolated to any resolution at runtime.</p>
+<div class="formula">$\text{patch\_size} = 14,\; \text{temporal\_patch\_size} = 2$ $\text{spatial\_merge} = 2 \times 2 \rightarrow 4 \times \text{ reduction}$ $\text{num\_pos\_embeddings} = 2304 \; (48 \times 48)$</div>
+<p><strong style="color:#38d9a9">2D RoPE</strong> in vision (not mRoPE): each attention head uses row/col coordinates for rotary embeddings within each frame.</p>
+<p>Window attention: each video frame is treated as a separate sequence via packed_seq_params (cu_seqlens per frame).</p>
+</div>
+</div>
+
+<!-- ===== 3. Deepstack Visual Injection ===== -->
+<h2>3. Deepstack Visual Injection</h2>
+<p>Instead of injecting vision features only at the input, Qwen3-VL extracts intermediate ViT features at specific layers (e.g. [8, 16, 24]) and adds them into corresponding LLM decoder layers. Each injection point has its own PatchMerger projector.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">Qwen3VLVisionTransformerBlock</span>:
+    <span class="cm"># deepstack_visual_indexes = [8, 16, 24]</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, config):
+        self.deepstack_merger_list = nn.ModuleList([
+            PatchMerger(config, use_postshuffle_norm=<span class="kw">True</span>)
+            <span class="kw">for</span> _ <span class="kw">in</span> config.deepstack_visual_indexes
+        ])
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, hidden_states, ...):
+        deepstack_features = []
+        <span class="kw">for</span> l_no, layer <span class="kw">in</span> enumerate(self.layers):
+            hidden_states = layer(hidden_states, ...)
+            <span class="kw">if</span> l_no <span class="kw">in</span> self.deepstack_visual_indexes:
+                idx = self.deepstack_visual_indexes.index(l_no)
+                feat = self.deepstack_merger_list[idx](
+                    hidden_states)
+                deepstack_features.append(feat)
+        <span class="kw">return</span> hidden_states, deepstack_features
+
+<span class="cm"># In LLM decoder:</span>
+<span class="kw">def</span> <span class="fn">_deepstack_process</span>(self, h, mask, emb):
+    h[mask] = h[mask].clone() + emb
+    <span class="kw">return</span> h</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar3" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="200" y="16" text-anchor="middle" fill="#6b6b80" font-size="10">Deepstack: Multi-Layer Visual Injection</text>
+
+  <!-- ViT side -->
+  <text x="100" y="40" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">Vision Encoder</text>
+  <rect x="50" y="50" width="100" height="22" rx="4" fill="#667eea11" stroke="#667eea44"/>
+  <text x="100" y="64" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 0-7</text>
+  <rect x="50" y="80" width="100" height="22" rx="4" fill="#667eea22" stroke="#667eea"/>
+  <text x="100" y="94" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 8 *</text>
+  <rect x="50" y="110" width="100" height="22" rx="4" fill="#667eea11" stroke="#667eea44"/>
+  <text x="100" y="124" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 9-15</text>
+  <rect x="50" y="140" width="100" height="22" rx="4" fill="#667eea22" stroke="#667eea"/>
+  <text x="100" y="154" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 16 *</text>
+  <rect x="50" y="170" width="100" height="22" rx="4" fill="#667eea11" stroke="#667eea44"/>
+  <text x="100" y="184" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 17-23</text>
+  <rect x="50" y="200" width="100" height="22" rx="4" fill="#667eea22" stroke="#667eea"/>
+  <text x="100" y="214" text-anchor="middle" fill="#667eea" font-size="7">ViT Layer 24 *</text>
+
+  <!-- Merger boxes -->
+  <rect x="165" y="78" width="55" height="18" rx="3" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="192" y="90" text-anchor="middle" fill="#c678dd" font-size="6.5">Merger 0</text>
+  <rect x="165" y="138" width="55" height="18" rx="3" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="192" y="150" text-anchor="middle" fill="#c678dd" font-size="6.5">Merger 1</text>
+  <rect x="165" y="198" width="55" height="18" rx="3" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="192" y="210" text-anchor="middle" fill="#c678dd" font-size="6.5">Merger 2</text>
+
+  <!-- Arrows from ViT to Merger -->
+  <path d="M150 91 L165 87" stroke="#c678dd" stroke-width="1" marker-end="url(#ar3)"/>
+  <path d="M150 151 L165 147" stroke="#c678dd" stroke-width="1" marker-end="url(#ar3)"/>
+  <path d="M150 211 L165 207" stroke="#c678dd" stroke-width="1" marker-end="url(#ar3)"/>
+
+  <!-- LLM side -->
+  <text x="310" y="40" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">LLM Decoder</text>
+  <rect x="260" y="50" width="100" height="22" rx="4" fill="#38d9a911" stroke="#38d9a944"/>
+  <text x="310" y="64" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 0</text>
+  <rect x="260" y="80" width="100" height="22" rx="4" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="310" y="94" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 1 (+vis)</text>
+  <rect x="260" y="110" width="100" height="22" rx="4" fill="#38d9a911" stroke="#38d9a944"/>
+  <text x="310" y="124" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 2</text>
+  <rect x="260" y="140" width="100" height="22" rx="4" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="310" y="154" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 3 (+vis)</text>
+  <rect x="260" y="170" width="100" height="22" rx="4" fill="#38d9a911" stroke="#38d9a944"/>
+  <text x="310" y="184" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 4</text>
+  <rect x="260" y="200" width="100" height="22" rx="4" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="310" y="214" text-anchor="middle" fill="#38d9a9" font-size="7">LLM Layer 5 (+vis)</text>
+
+  <!-- Arrows from Merger to LLM -->
+  <path d="M220 87 L260 91" stroke="#f5a623" stroke-width="1.2" marker-end="url(#ar3)" stroke-dasharray="3,2"/>
+  <path d="M220 147 L260 151" stroke="#f5a623" stroke-width="1.2" marker-end="url(#ar3)" stroke-dasharray="3,2"/>
+  <path d="M220 207 L260 211" stroke="#f5a623" stroke-width="1.2" marker-end="url(#ar3)" stroke-dasharray="3,2"/>
+
+  <!-- Legend -->
+  <rect x="80" y="260" width="240" height="60" rx="8" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="200" y="280" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Injection Operation</text>
+  <text x="200" y="298" text-anchor="middle" fill="#c4c4d4" font-size="8" font-family="monospace">h[vision_mask] += merger_output</text>
+  <text x="200" y="312" text-anchor="middle" fill="#6b6b80" font-size="7">Additive residual at vision token positions only</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Multi-Scale Features</h3>
+<p>Deepstack extracts features at multiple ViT depths, providing the LLM with both low-level (edges, textures) and high-level (semantics) visual information.</p>
+<div class="formula">$\text{deepstack\_visual\_indexes} = [8, 16, 24]$ $\text{Each has its own PatchMerger}$ $\text{Injection: } h[\text{mask}] \mathrel{+}= \text{projected\_feat}$</div>
+<p>Each PatchMerger uses <strong style="color:#38d9a9">postshuffle normalization</strong>: first reshape to merged spatial dims, then LayerNorm, then 2-layer MLP projection.</p>
+<p>This is a key architectural difference from Qwen2.5-VL which only injects at the input layer.</p>
+</div>
+</div>
+
+<!-- ===== 4. Patch Merger (MLP Projector) ===== -->
+<h2>4. Patch Merger (MLP Projector)</h2>
+<p>The PatchMerger spatially merges 2x2 adjacent vision patches into one token, then projects to the LLM hidden dimension via a 2-layer MLP with GELU activation. This reduces vision token count by 4x while projecting to language space.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">Qwen3VLVisionPatchMerger</span>(MegatronModule):
+    <span class="cm"># spatial_merge_size = 2 -> merge 2x2 patches</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, config):
+        merge_dim = hidden * (spatial_merge**<span class="num">2</span>)
+        <span class="cm"># merge_dim = hidden * 4</span>
+
+        self.patch_norm = LayerNorm(merge_dim)
+        self.linear_fc1 = ColumnParallelLinear(
+            merge_dim, merge_dim)  <span class="cm"># TP split</span>
+        self.activation = gelu_tanh
+        self.linear_fc2 = RowParallelLinear(
+            merge_dim, out_hidden_size)  <span class="cm"># -> D_llm</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, hidden_states):
+        <span class="cm"># Reshape: [N, H] -> [N/4, H*4]</span>
+        x = hidden_states.view(-<span class="num">1</span>, self.merge_dim)
+        x = self.patch_norm(x)
+        x = self.linear_fc1(x)
+        x = self.activation(x)
+        x = self.linear_fc2(x)  <span class="cm"># [N/4, D_llm]</span>
+        <span class="kw">return</span> x</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 380 300" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar4" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="190" y="16" text-anchor="middle" fill="#6b6b80" font-size="10">Patch Merger: 4x Token Reduction</text>
+
+  <!-- Input grid -->
+  <text x="100" y="42" text-anchor="middle" fill="#667eea" font-size="8">ViT output patches (H x W)</text>
+  <rect x="55" y="50" width="25" height="25" fill="#667eea33" stroke="#667eea"/>
+  <rect x="80" y="50" width="25" height="25" fill="#667eea44" stroke="#667eea"/>
+  <rect x="105" y="50" width="25" height="25" fill="#667eea33" stroke="#667eea"/>
+  <rect x="130" y="50" width="25" height="25" fill="#667eea44" stroke="#667eea"/>
+  <rect x="55" y="75" width="25" height="25" fill="#667eea44" stroke="#667eea"/>
+  <rect x="80" y="75" width="25" height="25" fill="#667eea33" stroke="#667eea"/>
+  <rect x="105" y="75" width="25" height="25" fill="#667eea44" stroke="#667eea"/>
+  <rect x="130" y="75" width="25" height="25" fill="#667eea33" stroke="#667eea"/>
+
+  <!-- Merge indicator -->
+  <rect x="55" y="50" width="50" height="50" fill="none" stroke="#38d9a9" stroke-width="2" stroke-dasharray="3,2"/>
+  <rect x="105" y="50" width="50" height="50" fill="none" stroke="#38d9a9" stroke-width="2" stroke-dasharray="3,2"/>
+
+  <path d="M100 105 L100 125" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar4)"/>
+
+  <!-- Merged -->
+  <rect x="65" y="130" width="30" height="25" fill="#38d9a933" stroke="#38d9a9"/>
+  <rect x="105" y="130" width="30" height="25" fill="#38d9a933" stroke="#38d9a9"/>
+  <text x="100" y="170" text-anchor="middle" fill="#6b6b80" font-size="7">2x2 merged (4x fewer tokens)</text>
+
+  <!-- MLP Pipeline on right -->
+  <rect x="210" y="50" width="140" height="25" rx="5" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="280" y="66" text-anchor="middle" fill="#c678dd" font-size="8">LayerNorm(H*4)</text>
+  <path d="M280 75 L280 88" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar4)"/>
+
+  <rect x="210" y="92" width="140" height="25" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="280" y="108" text-anchor="middle" fill="#667eea" font-size="8">Linear FC1 (H*4 -> H*4) [TP]</text>
+  <path d="M280 117 L280 130" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar4)"/>
+
+  <rect x="210" y="134" width="140" height="25" rx="5" fill="#20c99722" stroke="#20c997"/>
+  <text x="280" y="150" text-anchor="middle" fill="#20c997" font-size="8">GELU (tanh approx)</text>
+  <path d="M280 159 L280 172" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar4)"/>
+
+  <rect x="210" y="176" width="140" height="25" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="280" y="192" text-anchor="middle" fill="#667eea" font-size="8">Linear FC2 (H*4 -> D_llm) [TP]</text>
+  <path d="M280 201 L280 218" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar4)"/>
+
+  <rect x="220" y="222" width="120" height="22" rx="5" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="280" y="237" text-anchor="middle" fill="#38d9a9" font-size="8">Vision Tokens (D_llm)</text>
+
+  <!-- Dimension annotation -->
+  <rect x="80" y="250" width="220" height="35" rx="6" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="190" y="265" text-anchor="middle" fill="#9898b0" font-size="7.5">Example: ViT hidden=1280, LLM hidden=4096</text>
+  <text x="190" y="278" text-anchor="middle" fill="#9898b0" font-size="7.5">merge_dim = 1280*4 = 5120, output = 4096</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Token Compression</h3>
+<p>A 448x448 image produces 32x32=1024 patches at patch_size=14. After 2x2 merge: 16x16=256 tokens fed to the LLM.</p>
+<div class="formula">$N_{\text{patches}} = \frac{H}{14} \times \frac{W}{14}$ $N_{\text{tokens}} = \frac{N_{\text{patches}}}{4}$ $\text{merge\_dim} = \text{hidden} \times 4$ $\text{output\_dim} = D_{\text{llm}}$</div>
+<p>The merger uses <strong style="color:#38d9a9">Tensor Parallelism</strong> (ColumnParallel + RowParallel) for efficient multi-GPU training.</p>
+<p>GELU with tanh approximation matches the vision encoder's activation function (not SwiGLU used in the LLM).</p>
+</div>
+</div>
+
+<!-- ===== 5. Full Model Pipeline ===== -->
+<h2>5. Full Model Pipeline (Qwen3VLModel)</h2>
+<p>The complete forward pass: vision encoder produces embeddings + deepstack features, which are scattered into the LLM token sequence at vision token positions. The LLM uses GQA with mRoPE and receives deepstack injections at early layers. Supports context parallelism, sequence packing (THD), and distributed training.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">Qwen3VLModel</span>(MegatronModule):
+    <span class="kw">def</span> <span class="fn">forward</span>(self, input_ids, pixel_values,
+              image_grid_thw, ...):
+        <span class="cm"># 1. Vision encoding</span>
+        vis_data, grid, mask = reorganize_inputs(...)
+        vis_emb, deepstack = self.vision_model(
+            vis_data, grid)
+
+        <span class="cm"># 2. Text embedding + vision scatter</span>
+        combined = self.language_model.embedding(
+            input_ids)
+        combined[mask] = vis_emb  <span class="cm"># scatter</span>
+
+        <span class="cm"># 3. Compute mRoPE position_ids</span>
+        pos_ids, _ = get_rope_index(
+            spatial_merge_size,
+            image_token_id, video_token_id,
+            input_ids, image_grid_thw, ...)
+
+        <span class="cm"># 4. LLM forward with deepstack</span>
+        output = self.language_model(
+            decoder_input=combined,
+            position_ids=pos_ids,
+            deepstack_visual_embeds=deepstack,
+            visual_pos_masks=mask)
+        <span class="kw">return</span> output</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar5" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="200" y="16" text-anchor="middle" fill="#6b6b80" font-size="10">Qwen3-VL End-to-End Pipeline</text>
+
+  <!-- Inputs -->
+  <rect x="30" y="30" width="80" height="25" rx="5" fill="#e0776622" stroke="#e07766"/>
+  <text x="70" y="46" text-anchor="middle" fill="#e07766" font-size="8">Pixels</text>
+  <rect x="160" y="30" width="80" height="25" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="46" text-anchor="middle" fill="#667eea" font-size="8">Input IDs</text>
+  <rect x="290" y="30" width="80" height="25" rx="5" fill="#f5a62322" stroke="#f5a623"/>
+  <text x="330" y="46" text-anchor="middle" fill="#f5a623" font-size="8">Grid THW</text>
+
+  <!-- Vision Encoder -->
+  <path d="M70 55 L70 75" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar5)"/>
+  <rect x="20" y="78" width="100" height="35" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="70" y="95" text-anchor="middle" fill="#667eea" font-size="8">Vision Encoder</text>
+  <text x="70" y="107" text-anchor="middle" fill="#6b6b80" font-size="6.5">ViT + PatchMerger</text>
+
+  <!-- Embedding -->
+  <path d="M200 55 L200 75" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar5)"/>
+  <rect x="155" y="78" width="90" height="35" rx="6" fill="#20c99722" stroke="#20c997"/>
+  <text x="200" y="99" text-anchor="middle" fill="#20c997" font-size="8">Token Embedding</text>
+
+  <!-- mRoPE -->
+  <path d="M330 55 L330 75" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar5)"/>
+  <rect x="280" y="78" width="100" height="35" rx="6" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="330" y="95" text-anchor="middle" fill="#c678dd" font-size="8">get_rope_index</text>
+  <text x="330" y="107" text-anchor="middle" fill="#6b6b80" font-size="6.5">3D position IDs</text>
+
+  <!-- Scatter -->
+  <path d="M70 113 L150 135" stroke="#e07766" stroke-width="1" marker-end="url(#ar5)"/>
+  <path d="M200 113 L200 130" stroke="#38d9a9" stroke-width="1" marker-end="url(#ar5)"/>
+  <rect x="130" y="133" width="140" height="28" rx="6" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="200" y="151" text-anchor="middle" fill="#38d9a9" font-size="8">Scatter: emb[vis_mask] = vis_emb</text>
+
+  <!-- LLM Decoder -->
+  <path d="M200 161 L200 180" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar5)"/>
+  <path d="M330 113 L330 190 L270 190" stroke="#c678dd" stroke-width="1" marker-end="url(#ar5)" stroke-dasharray="3,2"/>
+  <rect x="100" y="183" width="200" height="70" rx="8" fill="#38d9a911" stroke="#38d9a9"/>
+  <text x="200" y="203" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">LLM Decoder (GQA + mRoPE)</text>
+  <text x="200" y="220" text-anchor="middle" fill="#6b6b80" font-size="7.5">+ Deepstack injection at early layers</text>
+  <text x="200" y="237" text-anchor="middle" fill="#6b6b80" font-size="7.5">+ Context Parallel + Sequence Packing</text>
+
+  <!-- Deepstack arrow -->
+  <path d="M70 113 L70 200 L100 200" stroke="#f5a623" stroke-width="1" marker-end="url(#ar5)" stroke-dasharray="3,2"/>
+  <text x="55" y="160" fill="#f5a623" font-size="6.5" text-anchor="end">deepstack</text>
+
+  <!-- Output -->
+  <path d="M200 253 L200 270" stroke="#38d9a9" stroke-width="1.2" marker-end="url(#ar5)"/>
+  <rect x="140" y="274" width="120" height="25" rx="6" fill="#38d9a933" stroke="#38d9a9"/>
+  <text x="200" y="290" text-anchor="middle" fill="#38d9a9" font-size="8">Logits / Loss</text>
+
+  <!-- Features box -->
+  <rect x="60" y="310" width="280" height="22" rx="5" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="200" y="324" text-anchor="middle" fill="#6b6b80" font-size="7">Supports: TP, CP (zigzag), PP, SP, Sequence Packing (THD), CUDA Graphs</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Key Design Choices</h3>
+<p><strong style="color:#38d9a9">GQA</strong> in the LLM (fewer KV heads) reduces memory for long multimodal sequences.</p>
+<div class="formula">$\text{position\_embedding\_type} = \text{"mrope"}$ $\text{CP: zigzag split for load balance}$ $\text{vision\_dp\_when\_cp} = \text{True}$</div>
+<p>Vision tokens are processed with <strong style="color:#38d9a9">data parallelism across CP ranks</strong> (each rank processes a subset of images), then all-gathered before scattering into the LLM sequence.</p>
+<p>Qwen3-VL uses timestamps (not absolute frame indices) for video temporal encoding, enabling variable frame-rate support.</p>
+</div>
+</div>
+
+<footer>Generated 2026.05.28</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERNIE 4.5 VL — 双池 MoE + 3D M-RoPE 多模态架构</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #2932e1, #5b8def); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #2932e1; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #2932e10a; border: 1px solid #2932e122; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #5b8def; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #5b8def; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #5b8def; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ERNIE 4.5 VL — 28B-A3B</h1>
+<p class="subtitle">2025 | Baidu | 双池异构 MoE + Interleaved 3D M-RoPE + DFN ViT — 模态分治专家路由</p>
+
+<!-- ===== 1. Dual-Pool MoE ===== -->
+<h2>1. 核心架构：双池异构 MoE (Dual-Pool Heterogeneous MoE)</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ERNIE 4.5 VL 最核心设计:</span>
+<span class="cm"># 文本 token 和视觉 token 走不同的专家池</span>
+
+<span class="kw">class</span> <span class="fn">ErnieMultiTypeMoE</span>(nn.Module):
+    <span class="kw">def</span> __init__(self, config):
+        <span class="cm"># 三组专家并行运行:</span>
+        self.text_moe = MoELayer(
+            num_experts=<span class="num">64</span>,
+            ffn_hidden=<span class="num">1536</span>,   <span class="cm"># 较大</span>
+            top_k=<span class="num">6</span>,
+        )
+        self.vision_moe = MoELayer(
+            num_experts=<span class="num">64</span>,
+            ffn_hidden=<span class="num">512</span>,    <span class="cm"># 较小</span>
+            top_k=<span class="num">6</span>,
+        )
+        self.shared_experts = SharedMLP(
+            num_experts=<span class="num">2</span>,
+            ffn_hidden=<span class="num">3072</span>,   <span class="cm"># 最大</span>
+        )
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x, token_type_ids):
+        <span class="cm"># 按模态分流</span>
+        text_mask = (token_type_ids == <span class="num">0</span>)
+        vis_mask = (token_type_ids >= <span class="num">1</span>)
+
+        <span class="cm"># 文本 → 文本专家池</span>
+        text_out = self.text_moe(x[text_mask])
+        <span class="cm"># 视觉 → 视觉专家池</span>
+        vis_out = self.vision_moe(x[vis_mask])
+        <span class="cm"># 所有 token → 共享专家</span>
+        shared_out = self.shared_experts(x)
+
+        <span class="cm"># 合并输出</span>
+        out = zeros_like(x)
+        out[text_mask] = text_out
+        out[vis_mask] = vis_out
+        out += shared_out  <span class="cm"># 叠加共享</span>
+        <span class="kw">return</span> out
+
+<span class="cm"># 路由: sigmoid scoring (同 DeepSeek V3)</span>
+<span class="cm"># + Expert Bias 做 aux-free load balancing</span>
+<span class="cm"># score = sigmoid(W·x) + bias (仅用于选择)</span>
+<span class="cm"># weight = sigmoid(W·x) (不含 bias)</span>
+
+<span class="cm"># 整体参数量:</span>
+<span class="cm"># 28B total, 3B active per forward</span>
+<span class="cm"># Layer 0: Dense MLP (无 MoE)</span>
+<span class="cm"># Layer 1-28: ErnieMultiTypeMoE</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 440" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#5b8def"/></marker></defs>
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">ERNIE 4.5 VL: 双池异构 MoE 架构</text>
+
+  <!-- Input -->
+  <rect x="140" y="35" width="140" height="30" rx="6" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="210" y="54" text-anchor="middle" fill="#4facfe" font-size="9">Hidden States (mixed modality)</text>
+
+  <!-- Router / Dispatcher -->
+  <path d="M 210 65 L 210 85" stroke="#5b8def" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <rect x="145" y="85" width="130" height="28" rx="5" fill="#2932e122" stroke="#2932e1"/>
+  <text x="210" y="103" text-anchor="middle" fill="#5b8def" font-size="9" font-weight="bold">Token Type Router</text>
+  <text x="210" y="114" text-anchor="middle" fill="#a8a8be" font-size="7">按 moe_mm_token_type_ids 分流</text>
+
+  <!-- Three branches -->
+  <path d="M 165 113 L 80 145" stroke="#ff6b6b" stroke-width="1.5"/>
+  <path d="M 210 113 L 210 145" stroke="#38d9a9" stroke-width="1.5"/>
+  <path d="M 255 113 L 340 145" stroke="#e599f7" stroke-width="1.5"/>
+
+  <!-- Text Expert Pool -->
+  <rect x="20" y="145" width="130" height="80" rx="8" fill="#1e1e2e" stroke="#ff6b6b"/>
+  <text x="85" y="165" text-anchor="middle" fill="#ff6b6b" font-size="9" font-weight="bold">Text Expert Pool</text>
+  <text x="85" y="183" text-anchor="middle" fill="#c4c4e0" font-size="8">64 experts, ffn=1536</text>
+  <text x="85" y="198" text-anchor="middle" fill="#c4c4e0" font-size="8">top-6 routing</text>
+  <text x="85" y="213" text-anchor="middle" fill="#a8a8be" font-size="7">sigmoid + expert bias</text>
+
+  <!-- Shared Experts -->
+  <rect x="155" y="145" width="110" height="80" rx="8" fill="#1e1e2e" stroke="#38d9a9"/>
+  <text x="210" y="165" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">Shared Experts</text>
+  <text x="210" y="183" text-anchor="middle" fill="#c4c4e0" font-size="8">2 experts, ffn=3072</text>
+  <text x="210" y="198" text-anchor="middle" fill="#c4c4e0" font-size="8">所有 token 都经过</text>
+  <text x="210" y="213" text-anchor="middle" fill="#a8a8be" font-size="7">不做 routing</text>
+
+  <!-- Vision Expert Pool -->
+  <rect x="270" y="145" width="130" height="80" rx="8" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="335" y="165" text-anchor="middle" fill="#e599f7" font-size="9" font-weight="bold">Vision Expert Pool</text>
+  <text x="335" y="183" text-anchor="middle" fill="#c4c4e0" font-size="8">64 experts, ffn=512</text>
+  <text x="335" y="198" text-anchor="middle" fill="#c4c4e0" font-size="8">top-6 routing</text>
+  <text x="335" y="213" text-anchor="middle" fill="#a8a8be" font-size="7">sigmoid + expert bias</text>
+
+  <!-- Merge -->
+  <path d="M 85 225 L 210 260" stroke="#ff6b6b" stroke-width="1"/>
+  <path d="M 210 225 L 210 260" stroke="#38d9a9" stroke-width="1"/>
+  <path d="M 335 225 L 210 260" stroke="#e599f7" stroke-width="1"/>
+
+  <rect x="160" y="260" width="100" height="28" rx="5" fill="#5b8def22" stroke="#5b8def"/>
+  <text x="210" y="278" text-anchor="middle" fill="#5b8def" font-size="9">Sum &amp; Output</text>
+
+  <!-- Comparison -->
+  <rect x="20" y="305" width="380" height="120" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="325" text-anchor="middle" fill="#5b8def" font-size="10" font-weight="bold">vs 其他 MoE 设计</text>
+
+  <text x="40" y="348" fill="#5b8def" font-size="8">方案</text>
+  <text x="150" y="348" fill="#5b8def" font-size="8">Expert 划分</text>
+  <text x="310" y="348" fill="#5b8def" font-size="8">特点</text>
+
+  <text x="40" y="368" fill="#c4c4e0" font-size="8">DeepSeek V3</text>
+  <text x="150" y="368" fill="#c4c4e0" font-size="8">单池 256 + 1 shared</text>
+  <text x="310" y="368" fill="#c4c4e0" font-size="8">所有模态共享专家</text>
+
+  <text x="40" y="388" fill="#c4c4e0" font-size="8">Qwen3-235B</text>
+  <text x="150" y="388" fill="#c4c4e0" font-size="8">单池 128 + 8 shared</text>
+  <text x="310" y="388" fill="#c4c4e0" font-size="8">纯文本, 无视觉分离</text>
+
+  <text x="40" y="408" fill="#5b8def" font-size="8" font-weight="bold">ERNIE 4.5 VL</text>
+  <text x="150" y="408" fill="#5b8def" font-size="8">双池 64+64 + 2 shared</text>
+  <text x="310" y="408" fill="#5b8def" font-size="8">模态分治, 异构 ffn</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>为什么要双池？</h3>
+<p>文本和视觉 token 的信息密度、特征分布、FFN 需求截然不同。ERNIE 用<strong>模态分治</strong>策略：</p>
+<table>
+<tr><th>组件</th><th>参数</th><th>服务对象</th></tr>
+<tr><td>Text Pool</td><td>64 experts × ffn 1536</td><td>仅文本 token</td></tr>
+<tr><td>Vision Pool</td><td>64 experts × ffn 512</td><td>仅视觉 token</td></tr>
+<tr><td>Shared</td><td>2 experts × ffn 3072</td><td>所有 token</td></tr>
+</table>
+<div class="formula">
+$\text{output} = \text{MoE}_{\text{pool}}(x) + \text{Shared}(x)$
+$\text{pool} = \begin{cases} \text{text\_moe} & \text{if type\_id} = 0 \\ \text{vision\_moe} & \text{if type\_id} \geq 1 \end{cases}$
+</div>
+<p><strong>设计洞察：</strong>视觉专家 ffn 只有 512 (文本的 1/3)，因为视觉 token 经过 ViT + Resampler 后已高度压缩，不需要同等规模的 FFN 进一步变换。共享专家 ffn=3072 则做跨模态融合。</p>
+<div class="key-point"><strong>路由策略 (同 DeepSeek V3)：</strong>Sigmoid 独立打分 + Expert Bias 做无 aux-loss 的负载均衡。Bias 只在 top-k 选择时加入 (影响哪些专家被选中)，计算权重时不加 (保持梯度信号纯净)。Top-6 选 64 个专家 → 激活率 9.4%。</div>
+</div>
+</div>
+
+<!-- ===== 2. 3D M-RoPE ===== -->
+<h2>2. Interleaved 3D M-RoPE 位置编码</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ERNIE 使用自定义的 interleaved 3D M-RoPE</span>
+<span class="cm"># 与 Qwen2-VL 的 contiguous 布局不同!</span>
+
+<span class="cm"># 配置: head_dim=128, 64 frequency bands</span>
+<span class="cm"># mrope_section = [22, 22, 20]  # H, W, T</span>
+
+<span class="cm"># === Qwen2-VL: contiguous block 布局 ===</span>
+<span class="cm"># bands[0:22]  → T (temporal)</span>
+<span class="cm"># bands[22:44] → H (height)</span>
+<span class="cm"># bands[44:64] → W (width)</span>
+<span class="cm"># 每个维度连续占据一段 bands</span>
+
+<span class="cm"># === ERNIE: interleaved 布局 ===</span>
+<span class="cm"># even bands [0,2,4,...,42] → H (22 bands)</span>
+<span class="cm"># odd  bands [1,3,5,...,43] → W (22 bands)</span>
+<span class="cm"># bands [44:64]            → T (20 bands)</span>
+<span class="cm"># H 和 W 交错排列!</span>
+
+<span class="kw">class</span> <span class="fn">ErnieMultimodalRotaryEmbedding</span>:
+    <span class="kw">def</span> __init__(self, config):
+        self.head_dim = <span class="num">128</span>
+        self.mrope_section = [<span class="num">22</span>, <span class="num">22</span>, <span class="num">20</span>]
+        self.rope_base = <span class="num">500000.0</span>
+        <span class="cm"># rotary_interleaved = True</span>
+
+    <span class="kw">def</span> <span class="fn">get_position_ids</span>(self, input_ids, images):
+        <span class="cm"># 文本 token: T = H = W (三维相同)</span>
+        <span class="cm"># 图像 token: T=frame_idx, H/W=grid坐标</span>
+        <span class="cm"># 边界 token (IMAGE_START/END):</span>
+        <span class="cm">#   RoPE: 当作文本 (T=H=W)</span>
+        <span class="cm">#   MoE routing: 当作视觉!</span>
+        pos_ids = zeros(<span class="num">3</span>, seq_len)
+        <span class="kw">for</span> tok <span class="kw">in</span> input_ids:
+            <span class="kw">if</span> tok.is_text:
+                pos_ids[:, i] = [t, t, t]
+            <span class="kw">elif</span> tok.is_image:
+                pos_ids[:, i] = [h, w, t]
+        <span class="kw">return</span> pos_ids
+
+<span class="cm"># 为什么 interleaved 更好？</span>
+<span class="cm"># 直觉: H 和 W 交错 → 空间信息在频率域</span>
+<span class="cm"># 更均匀分布，避免某些 band 只编码空间</span>
+<span class="cm"># 某些 band 只编码时间的割裂</span>
+
+<span class="cm"># 数学等价性:</span>
+<span class="cm"># 对纯文本 (T=H=W), 两种布局结果完全相同</span>
+<span class="cm"># 差异只在多模态 token (H≠W≠T) 时体现</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">3D M-RoPE: Contiguous vs Interleaved 布局</text>
+
+  <!-- Qwen2-VL layout -->
+  <rect x="20" y="35" width="380" height="80" rx="8" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="210" y="55" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Qwen2-VL: Contiguous Block</text>
+
+  <!-- Frequency bands -->
+  <rect x="40" y="65" width="100" height="20" rx="3" fill="#f7971e22" stroke="#f7971e"/>
+  <text x="90" y="79" text-anchor="middle" fill="#f7971e" font-size="7">T (bands 0–21)</text>
+  <rect x="145" y="65" width="100" height="20" rx="3" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="195" y="79" text-anchor="middle" fill="#38d9a9" font-size="7">H (bands 22–43)</text>
+  <rect x="250" y="65" width="90" height="20" rx="3" fill="#e599f722" stroke="#e599f7"/>
+  <text x="295" y="79" text-anchor="middle" fill="#e599f7" font-size="7">W (bands 44–63)</text>
+
+  <text x="210" y="103" text-anchor="middle" fill="#a8a8be" font-size="7">时间、高度、宽度各占连续一段</text>
+
+  <!-- ERNIE layout -->
+  <rect x="20" y="125" width="380" height="100" rx="8" fill="#1e1e2e" stroke="#5b8def"/>
+  <text x="210" y="145" text-anchor="middle" fill="#5b8def" font-size="9" font-weight="bold">ERNIE 4.5: Interleaved</text>
+
+  <!-- Interleaved bands (visual) -->
+  <rect x="40" y="158" width="215" height="28" rx="3" fill="#11111a" stroke="#2a2a3a"/>
+  <text x="50" y="174" fill="#38d9a9" font-size="7">H</text>
+  <text x="64" y="174" fill="#e599f7" font-size="7">W</text>
+  <text x="78" y="174" fill="#38d9a9" font-size="7">H</text>
+  <text x="92" y="174" fill="#e599f7" font-size="7">W</text>
+  <text x="106" y="174" fill="#38d9a9" font-size="7">H</text>
+  <text x="120" y="174" fill="#e599f7" font-size="7">W</text>
+  <text x="134" y="174" fill="#38d9a9" font-size="7">H</text>
+  <text x="148" y="174" fill="#e599f7" font-size="7">W</text>
+  <text x="165" y="174" fill="#a8a8be" font-size="7">...</text>
+  <text x="180" y="174" fill="#38d9a9" font-size="7">H</text>
+  <text x="194" y="174" fill="#e599f7" font-size="7">W</text>
+  <text x="215" y="174" fill="#a8a8be" font-size="7">|</text>
+  <rect x="225" y="162" width="75" height="20" rx="3" fill="#f7971e11" stroke="#f7971e44"/>
+  <text x="262" y="176" text-anchor="middle" fill="#f7971e" font-size="7">T (bands 44–63)</text>
+
+  <text x="148" y="196" text-anchor="middle" fill="#a8a8be" font-size="7">← bands 0–43: H/W 交错 →</text>
+  <text x="262" y="196" text-anchor="middle" fill="#a8a8be" font-size="7">← 时间 →</text>
+
+  <text x="210" y="216" text-anchor="middle" fill="#5b8def" font-size="8">空间信息 (H,W) 在频率域交错分布</text>
+
+  <!-- Why it matters -->
+  <rect x="20" y="240" width="380" height="80" rx="8" fill="#5b8def08" stroke="#5b8def22"/>
+  <text x="210" y="260" text-anchor="middle" fill="#5b8def" font-size="10" font-weight="bold">Interleaved 的意义</text>
+  <text x="40" y="283" fill="#c4c4e0" font-size="9">• 图像 patch 的 (H,W) 位置对称处理 → 不偏向某个空间轴</text>
+  <text x="40" y="300" fill="#c4c4e0" font-size="9">• 低频 band 同时编码 H+W → 空间信息不被隔离到高/低频段</text>
+  <text x="40" y="317" fill="#a8a8be" font-size="8">• 对纯文本完全等价 (T=H=W 时 interleaved 与 contiguous 数学一致)</text>
+
+  <!-- Token type handling -->
+  <rect x="20" y="335" width="380" height="72" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="355" text-anchor="middle" fill="#5b8def" font-size="10" font-weight="bold">边界 Token 的双重身份</text>
+  <text x="40" y="378" fill="#c4c4e0" font-size="9">IMAGE_START / IMAGE_END / VIDEO_START / VIDEO_END:</text>
+  <text x="60" y="396" fill="#38d9a9" font-size="8">RoPE 位置: 当作文本 (T=H=W) → 与上下文对齐</text>
+  <text x="60" y="410" fill="#e599f7" font-size="8">MoE 路由: 当作视觉 (type≥1) → 走 vision expert pool</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>3D M-RoPE 对比</h3>
+<p>ERNIE 和 Qwen2-VL 都使用 3D Multi-modal RoPE，但频率分配策略不同：</p>
+<table>
+<tr><th>属性</th><th>Qwen2-VL</th><th>ERNIE 4.5</th></tr>
+<tr><td>H/W 分配</td><td>连续块</td><td>交错 (even/odd)</td></tr>
+<tr><td>Section</td><td>[22,22,20]</td><td>[22,22,20]</td></tr>
+<tr><td>RoPE base</td><td>1000000</td><td>500000</td></tr>
+<tr><td>Interleaved</td><td>否</td><td>是</td></tr>
+<tr><td>纯文本等价</td><td colspan="2" style="text-align:center">完全相同</td></tr>
+</table>
+<div class="formula">
+$\text{RoPE}(x, m) = x \cdot \cos(m\theta) + \text{rotate}(x) \cdot \sin(m\theta)$
+$\theta_i = \text{base}^{-2i/d}, \quad \text{base} = 500000$
+$\text{ERNIE band } i: \begin{cases} m = h_{\text{pos}} & i \text{ even}, i \lt 44 \\ m = w_{\text{pos}} & i \text{ odd}, i \lt 44 \\ m = t_{\text{pos}} & i \geq 44 \end{cases}$
+</div>
+<div class="key-point"><strong>LM backbone 参数：</strong>GQA 20 query heads / 4 KV heads, head_dim=128, RMSNorm, SiLU-gated MLP, 无线性 bias, hidden_dropout=0。与 DeepSeek V3 的 attention 配置接近，差异在 MoE 和 RoPE。</div>
+</div>
+</div>
+
+<!-- ===== 3. Vision Pipeline ===== -->
+<h2>3. 视觉管线：DFN ViT + Variable-Resolution Resampler</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ERNIE ViT: DFN-style (不是 CLIP/SigLIP)</span>
+<span class="cm"># 32 层, embed_dim=1280, 16 heads</span>
+
+<span class="kw">class</span> <span class="fn">DFNRopeViT</span>(nn.Module):
+    config = {
+        <span class="st">'depth'</span>: <span class="num">32</span>,
+        <span class="st">'embed_dim'</span>: <span class="num">1280</span>,
+        <span class="st">'num_heads'</span>: <span class="num">16</span>,
+        <span class="st">'head_dim'</span>: <span class="num">80</span>,       <span class="cm"># 非标准!</span>
+        <span class="st">'mlp_ratio'</span>: <span class="num">4</span>,       <span class="cm"># ffn=5120</span>
+        <span class="st">'patch_size'</span>: <span class="num">14</span>,
+        <span class="st">'activation'</span>: <span class="st">'quick_gelu'</span>,
+        <span class="st">'norm'</span>: <span class="st">'LayerNorm'</span>,  <span class="cm"># 非 RMSNorm!</span>
+        <span class="st">'bias'</span>: <span class="kw">True</span>,        <span class="cm"># QKV+MLP 都有 bias</span>
+    }
+
+<span class="cm"># 特殊: Patch Embed 用 Linear 而非 Conv2d</span>
+<span class="cm"># 输入已被 processor 预压平:</span>
+<span class="cm"># [B, N_patches, C*P*P] = [B, N, 588]</span>
+<span class="kw">class</span> <span class="fn">PatchEmbed</span>(nn.Module):
+    <span class="kw">def</span> __init__(self):
+        self.proj = nn.Linear(<span class="num">588</span>, <span class="num">1280</span>, bias=<span class="kw">False</span>)
+
+<span class="cm"># ViT 内部: Absolute 2D RoPE (非 interleaved)</span>
+<span class="cm"># 注意: 与 LM 的 interleaved style 不同!</span>
+<span class="cm"># ViT 用 rotate_half, LM 用 interleaved</span>
+
+<span class="cm"># === Resampler: 变分辨率空间+时间池化 ===</span>
+<span class="kw">class</span> <span class="fn">VariableResolutionResampler</span>(nn.Module):
+    <span class="kw">def</span> __init__(self):
+        <span class="cm"># 空间: 2×2 merge → 4 patches 合 1</span>
+        self.spatial_linear = MLP(
+            <span class="num">1280</span> * <span class="num">4</span>, <span class="num">1280</span> * <span class="num">4</span>, <span class="num">2560</span>
+        )  <span class="cm"># in=5120 → hidden=5120 → out=2560</span>
+        <span class="cm"># 时间: 帧间合并 (视频)</span>
+        self.temporal_linear = MLP(...)
+        <span class="cm"># 最终投影到 LM hidden_size</span>
+        self.mlp = MLP(<span class="num">2560</span>, <span class="num">2560</span>, <span class="num">2560</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, vit_out, grid_h, grid_w):
+        <span class="cm"># 2×2 spatial merge</span>
+        x = rearrange(vit_out,
+            <span class="st">'(h w) d -> (h/2 w/2) (4*d)'</span>)
+        x = self.spatial_linear(x)
+        <span class="cm"># 时间 merge (如果是视频)</span>
+        x = self.temporal_linear(x)
+        <span class="kw">return</span> self.mlp(x)
+
+<span class="cm"># Pixel 归一化: 在模型 forward 中做 (不在 processor)</span>
+<span class="cm"># 使用 CLIP mean/std</span>
+mean = [<span class="num">0.48145</span>, <span class="num">0.45783</span>, <span class="num">0.40821</span>]
+std  = [<span class="num">0.26863</span>, <span class="num">0.26130</span>, <span class="num">0.27578</span>]</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#5b8def"/></marker></defs>
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">ERNIE 4.5 VL 全流水线</text>
+
+  <!-- Image input -->
+  <rect x="30" y="35" width="100" height="35" rx="6" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="80" y="56" text-anchor="middle" fill="#4facfe" font-size="9">Raw Image</text>
+
+  <!-- Text input -->
+  <rect x="290" y="35" width="100" height="35" rx="6" fill="#ff6b6b22" stroke="#ff6b6b"/>
+  <text x="340" y="56" text-anchor="middle" fill="#ff6b6b" font-size="9">Text Tokens</text>
+
+  <!-- Processor -->
+  <path d="M 80 70 L 80 90" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <rect x="25" y="90" width="110" height="35" rx="6" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="80" y="107" text-anchor="middle" fill="#4facfe" font-size="8">Processor</text>
+  <text x="80" y="119" text-anchor="middle" fill="#a8a8be" font-size="7">flatten to [N, 588]</text>
+
+  <!-- ViT -->
+  <path d="M 80 125 L 80 145" stroke="#5b8def" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <rect x="15" y="145" width="130" height="70" rx="8" fill="#2932e122" stroke="#2932e1"/>
+  <text x="80" y="165" text-anchor="middle" fill="#5b8def" font-size="9" font-weight="bold">DFN ViT (32L)</text>
+  <text x="80" y="182" text-anchor="middle" fill="#c4c4e0" font-size="7">1280d, 16 heads</text>
+  <text x="80" y="195" text-anchor="middle" fill="#c4c4e0" font-size="7">2D Absolute RoPE</text>
+  <text x="80" y="208" text-anchor="middle" fill="#a8a8be" font-size="7">quick_gelu + LayerNorm</text>
+
+  <!-- Resampler -->
+  <path d="M 80 215 L 80 240" stroke="#5b8def" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <rect x="15" y="240" width="130" height="55" rx="8" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="80" y="258" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">Resampler</text>
+  <text x="80" y="273" text-anchor="middle" fill="#c4c4e0" font-size="7">2×2 spatial merge</text>
+  <text x="80" y="286" text-anchor="middle" fill="#c4c4e0" font-size="7">temporal merge (video)</text>
+
+  <!-- Merge into LM -->
+  <path d="M 80 295 L 80 320 L 210 340" stroke="#38d9a9" stroke-width="1.5"/>
+  <path d="M 340 70 L 340 320 L 210 340" stroke="#ff6b6b" stroke-width="1.5"/>
+
+  <!-- Combined sequence -->
+  <rect x="130" y="340" width="160" height="30" rx="6" fill="#5b8def22" stroke="#5b8def"/>
+  <text x="210" y="359" text-anchor="middle" fill="#5b8def" font-size="9">Mixed Sequence</text>
+
+  <!-- LM backbone -->
+  <path d="M 210 370 L 210 390" stroke="#5b8def" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <rect x="110" y="390" width="200" height="55" rx="8" fill="#1e1e2e" stroke="#5b8def"/>
+  <text x="210" y="410" text-anchor="middle" fill="#5b8def" font-size="9" font-weight="bold">LM Backbone (29 layers)</text>
+  <text x="210" y="425" text-anchor="middle" fill="#c4c4e0" font-size="8">Layer 0: Dense | Layer 1-28: Dual-Pool MoE</text>
+  <text x="210" y="438" text-anchor="middle" fill="#c4c4e0" font-size="8">GQA 20q/4kv + 3D Interleaved M-RoPE</text>
+
+  <!-- Token type labels -->
+  <rect x="155" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <rect x="165" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <rect x="175" y="335" width="8" height="8" rx="2" fill="#4facfe"/>
+  <rect x="185" y="335" width="8" height="8" rx="2" fill="#4facfe"/>
+  <rect x="195" y="335" width="8" height="8" rx="2" fill="#4facfe"/>
+  <rect x="205" y="335" width="8" height="8" rx="2" fill="#4facfe"/>
+  <rect x="215" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <rect x="225" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <rect x="235" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <rect x="245" y="335" width="8" height="8" rx="2" fill="#ff6b6b"/>
+  <text x="270" y="343" fill="#a8a8be" font-size="6">text=红 vis=蓝</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>ViT + Resampler 设计</h3>
+<p>ERNIE 视觉管线的三个非标准选择：</p>
+<table>
+<tr><th>选择</th><th>ERNIE</th><th>常见做法</th></tr>
+<tr><td>Patch Embed</td><td>Linear(588→1280)</td><td>Conv2d(3,d,14,14)</td></tr>
+<tr><td>ViT 激活</td><td>quick_gelu</td><td>GELU / SiLU</td></tr>
+<tr><td>ViT Norm</td><td>LayerNorm + bias</td><td>RMSNorm no-bias</td></tr>
+<tr><td>head_dim</td><td>80</td><td>64 / 128</td></tr>
+<tr><td>像素归一化</td><td>模型 forward 中</td><td>Processor 中</td></tr>
+</table>
+<div class="formula">
+$\text{quick\_gelu}(x) = x \cdot \sigma(1.702 \cdot x)$
+$\neq \text{gelu\_tanh}(x) = x \cdot \Phi_{\text{tanh}}(x)$
+</div>
+<p><strong>Resampler 空间压缩：</strong>2×2 merge 将 4 个相邻 patch 拼接为 1 个 token (5120d → 2560d)，视觉 token 数量降为原来的 1/4。对视频还有额外的帧间 temporal merge。</p>
+<div class="key-point"><strong>EP 下的 dummy token 技巧：</strong>当 Expert Parallel &gt; 1 时，alltoall 要求所有 rank 参与。如果某个 rank 没有视觉 token，会注入一个 dummy token 到 vision pool，确保集合通信不死锁。文本池同理。这是分布式训练中双池 MoE 的额外工程代价。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.02 | ERNIE 4.5 VL — Baidu Dual-Pool MoE Architecture</footer>
+</div>
+</body>
+</html>

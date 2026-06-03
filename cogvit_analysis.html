@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CogViT 架构详解 — GLM-5V-Turbo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #0f0f1a; color: #e0e0e0; line-height: 1.8; padding: 40px 20px;
+        }
+        .container { max-width: 100%; margin: 0; padding: 40px 40px; }
+        h1 {
+            text-align: center; font-size: 2.2em; margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .subtitle { text-align: center; color: #888; margin-bottom: 50px; font-size: 1.1em; }
+        h2 {
+            font-size: 1.5em; margin: 50px 0 20px; padding-left: 15px;
+            border-left: 4px solid #667eea;
+        }
+        h3 { font-size: 1.2em; margin: 30px 0 15px; color: #a0a0ff; }
+
+        /* Pipeline Diagram */
+        .pipeline {
+            display: flex; flex-direction: column; align-items: center;
+            gap: 0; margin: 40px 0;
+        }
+        .stage-box {
+            width: 90%; max-width: 800px; border-radius: 16px; padding: 30px;
+            position: relative; margin: 0;
+        }
+        .stage-box::after {
+            content: '▼'; position: absolute; bottom: -22px; left: 50%;
+            transform: translateX(-50%); font-size: 1.5em; color: #555;
+        }
+        .stage-box:last-child::after { display: none; }
+        .stage1 { background: linear-gradient(135deg, #1a1a3e, #2a1a4e); border: 1px solid #4a3a8e; }
+        .stage2 { background: linear-gradient(135deg, #1a3e2a, #1a4e3a); border: 1px solid #3a8e5a; margin-top: 30px; }
+        .stage3 { background: linear-gradient(135deg, #3e2a1a, #4e3a1a); border: 1px solid #8e6a3a; margin-top: 30px; }
+        .stage-label {
+            position: absolute; top: -12px; left: 30px;
+            background: #667eea; color: white; padding: 2px 14px;
+            border-radius: 12px; font-size: 0.85em; font-weight: bold;
+        }
+        .stage2 .stage-label { background: #3a9e5a; }
+        .stage3 .stage-label { background: #9e7a3a; }
+
+        /* Dual Teacher Diagram */
+        .dual-teacher {
+            display: flex; justify-content: center; align-items: center;
+            gap: 30px; margin: 25px 0; flex-wrap: wrap;
+        }
+        .teacher-card {
+            background: rgba(255,255,255,0.05); border-radius: 12px;
+            padding: 20px; text-align: center; width: 200px;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: transform 0.2s;
+        }
+        .teacher-card:hover { transform: translateY(-3px); }
+        .teacher-icon { font-size: 2.5em; margin-bottom: 10px; }
+        .teacher-name { font-weight: bold; color: #fff; margin-bottom: 5px; }
+        .teacher-role { font-size: 0.85em; color: #aaa; }
+        .arrow-merge { font-size: 2em; color: #667eea; }
+        .student-card {
+            background: linear-gradient(135deg, #667eea22, #764ba222);
+            border: 2px solid #667eea; border-radius: 12px;
+            padding: 20px; text-align: center; width: 220px;
+        }
+
+        /* Config Table */
+        .config-table {
+            width: 100%; border-collapse: collapse; margin: 20px 0;
+            font-size: 0.95em;
+        }
+        .config-table th {
+            background: rgba(102, 126, 234, 0.2); padding: 12px 16px;
+            text-align: left; border-bottom: 2px solid #667eea;
+        }
+        .config-table td {
+            padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .config-table tr:hover td { background: rgba(255,255,255,0.03); }
+        .highlight { color: #ffd700; font-weight: bold; }
+        .tag {
+            display: inline-block; background: rgba(102,126,234,0.2);
+            border: 1px solid #667eea; border-radius: 6px;
+            padding: 2px 8px; font-size: 0.8em; margin: 2px;
+        }
+        .tag-green { background: rgba(58,158,90,0.2); border-color: #3a9e5a; }
+        .tag-orange { background: rgba(158,122,58,0.2); border-color: #9e7a3a; }
+
+        /* Comparison */
+        .comparison {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px; margin: 30px 0;
+        }
+        .comp-card {
+            background: rgba(255,255,255,0.03); border-radius: 12px;
+            padding: 20px; border: 1px solid rgba(255,255,255,0.08);
+        }
+        .comp-card h4 { color: #667eea; margin-bottom: 10px; }
+        .comp-card.winner { border-color: #ffd700; }
+        .comp-card.winner h4 { color: #ffd700; }
+
+        /* Flow Diagram */
+        .flow-row {
+            display: flex; align-items: center; justify-content: center;
+            gap: 15px; margin: 15px 0; flex-wrap: wrap;
+        }
+        .flow-box {
+            background: rgba(102,126,234,0.15); border: 1px solid #667eea;
+            border-radius: 8px; padding: 10px 18px; font-size: 0.9em;
+            text-align: center;
+        }
+        .flow-arrow { color: #667eea; font-size: 1.5em; }
+
+        /* Key Insight */
+        .insight {
+            background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(118,75,162,0.1));
+            border-left: 4px solid #667eea; border-radius: 0 12px 12px 0;
+            padding: 20px 25px; margin: 25px 0;
+        }
+        .insight-title { color: #667eea; font-weight: bold; margin-bottom: 8px; }
+
+        /* MMTP Section */
+        .mmtp-options {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px; margin: 20px 0;
+        }
+        .mmtp-opt {
+            background: rgba(255,255,255,0.03); border-radius: 10px;
+            padding: 18px; border: 1px solid rgba(255,255,255,0.08);
+        }
+        .mmtp-opt.chosen { border: 2px solid #3a9e5a; background: rgba(58,158,90,0.05); }
+        .mmtp-opt h5 { margin-bottom: 8px; }
+        .mmtp-opt.chosen h5 { color: #3a9e5a; }
+        .opt-badge {
+            display: inline-block; background: #3a9e5a; color: white;
+            padding: 2px 10px; border-radius: 10px; font-size: 0.75em;
+            margin-left: 8px;
+        }
+
+        /* Metrics */
+        .metrics-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px; margin: 20px 0;
+        }
+        .metric-card {
+            background: rgba(255,255,255,0.03); border-radius: 10px;
+            padding: 15px; text-align: center; border: 1px solid rgba(255,255,255,0.08);
+        }
+        .metric-value { font-size: 1.8em; font-weight: bold; color: #667eea; }
+        .metric-label { font-size: 0.8em; color: #888; margin-top: 5px; }
+
+        .note { color: #888; font-size: 0.9em; font-style: italic; margin: 15px 0; }
+        code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+        .separator { height: 1px; background: linear-gradient(90deg, transparent, #333, transparent); margin: 50px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+
+<h1>CogViT 视觉编码器架构详解</h1>
+<p class="subtitle">GLM-5V-Turbo (arXiv:2604.26752) — 智谱AI & 清华大学</p>
+
+<!-- ====== Overview ====== -->
+<h2>核心设计理念</h2>
+<p>CogViT 是一个<strong>参数高效</strong>的视觉编码器，为多模态 Agent 场景量身设计。与传统 CLIP/SigLIP 只关注语义对齐不同，CogViT 通过<strong>双阶段训练</strong>同时获取：</p>
+
+<div class="metrics-grid">
+    <div class="metric-card">
+        <div class="metric-value">🎯</div>
+        <div class="metric-label">通用物体识别</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value">🔍</div>
+        <div class="metric-label">细粒度理解<br>(OCR/文档/小目标)</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value">📐</div>
+        <div class="metric-label">几何空间感知<br>(GUI定位/3D)</div>
+    </div>
+    <div class="metric-card">
+        <div class="metric-value">⚡</div>
+        <div class="metric-label">参数高效<br>(轻量化)</div>
+    </div>
+</div>
+
+<div class="separator"></div>
+
+<!-- ====== Two-Stage Pipeline ====== -->
+<h2>两阶段预训练 Pipeline</h2>
+
+<div class="pipeline">
+    <!-- Stage 1 -->
+    <div class="stage-box stage1">
+        <span class="stage-label">Stage 1 — 蒸馏式 MIM</span>
+        <h3 style="margin-top:10px">目标：学习高质量视觉表征</h3>
+
+        <div class="dual-teacher">
+            <div class="teacher-card">
+                <div class="teacher-icon">🧠</div>
+                <div class="teacher-name">SigLIP2</div>
+                <div class="teacher-role">语义教师<br><span class="tag">高层语义表征</span></div>
+            </div>
+            <div class="arrow-merge">＋</div>
+            <div class="teacher-card">
+                <div class="teacher-icon">🎨</div>
+                <div class="teacher-name">DINOv3</div>
+                <div class="teacher-role">纹理教师<br><span class="tag-green tag">低层纹理/结构</span></div>
+            </div>
+            <div class="arrow-merge">→</div>
+            <div class="student-card">
+                <div class="teacher-icon">🎓</div>
+                <div class="teacher-name">CogViT (Student)</div>
+                <div class="teacher-role">在 masked 区域重建<br>两个教师的特征空间</div>
+            </div>
+        </div>
+
+        <table class="config-table">
+            <tr><th>配置项</th><th>选择</th><th>设计原因</th></tr>
+            <tr><td>分辨率</td><td><span class="highlight">224 × 224</span> (固定)</td><td>Stage 1 聚焦表征质量，不需高分辨率</td></tr>
+            <tr><td>Mask 比率</td><td><span class="highlight">35%</span></td><td>比 MAE(75%) 低 — 双教师需要更多可见 context</td></tr>
+            <tr><td>数据配比</td><td>80% 自然图 + 10% 指令跟随 + 10% 科学图</td><td>覆盖通用+Agent场景+STEM</td></tr>
+            <tr><td>优化器</td><td><span class="highlight">Muon</span> + cosine decay</td><td>新型优化器，比 AdamW 更高效</td></tr>
+            <tr><td>稳定性</td><td><span class="highlight">QK-Norm</span></td><td>归一化 Q/K 向量，防止大规模训练 logit 爆炸</td></tr>
+        </table>
+
+        <div class="insight">
+            <div class="insight-title">💡 为什么用双教师？</div>
+            <p>SigLIP2 擅长"这是一只猫"这种高层语义，但对纹理细节（如 GUI 按钮边框、文档排版）感知弱。DINOv3 擅长低层视觉特征（边缘、纹理、局部模式），两者互补让 CogViT 同时具备 <strong>"认识是什么" + "看清长什么样"</strong> 的能力。</p>
+        </div>
+    </div>
+
+    <!-- Stage 2 -->
+    <div class="stage-box stage2">
+        <span class="stage-label">Stage 2 — 对比图文预训练</span>
+        <h3 style="margin-top:10px">目标：视觉-文本跨模态对齐</h3>
+
+        <div class="flow-row">
+            <div class="flow-box">可变分辨率图像<br><span class="tag-green tag">NaFlex</span></div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-box">CogViT<br>视觉编码</div>
+            <span class="flow-arrow">⟷</span>
+            <div class="flow-box">Text Encoder<br>文本编码</div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-box">SigLIP Loss<br><span class="tag-green tag">Batch=64K</span></div>
+        </div>
+
+        <table class="config-table">
+            <tr><th>升级项</th><th>Stage 1 → Stage 2</th><th>收益</th></tr>
+            <tr>
+                <td>分辨率</td>
+                <td>224×224 固定 → <span class="highlight">NaFlex 可变分辨率</span></td>
+                <td>保留原始宽高比，长文档/宽屏截图不失真</td>
+            </tr>
+            <tr>
+                <td>Batch Size</td>
+                <td>常规 → <span class="highlight">64K</span></td>
+                <td>超大 batch 对比学习，更好的负样本覆盖</td>
+            </tr>
+            <tr>
+                <td>Loss</td>
+                <td>— → <span class="highlight">SigLIP (sigmoid-based)</span></td>
+                <td>避免 softmax 在大 batch 下的数值不稳定</td>
+            </tr>
+            <tr>
+                <td>数据</td>
+                <td>图像 only → <span class="highlight">80亿中英双语图文对</span></td>
+                <td>跨语言视觉理解</td>
+            </tr>
+            <tr>
+                <td>学习率</td>
+                <td>统一 → <span class="highlight">模块独立 LR</span></td>
+                <td>Vision/Text/Projection 各自最优学习速率</td>
+            </tr>
+        </table>
+
+        <div class="insight">
+            <div class="insight-title">💡 NaFlex 为什么重要？</div>
+            <p>传统 ViT 强制 resize 到正方形（如 384×384），一张 1920×1080 的截图被压扁后细节全丢。NaFlex 按原始宽高比切 patch，一张宽屏截图保留全部水平信息。这对 GUI Agent（需要精确定位按钮坐标）和文档理解（需要保持排版结构）至关重要。</p>
+        </div>
+    </div>
+
+    <!-- Stage 3: Downstream -->
+    <div class="stage-box stage3">
+        <span class="stage-label">Downstream — 接入 LLM</span>
+        <h3 style="margin-top:10px">与 GLM-5-Turbo 联合训练</h3>
+
+        <div class="flow-row">
+            <div class="flow-box">图像输入</div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-box">CogViT<br><span class="tag-orange tag">冻结/微调</span></div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-box">MLP Adapter<br><span class="tag-orange tag">投影层</span></div>
+            <span class="flow-arrow">→</span>
+            <div class="flow-box">GLM-5-Turbo<br><span class="tag-orange tag">MoE+DSA LLM</span></div>
+        </div>
+
+        <p style="margin-top:15px; color:#aaa;">视觉 token 通过 MLP Adapter 映射到 LLM 的 embedding 空间，然后与文本 token 拼接输入 Transformer。训练阶段视觉和语言从预训练就深度融合（非后期 adapter 插入）。</p>
+    </div>
+</div>
+
+<div class="separator"></div>
+
+<!-- ====== MMTP ====== -->
+<h2>Multimodal Multi-Token Prediction (MMTP)</h2>
+<p>MTP 是 DeepSeek 提出的训练技巧（预测后续多个 token 加速训练）。但扩展到多模态时遇到问题：<strong>图像 token 怎么传给 MTP head？</strong></p>
+
+<div class="mmtp-options">
+    <div class="mmtp-opt">
+        <h5>方案 1：传视觉嵌入</h5>
+        <p>把视觉 embedding 原样传给 MTP head</p>
+        <p style="color:#ff6b6b; margin-top:10px;">❌ 需要跨 PP stage 传播大量视觉向量<br>❌ MTP head 太轻量，无法有效处理视觉分布<br>❌ 训练 loss 更高</p>
+    </div>
+    <div class="mmtp-opt">
+        <h5>方案 2：Mask 掉视觉 token</h5>
+        <p>完全去掉视觉 token，退化为纯文本 MTP</p>
+        <p style="color:#ff6b6b; margin-top:10px;">❌ 丢失视觉位置信息<br>❌ 与 SP/CP 分区策略不兼容<br>❌ 需要额外 offset 映射逻辑</p>
+    </div>
+    <div class="mmtp-opt chosen">
+        <h5>方案 3：<code>&lt;|image|&gt;</code> 占位符 <span class="opt-badge">✓ 采用</span></h5>
+        <p>保留视觉位置，用共享可学习 special token 替代</p>
+        <p style="color:#3a9e5a; margin-top:10px;">✅ 无需跨 PP stage 传视觉嵌入<br>✅ 与 SP/CP 天然兼容<br>✅ 训练 loss 更低、收敛更稳定<br>✅ 工程实现简单</p>
+    </div>
+</div>
+
+<div class="insight">
+    <div class="insight-title">💡 为什么 <code>&lt;|image|&gt;</code> token 反而效果更好？</div>
+    <p>论文假设：MTP head 很轻量（可能只有 1-2 层），面对与文本嵌入分布差异巨大的视觉向量时"消化不了"。而 <code>&lt;|image|&gt;</code> token 将输入统一为相同形式（类文本 embedding），降低了优化难度。效果上，这个设计在 0.5B 消融实验中 training loss 更低。</p>
+</div>
+
+<div class="separator"></div>
+
+<!-- ====== Infrastructure ====== -->
+<h2>训练基础设施适配</h2>
+<p>CogViT + NaFlex 可变分辨率带来的工程挑战和解决方案：</p>
+
+<table class="config-table">
+    <tr><th>挑战</th><th>根因</th><th>解决方案</th></tr>
+    <tr>
+        <td>视觉 token 长度不均</td>
+        <td>NaFlex: 不同图片产生不同数量的 patch token</td>
+        <td><span class="highlight">Topology-aware partitioning</span> + 动态负载均衡</td>
+    </tr>
+    <tr>
+        <td>激活内存随图片数线性增长</td>
+        <td>多图输入时 ViT+Projector 激活累积</td>
+        <td>ViT/Projector <span class="highlight">独立 recomputation + CPU offloading</span></td>
+    </tr>
+    <tr>
+        <td>前向分区通信开销</td>
+        <td>传统实现在 forward 时每个 rank 先持有完整 patch tensor 再分发</td>
+        <td><span class="highlight">分区前置到数据加载阶段</span>，避免冗余内存和通信</td>
+    </tr>
+    <tr>
+        <td>Pipeline Parallel 视觉传播</td>
+        <td>视觉嵌入需跨 PP stage 传递给 MTP head</td>
+        <td>MMTP <code>&lt;|image|&gt;</code> 设计彻底消除此需求</td>
+    </tr>
+</table>
+
+<div class="separator"></div>
+
+<!-- ====== Comparison ====== -->
+<h2>与主流 Vision Encoder 对比</h2>
+
+<div class="comparison">
+    <div class="comp-card">
+        <h4>SigLIP2</h4>
+        <p><strong>训练：</strong>纯对比学习</p>
+        <p><strong>强项：</strong>语义对齐、zero-shot 分类</p>
+        <p><strong>弱项：</strong>纹理/空间感知弱，Agent 场景不足</p>
+        <p><span class="tag">被 CogViT 用作 Stage1 语义教师</span></p>
+    </div>
+    <div class="comp-card">
+        <h4>DINOv3</h4>
+        <p><strong>训练：</strong>自监督（自蒸馏）</p>
+        <p><strong>强项：</strong>低层视觉特征、边缘纹理</p>
+        <p><strong>弱项：</strong>缺乏跨模态对齐能力</p>
+        <p><span class="tag">被 CogViT 用作 Stage1 纹理教师</span></p>
+    </div>
+    <div class="comp-card">
+        <h4>InternViT-6B</h4>
+        <p><strong>训练：</strong>渐进式分辨率对比学习</p>
+        <p><strong>强项：</strong>大规模、通用性强</p>
+        <p><strong>弱项：</strong>6B 参数过重，推理成本高</p>
+        <p><span class="tag">CogViT 追求参数高效</span></p>
+    </div>
+    <div class="comp-card winner">
+        <h4>CogViT ⭐</h4>
+        <p><strong>训练：</strong>双阶段（MIM蒸馏 → 对比对齐）</p>
+        <p><strong>强项：</strong>语义+纹理+空间，Agent原生</p>
+        <p><strong>独特：</strong>QK-Norm稳定性、NaFlex可变分辨率、Muon优化器</p>
+        <p><span class="tag-green tag">综合最优</span></p>
+    </div>
+</div>
+
+<div class="separator"></div>
+
+<!-- ====== Key Innovations Summary ====== -->
+<h2>CogViT 创新点总结</h2>
+
+<table class="config-table">
+    <tr><th>#</th><th>创新</th><th>传统做法</th><th>CogViT 做法</th><th>收益</th></tr>
+    <tr>
+        <td>1</td>
+        <td>双教师蒸馏</td>
+        <td>单教师（CLIP 或 DINO）</td>
+        <td>SigLIP2 语义 + DINOv3 纹理</td>
+        <td>同时获取高低层视觉能力</td>
+    </tr>
+    <tr>
+        <td>2</td>
+        <td>两阶段解耦</td>
+        <td>一阶段端到端（如 SigLIP）</td>
+        <td>先学表征质量，再学跨模态对齐</td>
+        <td>表征+对齐各自最优化</td>
+    </tr>
+    <tr>
+        <td>3</td>
+        <td>NaFlex 可变分辨率</td>
+        <td>固定 resize（如 384×384）</td>
+        <td>保留原始宽高比 patch 切分</td>
+        <td>GUI/文档信息无损</td>
+    </tr>
+    <tr>
+        <td>4</td>
+        <td>QK-Norm</td>
+        <td>无/LayerNorm</td>
+        <td>注意力计算前 Q/K 归一化</td>
+        <td>大规模训练不崩</td>
+    </tr>
+    <tr>
+        <td>5</td>
+        <td>Muon 优化器</td>
+        <td>AdamW</td>
+        <td>Muon + 模块独立 LR</td>
+        <td>更高效的参数更新</td>
+    </tr>
+    <tr>
+        <td>6</td>
+        <td>64K Batch 对比</td>
+        <td>32K 或更小</td>
+        <td>64K + SigLIP sigmoid loss</td>
+        <td>更好负样本覆盖+数值稳定</td>
+    </tr>
+</table>
+
+<div class="separator"></div>
+
+<!-- ====== What's NOT clear ====== -->
+<h2>论文未明确的信息</h2>
+<div class="insight">
+    <div class="insight-title">⚠️ 缺失细节</div>
+    <ul style="margin-top:10px; padding-left:20px;">
+        <li><strong>参数量：</strong>未给出 CogViT 具体大小（只说"parameter-efficient"，暗示远小于 InternViT-6B）</li>
+        <li><strong>Patch size：</strong>未提及，推测沿用标准 14×14</li>
+        <li><strong>ViT 架构变体：</strong>未说明是否使用 SwiGLU FFN、是否有 window attention 等</li>
+        <li><strong>Stage 1 → Stage 2 权重初始化：</strong>是续训还是从头开始 Stage 2 未明确</li>
+        <li><strong>Figure 1 定量数据：</strong>论文中有对比图但具体数值未在文本中给出</li>
+    </ul>
+</div>
+
+<p class="note" style="margin-top: 50px; text-align: center;">
+    Source: GLM-5V-Turbo: Toward a Native Foundation Model for Multimodal Agents (arXiv:2604.26752)
+</p>
+
+<footer>Generated 2026.06.02 | CogViT 视觉编码器分析</footer>
+</div>
+</body>
+</html>

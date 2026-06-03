@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI集群产业链 — 上下游全景图</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            height: 100vh;
+            overflow: hidden;
+            color: var(--text);
+        }
+
+        /* Theme variables */
+        :root {
+            --bg: #f8fafc;
+            --bg2: rgba(255,255,255,0.85);
+            --bg3: rgba(241,245,249,0.9);
+            --border: rgba(71,85,105,0.12);
+            --text: #1e293b;
+            --text2: #475569;
+            --text3: #94a3b8;
+            --card-bg: rgba(255,255,255,0.92);
+            --zone-bg: rgba(99,102,241,0.03);
+            --header-bg: rgba(248,250,252,0.95);
+            --tip-bg: rgba(255,255,255,0.97);
+            --rl-bg: rgba(255,255,255,0.92);
+        }
+        :root.dark {
+            --bg: #0b1120;
+            --bg2: rgba(15,23,42,0.85);
+            --bg3: rgba(30,41,59,0.9);
+            --border: rgba(148,163,184,0.12);
+            --text: #e2e8f0;
+            --text2: #94a3b8;
+            --text3: #64748b;
+            --card-bg: rgba(15,23,42,0.85);
+            --zone-bg: rgba(99,102,241,0.015);
+            --header-bg: rgba(11,17,32,0.95);
+            --tip-bg: rgba(11,17,32,0.97);
+            --rl-bg: rgba(11,17,32,0.92);
+        }
+        .layout { display: flex; flex-direction: column; height: 100vh; }
+
+        header {
+            flex-shrink: 0;
+            padding: 8px 24px;
+            background: var(--header-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 12px;
+        }
+        header h1 {
+            font-size: 18px; font-weight: 700;
+            background: linear-gradient(135deg, #6366f1, #0ea5e9, #10b981);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 10px; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); color: #6366f1; }
+        .theme-btn {
+            margin-left: auto;
+            padding: 4px 12px; border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg2);
+            color: var(--text2);
+            font-size: 11px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .theme-btn:hover { border-color: #6366f1; color: #6366f1; }
+
+        .main { flex: 1; position: relative; overflow: hidden; }
+
+        /* SVG ABOVE cards so lines are never hidden */
+        .svg-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none; z-index: 20;
+        }
+
+        .zone { position: absolute; border-radius: 10px; border: 1px solid; z-index: 0; }
+        .zone-up { left: 0.5%; top: 0.5%; width: 49%; height: 98.5%; background: var(--zone-bg); border-color: var(--border); }
+        .zone-mid { left: 50.5%; top: 0.5%; width: 14%; height: 98.5%; background: var(--zone-bg); border-color: var(--border); }
+        .zone-right { left: 65.5%; top: 0.5%; width: 34%; height: 98.5%; background: var(--zone-bg); border-color: var(--border); }
+
+        .zone-title {
+            position: absolute; z-index: 3;
+            font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+            padding: 3px 9px; border-radius: 4px;
+        }
+
+        /* Cards */
+        .card {
+            position: absolute;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            padding: 7px 9px;
+            background: var(--card-bg);
+            z-index: 4;
+            transition: all 0.15s ease;
+            cursor: default;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .card:hover {
+            z-index: 12;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        }
+        .card-hdr { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; flex-shrink: 0; }
+        .card-icon { font-size: 16px; }
+        .card-name { font-size: 14px; font-weight: 700; }
+        .card-desc { font-size: 11px; color: var(--text3); margin-bottom: 5px; flex-shrink: 0; line-height: 1.3; }
+        .card-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; align-content: flex-start; }
+        .c {
+            font-size: 13px; padding: 3px 8px; border-radius: 5px;
+            border: 1px solid; cursor: pointer; transition: all 0.12s;
+            white-space: nowrap; font-weight: 500;
+            display: inline-flex; align-items: center; gap: 4px;
+        }
+        .c:hover { transform: scale(1.06); z-index: 20; position: relative; }
+        .c .rank {
+            font-size: 10px; font-weight: 700; min-width: 16px; height: 16px;
+            border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+            flex-shrink: 0; opacity: 0.9;
+            background: rgba(255,255,255,0.12); color: inherit;
+        }
+        .c img {
+            width: 16px; height: 16px; border-radius: 3px;
+            object-fit: contain; flex-shrink: 0;
+        }
+        .c .logo-letter {
+            width: 16px; height: 16px; border-radius: 3px;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 9px; font-weight: 700; flex-shrink: 0;
+            color: #fff; opacity: 0.9;
+        }
+
+        .card.mid-card .card-name { font-size: 15px; }
+        .card.mid-card .c { font-size: 14px; padding: 4px 10px; }
+        .card.mid-card .c img, .card.mid-card .c .logo-letter { width: 18px; height: 18px; }
+        .card.down-card .card-name { font-size: 14px; }
+        .card.down-card .c { font-size: 13px; padding: 3px 8px; }
+
+        /* SVG lines - HIDDEN by default, show only on hover */
+        .rel { fill: none; stroke-width: 1.6; stroke-dasharray: 5 3; opacity: 0; transition: all 0.25s; }
+        .rel.hi { opacity: 0.9; stroke-width: 2.5; stroke-dasharray: none; filter: drop-shadow(0 0 4px currentColor); }
+        .flow { fill: none; stroke-width: 1.8; opacity: 0; stroke-dasharray: 4 2; transition: opacity 0.25s, stroke-dasharray 0.25s; }
+        .flow.hi { opacity: 0.8; stroke-dasharray: none; }
+        .flow-main { fill: none; stroke-width: 3; opacity: 0; transition: opacity 0.25s; }
+        .flow-main.hi { opacity: 0.85; }
+
+        .rl {
+            position: absolute; z-index: 21;
+            font-size: 10px; padding: 2px 6px; border-radius: 3px;
+            background: var(--rl-bg); border: 1px solid var(--border);
+            color: var(--text2); white-space: nowrap; pointer-events: none;
+            opacity: 0; transition: opacity 0.25s;
+        }
+        .rl.hi { opacity: 1; }
+
+        .fl {
+            position: absolute; z-index: 21;
+            font-size: 10px; padding: 2px 6px; border-radius: 3px;
+            background: var(--rl-bg);
+            color: var(--text3); white-space: nowrap; pointer-events: none;
+            opacity: 0; transition: opacity 0.25s;
+        }
+        .fl.hi { opacity: 1; }
+
+        .tip {
+            position: fixed; z-index: 9999;
+            background: var(--tip-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 14px;
+            font-size: 13px; line-height: 1.5;
+            max-width: 280px; pointer-events: none;
+            opacity: 0; transform: translateY(3px);
+            transition: all 0.12s ease;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+            color: var(--text);
+        }
+        .tip.show { opacity: 1; transform: translateY(0); }
+        .tip b { display: block; margin-bottom: 2px; font-size: 14px; }
+        .tip .d { color: var(--text2); font-size: 12px; }
+        .tip .m { margin-top: 3px; font-size: 11px; padding-top: 3px; border-top: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+<div class="layout">
+<header>
+    <h1>AI训练/推理集群 · 产业链全景</h1>
+    <span class="badge">上下游供应链 · 悬停查看关系</span>
+    <button class="theme-btn" onclick="toggleTheme()">☀️ 亮色</button>
+</header>
+<div class="main" id="main">
+    <div class="zone zone-up"></div>
+    <div class="zone zone-mid"></div>
+    <div class="zone zone-right"></div>
+    <div class="zone-title" style="left:1%;top:0.8%;color:#a5b4fc;background:rgba(99,102,241,0.08);">上游·核心元器件</div>
+    <div class="zone-title" style="left:51%;top:0.8%;color:#93c5fd;background:rgba(59,130,246,0.08);">中游·组装</div>
+    <div class="zone-title" style="left:66%;top:0.8%;color:#c4b5fd;background:rgba(129,140,248,0.06);">下游+支撑</div>
+    <svg class="svg-layer" id="svg"></svg>
+</div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const main = document.getElementById('main');
+const svg = document.getElementById('svg');
+const tip = document.getElementById('tip');
+const NS = 'http://www.w3.org/2000/svg';
+
+// Company logos - using multiple sources for reliability
+// Priority: 1) Company favicon  2) Google favicon service  3) Styled initial letter
+const logoMap = {
+    "英伟达": {url:"https://www.nvidia.com/favicon.ico", bg:"#76b900"},
+    "AMD": {url:"https://www.amd.com/favicon.ico", bg:"#ed1c24"},
+    "寒武纪": {url:"https://www.cambricon.com/favicon.ico", bg:"#1a73e8"},
+    "海光信息": {bg:"#0066cc"},
+    "景嘉微": {bg:"#2d5ea8"},
+    "华为昇腾": {url:"https://www.huawei.com/favicon.ico", bg:"#cf0a2c"},
+    "昆仑芯": {bg:"#1565c0"},
+    "平头哥": {bg:"#ff6a00"},
+    "燧原科技": {bg:"#00897b"},
+    "壁仞科技": {bg:"#6a1b9a"},
+    "摩尔线程": {bg:"#1e88e5"},
+    "天数智芯": {bg:"#00695c"},
+    "沐曦": {bg:"#283593"},
+    "Intel": {url:"https://www.intel.com/favicon.ico", bg:"#0071c5"},
+    "龙芯中科": {bg:"#c62828"},
+    "飞腾": {bg:"#1565c0"},
+    "高通": {url:"https://www.qualcomm.com/favicon.ico", bg:"#3253dc"},
+    "ARM": {url:"https://developer.arm.com/favicon.ico", bg:"#0091bd"},
+    "SK海力士": {url:"https://www.skhynix.com/favicon.ico", bg:"#e4002b"},
+    "三星电子": {url:"https://www.samsung.com/favicon.ico", bg:"#1428a0"},
+    "三星": {url:"https://www.samsung.com/favicon.ico", bg:"#1428a0"},
+    "美光": {url:"https://www.micron.com/favicon.ico", bg:"#00263a"},
+    "澜起科技": {bg:"#1e88e5"},
+    "兆易创新": {bg:"#0d47a1"},
+    "长鑫存储": {bg:"#283593"},
+    "西部数据": {url:"https://www.westerndigital.com/favicon.ico", bg:"#005eb8"},
+    "长江存储": {bg:"#1a237e"},
+    "江波龙": {bg:"#0277bd"},
+    "佰维存储": {bg:"#00695c"},
+    "德明利": {bg:"#33691e"},
+    "中际旭创": {bg:"#00838f"},
+    "新易盛": {bg:"#006064"},
+    "天孚通信": {bg:"#004d40"},
+    "光迅科技": {bg:"#1b5e20"},
+    "华工科技": {bg:"#2e7d32"},
+    "博创科技": {bg:"#388e3c"},
+    "沪电股份": {bg:"#0277bd"},
+    "深南电路": {bg:"#01579b"},
+    "生益电子": {bg:"#0288d1"},
+    "立讯精密": {bg:"#1565c0"},
+    "瑞可达": {bg:"#0d47a1"},
+    "Amphenol": {url:"https://www.amphenol.com/favicon.ico", bg:"#003366"},
+    "浪潮信息": {url:"https://www.inspur.com/favicon.ico", bg:"#0066b3"},
+    "工业富联": {url:"https://www.foxconn.com/favicon.ico", bg:"#00529b"},
+    "中科曙光": {bg:"#d32f2f"},
+    "超微电脑": {url:"https://www.supermicro.com/favicon.ico", bg:"#005baa"},
+    "Dell": {url:"https://www.dell.com/favicon.ico", bg:"#007db8"},
+    "联想集团": {url:"https://www.lenovo.com/favicon.ico", bg:"#e2231a"},
+    "华为": {url:"https://www.huawei.com/favicon.ico", bg:"#cf0a2c"},
+    "新华三": {bg:"#6a1b9a"},
+    "万国数据": {bg:"#1a237e"},
+    "润泽科技": {bg:"#283593"},
+    "数据港": {bg:"#303f9f"},
+    "奥飞数据": {bg:"#3949ab"},
+    "世纪互联": {bg:"#1a237e"},
+    "科士达": {bg:"#0d47a1"},
+    "Broadcom": {url:"https://www.broadcom.com/favicon.ico", bg:"#cc0000"},
+    "Arista": {url:"https://www.arista.com/favicon.ico", bg:"#ff6600"},
+    "锐捷网络": {bg:"#e65100"},
+    "紫光股份": {bg:"#4a148c"},
+    "盛科通信": {bg:"#006064"},
+    "英维克": {bg:"#4527a0"},
+    "高澜股份": {bg:"#311b92"},
+    "曙光数创": {bg:"#b71c1c"},
+    "申菱环境": {bg:"#1a237e"},
+    "飞荣达": {bg:"#0d47a1"},
+    "Vertiv": {url:"https://www.vertiv.com/favicon.ico", bg:"#ffb300"},
+    "台达电子": {url:"https://www.deltaww.com/favicon.ico", bg:"#cc0000"},
+    "中恒电气": {bg:"#1b5e20"},
+    "科华数据": {bg:"#004d40"},
+    "麦格米特": {bg:"#006064"},
+    "欧陆通": {bg:"#00838f"},
+    "伊顿": {url:"https://www.eaton.com/favicon.ico", bg:"#003768"},
+};
+
+const data = {
+    upstream: [
+        { id:"gpu", name:"GPU/AI芯片", icon:"⚡", color:"#f87171",
+          desc:"训练推理核心算力，单卡功耗700W+",
+          co:[{n:"英伟达",d:"H100/B200，AI训练绝对霸主 | 全球~80%",m:"美股 NVDA"},{n:"AMD",d:"MI300X系列，第二梯队 | 全球~12%",m:"美股 AMD"},{n:"华为昇腾",d:"Ascend 910B/C国产主力 | 全球~3%",m:"华为体系"},{n:"海光信息",d:"深算DCU K100 | 全球~1.5%",m:"A股 688041"},{n:"寒武纪",d:"思元590系列 | 全球~1%",m:"A股 688256"},{n:"昆仑芯",d:"昆仑芯3代，百度自研 | 全球<1%",m:"百度体系"},{n:"平头哥",d:"含光910，阿里自研 | 全球<1%",m:"阿里体系"},{n:"燧原科技",d:"云燧T20/T21训练芯片 | 全球<0.5%",m:"未上市"},{n:"壁仞科技",d:"BR100通用GPU | 全球<0.5%",m:"未上市"},{n:"摩尔线程",d:"MTT S4000 GPU | 全球<0.5%",m:"未上市"},{n:"天数智芯",d:"BI-V150 GPGPU | 全球<0.3%",m:"未上市"},{n:"沐曦",d:"曦云C500训练芯片 | 全球<0.3%",m:"未上市"},{n:"景嘉微",d:"军用/民用GPU芯片 | 全球<0.2%",m:"A股 300474"}]},
+        { id:"cpu", name:"CPU处理器", icon:"🧠", color:"#fb923c",
+          desc:"集群管理调度，PCIe总线挂载GPU",
+          co:[{n:"Intel",d:"Xeon至强系列 | 全球~63%",m:"美股 INTC"},{n:"AMD",d:"EPYC霄龙系列 | 全球~24%",m:"美股 AMD"},{n:"ARM",d:"Neoverse架构授权 | 全球~10%",m:"美股 ARM"},{n:"海光信息",d:"x86兼容国产CPU | 全球~1%",m:"A股 688041"},{n:"飞腾",d:"ARM架构服务器CPU | 全球<1%",m:"中国长城 000066"},{n:"高通",d:"Cloud AI 100推理芯片 | 全球<1%",m:"美股 QCOM"},{n:"龙芯中科",d:"LoongArch自主架构 | 全球<0.5%",m:"A股 688047"}]},
+        { id:"mem", name:"内存/HBM", icon:"📦", color:"#facc15",
+          desc:"高带宽内存，GPU训练的核心瓶颈",
+          co:[{n:"SK海力士",d:"HBM3E全球第一 | 全球HBM~53%",m:"韩股"},{n:"三星电子",d:"HBM3E + DDR5 | 全球HBM~30%",m:"韩股"},{n:"美光",d:"HBM3E供应商 | 全球HBM~17%",m:"美股 MU"},{n:"澜起科技",d:"DDR5内存接口芯片 | 全球接口芯片~45%",m:"A股 688008"},{n:"兆易创新",d:"DRAM/NOR Flash | 全球NOR~15%",m:"A股 603986"},{n:"长鑫存储",d:"国产DDR5 DRAM | 全球DRAM~3%",m:"未独立上市"}]},
+        { id:"ssd", name:"存储/SSD", icon:"💾", color:"#a3e635",
+          desc:"存储训练数据集和模型Checkpoint",
+          co:[{n:"三星",d:"企业级SSD全球第一 | 全球NAND~32%",m:"韩股"},{n:"西部数据",d:"HDD+SSD双线布局 | 全球NAND~13%",m:"美股 WDC"},{n:"长江存储",d:"3D NAND Flash龙头 | 全球NAND~6%",m:"紫光集团旗下"},{n:"江波龙",d:"存储模组/企业级SSD | 全球模组~3%",m:"A股 301308"},{n:"佰维存储",d:"嵌入式存储 | 全球<1%",m:"A股 688525"},{n:"德明利",d:"SSD主控方案 | 全球<1%",m:"A股 001309"}]},
+        { id:"optics", name:"光模块/光器件", icon:"🔮", color:"#34d399",
+          desc:"800G/1.6T高速光互联，带宽命脉",
+          co:[{n:"中际旭创",d:"800G光模块龙头 | 全球~30%",m:"A股 300308"},{n:"新易盛",d:"800G/1.6T光模块 | 全球~15%",m:"A股 300502"},{n:"光迅科技",d:"光芯片+光模块 | 全球~8%",m:"A股 002281"},{n:"天孚通信",d:"光器件/光引擎 | 全球光器件~6%",m:"A股 300394"},{n:"华工科技",d:"数通光模块 | 全球~4%",m:"A股 000988"},{n:"博创科技",d:"硅光模块 | 全球~2%",m:"A股 300548"}]},
+        { id:"pcb", name:"PCB/连接器", icon:"🔌", color:"#38bdf8",
+          desc:"高层PCB载板，高速连接器/线缆",
+          co:[{n:"Amphenol",d:"全球连接器龙头 | 全球连接器~15%",m:"美股 APH"},{n:"立讯精密",d:"高速连接器/线缆 | 全球~6%",m:"A股 002475"},{n:"沪电股份",d:"高多层PCB核心供应商 | 全球AI PCB~8%",m:"A股 002463"},{n:"深南电路",d:"高端PCB+封装基板 | 全球PCB~4%",m:"A股 002916"},{n:"生益电子",d:"高速/高频PCB | 全球~3%",m:"A股 688183"},{n:"瑞可达",d:"高速连接器 | 全球<1%",m:"A股 688800"}]}
+    ],
+    mid: { id:"mid", name:"整机组装/集成", icon:"🖥️", color:"#60a5fa",
+        desc:"采购元器件→设计主板/机箱→组装AI服务器整机",
+        co:[{n:"工业富联",d:"全球最大AI服务器代工(鸿海) | 全球ODM~40%",m:"A股 601138"},{n:"Dell",d:"PowerEdge AI整机 | 全球~16%",m:"美股 DELL"},{n:"超微电脑",d:"AI服务器+液冷整机 | 全球~10%",m:"美股 SMCI"},{n:"浪潮信息",d:"国内AI服务器份额第一 | 全球~8%",m:"A股 000977"},{n:"联想集团",d:"服务器ODM/OEM | 全球~6%",m:"港股 0992"},{n:"华为",d:"Atlas AI服务器 | 全球~4%",m:"华为体系"},{n:"中科曙光",d:"高性能计算整机 | 全球~3%",m:"A股 603019"},{n:"新华三",d:"整机方案 | 全球~2%",m:"紫光 000938"}]},
+    down: { id:"down", name:"IDC/数据中心", icon:"🏢", color:"#818cf8",
+        desc:"整机上架→集群组网→算力运营",
+        co:[{n:"万国数据",d:"第三方IDC龙头 | 全球~3%",m:"美股 GDS"},{n:"世纪互联",d:"IDC服务商 | 全球~2%",m:"美股 VNET"},{n:"润泽科技",d:"超大规模数据中心 | 全球~1.5%",m:"A股 300442"},{n:"数据港",d:"定制化IDC | 全球<1%",m:"A股 603881"},{n:"奥飞数据",d:"数据中心运营 | 全球<1%",m:"A股 300738"},{n:"科士达",d:"机柜/精密配电 | 全球配电~3%",m:"A股 002518"}]},
+    support: [
+        { id:"net", name:"交换/网络", icon:"🌐", color:"#2dd4bf",
+          desc:"IB/RoCE交换机，RDMA网卡",
+          co:[{n:"Broadcom",d:"交换芯片/网络ASIC | 全球交换芯片~65%",m:"美股 AVGO"},{n:"Arista",d:"高端交换机 | 全球DC交换机~20%",m:"美股 ANET"},{n:"紫光股份",d:"新华三网络 | 全球~5%",m:"A股 000938"},{n:"锐捷网络",d:"DC交换机 | 全球~3%",m:"A股 301165"},{n:"盛科通信",d:"国产交换芯片 | 全球<1%",m:"A股 688702"}]},
+        { id:"cool", name:"散热系统", icon:"❄️", color:"#a78bfa",
+          desc:"液冷CDU/浸没冷却/精密空调",
+          co:[{n:"Vertiv",d:"全球热管理龙头 | 全球DC散热~25%",m:"美股 VRT"},{n:"英维克",d:"液冷CDU龙头 | 全球~5%",m:"A股 002837"},{n:"曙光数创",d:"浸没式液冷 | 全球浸没式~8%",m:"A股 872808"},{n:"高澜股份",d:"液冷散热设备 | 全球~3%",m:"A股 300499"},{n:"飞荣达",d:"导热材料 | 全球导热材料~4%",m:"A股 300602"},{n:"申菱环境",d:"DC温控 | 全球<1%",m:"A股 301018"}]},
+        { id:"pwr", name:"供电/电源", icon:"🔋", color:"#f472b6",
+          desc:"UPS/电源模块/配电系统",
+          co:[{n:"台达电子",d:"全球电源龙头 | 全球服务器电源~35%",m:"台股"},{n:"伊顿",d:"UPS/配电 | 全球UPS~20%",m:"美股 ETN"},{n:"科华数据",d:"UPS方案 | 全球~4%",m:"A股 002335"},{n:"中恒电气",d:"DC电源 | 全球~2%",m:"A股 002364"},{n:"麦格米特",d:"服务器电源 | 全球~2%",m:"A股 002851"},{n:"欧陆通",d:"开关电源 | 全球<1%",m:"A股 300870"}]}
+    ]
+};
+
+const upRels = [
+    { from:"gpu", to:"mem", label:"GPU封装HBM" },
+    { from:"cpu", to:"gpu", label:"PCIe调度GPU" },
+    { from:"cpu", to:"mem", label:"DDR5通道" },
+    { from:"gpu", to:"pcb", label:"焊接PCB载板" },
+    { from:"ssd", to:"pcb", label:"NVMe/PCIe" },
+    { from:"optics", to:"pcb", label:"光口接入" },
+    { from:"pcb", to:"cpu", label:"连接器互联" },
+];
+
+const flowLabels = [
+    { from:"gpu", text:"供应GPU卡" },
+    { from:"cpu", text:"供应CPU" },
+    { from:"mem", text:"供应内存" },
+    { from:"ssd", text:"供应SSD" },
+    { from:"optics", text:"供应光模块" },
+    { from:"pcb", text:"供应PCB/线缆" },
+];
+
+const pos = {
+    gpu:[1,3.5,48,19], cpu:[1,23.5,48,12.5], mem:[1,37,48,12.5],
+    ssd:[1,50.5,48,12.5], optics:[1,64,48,12.5], pcb:[1,77.5,48,12.5],
+    mid:[51,3.5,13,93],
+    down:[66,3.5,33,30],
+    net:[66,36,33,19], cool:[66,57,33,19], pwr:[66,78,33,19],
+};
+
+function hexRgba(hex,a){return `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${a})`;}
+function showTip(e,c,color){
+    tip.innerHTML=`<b style="color:${color}">${c.n}</b><div class="d">${c.d}</div><div class="m" style="color:${color}">${c.m}</div>`;
+    tip.classList.add('show');
+    tip.style.left=Math.min(e.clientX+10,window.innerWidth-300)+'px';
+    tip.style.top=Math.min(e.clientY+10,window.innerHeight-80)+'px';
+}
+function hideTip(){tip.classList.remove('show');}
+
+function getLogoImg(name, color) {
+    const info = logoMap[name] || {};
+    const bg = info.bg || '#334155';
+    const letter = name.charAt(0);
+    if (info.url) {
+        // Try favicon, fallback to letter
+        return `<img src="${info.url}" onerror="this.outerHTML='<span class=\\'logo-letter\\' style=\\'background:${bg}\\'>${letter}</span>'" alt="">`;
+    }
+    return `<span class="logo-letter" style="background:${bg}">${letter}</span>`;
+}
+
+function makeCard(d,p,cls=''){
+    const card=document.createElement('div');
+    card.className='card '+cls;
+    card.id='c-'+d.id;
+    card.style.left=p[0]+'%';card.style.top=p[1]+'%';
+    card.style.width=p[2]+'%';card.style.height=p[3]+'%';
+    card.style.borderColor=d.color+'30';
+
+    let chipsHtml=d.co.map((c,idx)=>
+        `<span class="c" style="border-color:${d.color}30;color:${d.color};background:${hexRgba(d.color,0.06)}" data-d='${JSON.stringify(c).replace(/'/g,"&#39;")}'><span class="rank">${idx+1}</span>${getLogoImg(c.n,d.color)}${c.n}</span>`
+    ).join('');
+    card.innerHTML=`<div class="card-hdr"><span class="card-icon">${d.icon}</span><span class="card-name" style="color:${d.color}">${d.name}</span></div><div class="card-desc">${d.desc}</div><div class="card-chips">${chipsHtml}</div>`;
+
+    card.querySelectorAll('.c').forEach(chip=>{
+        const c=JSON.parse(chip.dataset.d.replace(/&#39;/g,"'"));
+        chip.onmouseenter=e=>{chip.style.background=hexRgba(d.color,0.22);chip.style.borderColor=d.color;chip.style.boxShadow=`0 2px 10px ${hexRgba(d.color,0.3)}`;showTip(e,c,d.color);};
+        chip.onmousemove=e=>{tip.style.left=Math.min(e.clientX+10,window.innerWidth-300)+'px';tip.style.top=Math.min(e.clientY+10,window.innerHeight-80)+'px';};
+        chip.onmouseleave=()=>{chip.style.background=hexRgba(d.color,0.06);chip.style.borderColor=d.color+'30';chip.style.boxShadow='';hideTip();};
+    });
+
+    card.addEventListener('mouseenter',()=>{card.style.borderColor=d.color+'90';card.style.boxShadow=`0 0 20px ${hexRgba(d.color,0.15)}`;hiRels(d.id);});
+    card.addEventListener('mouseleave',()=>{card.style.borderColor=d.color+'30';card.style.boxShadow='';loRels();});
+
+    main.appendChild(card);
+}
+
+data.upstream.forEach(d=>makeCard(d,pos[d.id]));
+makeCard(data.mid,pos.mid,'mid-card');
+makeCard(data.down,pos.down,'down-card');
+data.support.forEach(d=>makeCard(d,pos[d.id]));
+
+const supLabel=document.createElement('div');
+supLabel.className='zone-title';
+supLabel.style.cssText='left:79%;top:49%;color:#fbbf24;background:rgba(251,191,36,0.06);';
+supLabel.textContent='支撑层';
+main.appendChild(supLabel);
+
+const relPaths=[];
+const relLabels=[];
+const flowPaths=[];
+const flowLabelsEls=[];
+
+function drawAll(){
+    const w=main.clientWidth,h=main.clientHeight;
+    svg.setAttribute('width',w);svg.setAttribute('height',h);
+    svg.innerHTML='';
+    document.querySelectorAll('.rl,.fl').forEach(e=>e.remove());
+    relPaths.length=0;relLabels.length=0;
+    flowPaths.length=0;flowLabelsEls.length=0;
+
+    const defs=document.createElementNS(NS,'defs');
+    svg.appendChild(defs);
+
+    function mkMarker(id,color){
+        const m=document.createElementNS(NS,'marker');
+        m.setAttribute('id',id);m.setAttribute('markerWidth','12');m.setAttribute('markerHeight','8');
+        m.setAttribute('refX','0');m.setAttribute('refY','4');m.setAttribute('orient','auto');
+        m.setAttribute('markerUnits','userSpaceOnUse');
+        const p=document.createElementNS(NS,'polygon');
+        p.setAttribute('points','0 0, 12 4, 0 8');p.setAttribute('fill',color);
+        m.appendChild(p);defs.appendChild(m);
+    }
+
+    function getEl(id){return document.getElementById('c-'+id);}
+    function cardRight(id){const el=getEl(id);return{x:el.offsetLeft+el.offsetWidth,y:el.offsetTop+el.offsetHeight/2};}
+    function cardLeft(id){const el=getEl(id);return{x:el.offsetLeft,y:el.offsetTop+el.offsetHeight/2};}
+    function cardTop(id){const el=getEl(id);return{x:el.offsetLeft+el.offsetWidth/2,y:el.offsetTop};}
+    function cardBottom(id){const el=getEl(id);return{x:el.offsetLeft+el.offsetWidth/2,y:el.offsetTop+el.offsetHeight};}
+
+    // 1. Upstream internal relations (right-side arcs)
+    upRels.forEach((rel,i)=>{
+        const fromEl=getEl(rel.from),toEl=getEl(rel.to);
+        const from={x:fromEl.offsetLeft+fromEl.offsetWidth,y:fromEl.offsetTop+fromEl.offsetHeight/2};
+        const to={x:toEl.offsetLeft+toEl.offsetWidth,y:toEl.offsetTop+toEl.offsetHeight/2};
+        const midY=(from.y+to.y)/2;
+        const dist=Math.abs(from.y-to.y);
+        const bulge=from.x+12+dist*0.1+i*3;
+
+        const srcMod=data.upstream.find(u=>u.id===rel.from);
+        mkMarker(`r${i}`,srcMod.color);
+        const path=document.createElementNS(NS,'path');
+        path.setAttribute('d',`M${from.x} ${from.y} C${bulge} ${from.y}, ${bulge} ${to.y}, ${to.x} ${to.y}`);
+        path.setAttribute('class','rel');
+        path.setAttribute('stroke',srcMod.color);
+        path.setAttribute('marker-end',`url(#r${i})`);
+        path.dataset.from=rel.from;path.dataset.to=rel.to;
+        svg.appendChild(path);
+        relPaths.push(path);
+
+        const lbl=document.createElement('div');
+        lbl.className='rl';
+        lbl.style.left=(bulge+3)+'px';
+        lbl.style.top=(midY-8)+'px';
+        lbl.style.color=srcMod.color;
+        lbl.textContent=rel.label;
+        lbl.dataset.from=rel.from;lbl.dataset.to=rel.to;
+        main.appendChild(lbl);
+        relLabels.push(lbl);
+    });
+
+    // 2. Upstream → Mid (flow arrows - from upstream right to mid left)
+    const midEl=getEl('mid');
+    data.upstream.forEach((mod,i)=>{
+        const from=cardRight(mod.id);
+        const toY=midEl.offsetTop+25+i*((midEl.offsetHeight-50)/(data.upstream.length-1));
+        const to={x:midEl.offsetLeft,y:toY};
+
+        mkMarker(`f${mod.id}`,mod.color);
+        const path=document.createElementNS(NS,'path');
+        path.setAttribute('d',`M${from.x} ${from.y} C${from.x+18} ${from.y}, ${to.x-18} ${to.y}, ${to.x} ${to.y}`);
+        path.setAttribute('class','flow');
+        path.setAttribute('stroke',mod.color);
+        path.setAttribute('marker-end',`url(#f${mod.id})`);
+        path.dataset.from=mod.id;path.dataset.to='mid';
+        svg.appendChild(path);
+        flowPaths.push(path);
+
+        const lbl=document.createElement('div');
+        lbl.className='fl';
+        lbl.style.left=((from.x+to.x)/2-20)+'px';
+        lbl.style.top=((from.y+to.y)/2-7)+'px';
+        lbl.style.color=mod.color;
+        lbl.textContent=flowLabels[i].text;
+        lbl.dataset.from=mod.id;lbl.dataset.to='mid';
+        main.appendChild(lbl);
+        flowLabelsEls.push(lbl);
+    });
+
+    // 3. Mid → Down (from mid top-right corner to down left)
+    {
+        const midR=getEl('mid');
+        const from={x:midR.offsetLeft+midR.offsetWidth, y:midR.offsetTop+midR.offsetHeight*0.25};
+        const to=cardLeft('down');
+        mkMarker('fmd','#818cf8');
+        const path=document.createElementNS(NS,'path');
+        path.setAttribute('d',`M${from.x} ${from.y} C${from.x+35} ${from.y}, ${to.x-35} ${to.y}, ${to.x} ${to.y}`);
+        path.setAttribute('class','flow-main');
+        path.setAttribute('stroke','#818cf8');
+        path.setAttribute('marker-end','url(#fmd)');
+        path.dataset.from='mid';path.dataset.to='down';
+        svg.appendChild(path);
+        flowPaths.push(path);
+
+        const lbl=document.createElement('div');
+        lbl.className='fl';
+        lbl.style.left=((from.x+to.x)/2-18)+'px';
+        lbl.style.top=((from.y+to.y)/2-8)+'px';
+        lbl.style.color='#818cf8';
+        lbl.style.fontSize='11px';
+        lbl.textContent='整机→部署';
+        lbl.dataset.from='mid';lbl.dataset.to='down';
+        main.appendChild(lbl);
+        flowLabelsEls.push(lbl);
+    }
+
+    // 4. Support → Mid (from support left to mid bottom-right, routed ABOVE mid card)
+    data.support.forEach((s,i)=>{
+        const sEl=getEl(s.id);
+        const from={x:sEl.offsetLeft, y:sEl.offsetTop+sEl.offsetHeight/2};
+        const midR=getEl('mid');
+        const to={x:midR.offsetLeft+midR.offsetWidth, y:midR.offsetTop+midR.offsetHeight*(0.55+i*0.12)};
+
+        mkMarker(`s${s.id}`,s.color);
+        const path=document.createElementNS(NS,'path');
+        path.setAttribute('d',`M${from.x} ${from.y} C${from.x-35} ${from.y}, ${to.x+35} ${to.y}, ${to.x} ${to.y}`);
+        path.setAttribute('class','flow');
+        path.setAttribute('stroke',s.color);
+        path.setAttribute('marker-end',`url(#s${s.id})`);
+        path.dataset.from=s.id;path.dataset.to='mid';
+        svg.appendChild(path);
+        flowPaths.push(path);
+
+        const lbl=document.createElement('div');
+        lbl.className='fl';
+        const mx=(from.x+to.x)/2-20, my=(from.y+to.y)/2-7;
+        lbl.style.left=mx+'px'; lbl.style.top=my+'px';
+        lbl.style.color=s.color;
+        lbl.textContent=s.name+'→整机';
+        lbl.dataset.from=s.id;lbl.dataset.to='mid';
+        main.appendChild(lbl);
+        flowLabelsEls.push(lbl);
+    });
+
+    // 5. Support → Down (short vertical)
+    data.support.forEach(s=>{
+        const sEl=getEl(s.id);
+        const from=cardTop(s.id);
+        const downEl=getEl('down');
+        const to={x:downEl.offsetLeft+downEl.offsetWidth*0.7, y:downEl.offsetTop+downEl.offsetHeight};
+        const path=document.createElementNS(NS,'path');
+        path.setAttribute('d',`M${from.x} ${from.y} C${from.x} ${from.y-20}, ${to.x} ${to.y+20}, ${to.x} ${to.y}`);
+        path.setAttribute('class','flow');
+        path.setAttribute('stroke',s.color);
+        path.dataset.from=s.id;path.dataset.to='down';
+        svg.appendChild(path);
+        flowPaths.push(path);
+    });
+}
+
+function hiRels(id){
+    relPaths.forEach(p=>{
+        if(p.dataset.from===id||p.dataset.to===id) p.classList.add('hi');
+    });
+    relLabels.forEach(l=>{
+        if(l.dataset.from===id||l.dataset.to===id) l.classList.add('hi');
+    });
+    flowPaths.forEach(p=>{
+        if(p.dataset.from===id||p.dataset.to===id) p.classList.add('hi');
+    });
+    flowLabelsEls.forEach(l=>{
+        if(l.dataset.from===id||l.dataset.to===id) l.classList.add('hi');
+    });
+}
+function loRels(){
+    relPaths.forEach(p=>p.classList.remove('hi'));
+    relLabels.forEach(l=>l.classList.remove('hi'));
+    flowPaths.forEach(p=>p.classList.remove('hi'));
+    flowLabelsEls.forEach(l=>l.classList.remove('hi'));
+}
+
+function toggleTheme(){
+    const root=document.documentElement;
+    root.classList.toggle('dark');
+    const btn=document.querySelector('.theme-btn');
+    if(root.classList.contains('dark')){btn.textContent='☀️ 亮色';}
+    else{btn.textContent='🌙 暗色';}
+}
+
+setTimeout(drawAll,60);
+window.addEventListener('resize',()=>setTimeout(drawAll,60));
+</script>
+<footer style="margin-top:60px;padding-top:20px;border-top:1px solid #1a1a28;color:#444;font-size:0.8rem;text-align:center;">Generated 2026.06.01 | AI集群产业链全景</footer>
+</body>
+</html>

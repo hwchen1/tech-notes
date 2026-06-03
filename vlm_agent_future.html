@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLM × Code Agent：多模态的未来优势</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f093fb, #4facfe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f093fb; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+.key-point { background: #f093fb0a; border: 1px solid #f093fb22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f093fb; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #f093fb; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 24px 0; }
+.compare-card { background: #11111a; border: 1px solid #1e1e30; border-radius: 12px; padding: 20px; }
+.compare-card h4 { font-size: 0.95rem; margin-bottom: 10px; }
+.compare-card.cli h4 { color: #4facfe; }
+.compare-card.vlm h4 { color: #f093fb; }
+.compare-card ul { list-style: none; padding: 0; }
+.compare-card li { font-size: 0.85rem; color: #a8a8be; padding: 4px 0; padding-left: 16px; position: relative; }
+.compare-card li::before { content: "•"; position: absolute; left: 0; color: #555; }
+.scenario { background: #0d0d16; border: 1px solid #2a2a3e; border-radius: 12px; padding: 20px; margin: 16px 0; }
+.scenario .tag { display: inline-block; background: #f093fb22; color: #f093fb; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; margin-bottom: 8px; }
+.scenario h4 { color: #fff; font-size: 0.95rem; margin-bottom: 8px; }
+.scenario p { font-size: 0.85rem; margin-bottom: 6px; }
+.flow { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 0.82rem; color: #888; flex-wrap: wrap; }
+.flow .step { background: #1e1e2e; padding: 4px 10px; border-radius: 6px; color: #c4c4d4; }
+.flow .arrow { color: #4facfe; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>VLM × Code Agent</h1>
+<p class="subtitle">多模态视觉能力如何突破当前 CLI Agent 的天花板 — 优势分析与未来展望</p>
+
+<!-- ===== 1. 当前格局 ===== -->
+<h2>1. 当前格局：CLI Agent 的能力边界</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="25" text-anchor="middle" fill="#6b6b80" font-size="12">2026 Code Agent 范式对比</text>
+
+  <!-- CLI Agent -->
+  <rect x="50" y="45" width="380" height="210" rx="10" fill="#1e1e2e" stroke="#4facfe33"/>
+  <text x="240" y="72" text-anchor="middle" fill="#4facfe" font-size="13" font-weight="bold">CLI Agent (当前主流)</text>
+  <text x="240" y="100" text-anchor="middle" fill="#c4c4d4" font-size="10">Claude Code / Codex / Gemini CLI</text>
+  <text x="80" y="130" fill="#8b8b9e" font-size="10">输入: 文本文件、命令输出、git diff</text>
+  <text x="80" y="150" fill="#8b8b9e" font-size="10">操作: 读/写文件、执行命令、grep/sed</text>
+  <text x="80" y="170" fill="#8b8b9e" font-size="10">验证: 运行测试、类型检查、lint</text>
+  <text x="80" y="200" fill="#4facfe" font-size="10">SWE-bench: 60%+ (纯代码任务)</text>
+  <text x="80" y="220" fill="#f5576c" font-size="10">SWE-bench Multimodal: ~20% (视觉任务暴跌)</text>
+  <text x="80" y="245" fill="#555" font-size="9">天花板: 无法"看到"运行结果、UI渲染、图表输出</text>
+
+  <!-- VLM Agent -->
+  <rect x="470" y="45" width="380" height="210" rx="10" fill="#1e1e2e" stroke="#f093fb33"/>
+  <text x="660" y="72" text-anchor="middle" fill="#f093fb" font-size="13" font-weight="bold">VLM Agent (新兴)</text>
+  <text x="660" y="100" text-anchor="middle" fill="#c4c4d4" font-size="10">Computer Use / Cowork / Operator</text>
+  <text x="500" y="130" fill="#8b8b9e" font-size="10">输入: 截图、录屏、设计稿、手绘图</text>
+  <text x="500" y="150" fill="#8b8b9e" font-size="10">操作: 点击、拖拽、键盘输入、GUI交互</text>
+  <text x="500" y="170" fill="#8b8b9e" font-size="10">验证: 视觉对比、像素级检查、动画审查</text>
+  <text x="500" y="200" fill="#f093fb" font-size="10">优势: 端到端视觉闭环、跨应用工作流</text>
+  <text x="500" y="220" fill="#f5576c" font-size="10">劣势: 慢(截图~1000 tokens)、贵、不精确</text>
+  <text x="500" y="245" fill="#555" font-size="9">趋势: 混合范式 — CLI为主 + VLM视觉验证补充</text>
+</svg>
+<p class="caption">CLI agent 在纯代码任务上已接近人类水平，但遇到视觉相关任务时性能断崖式下降</p>
+</div>
+
+<!-- ===== 2. VLM 核心优势 ===== -->
+<h2>2. VLM 的核心优势</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="25" text-anchor="middle" fill="#6b6b80" font-size="12">VLM Agent 解锁的五大能力</text>
+
+  <!-- 1. See -->
+  <rect x="50" y="50" width="160" height="120" rx="8" fill="#1e1e2e" stroke="#f093fb44"/>
+  <text x="130" y="75" text-anchor="middle" fill="#f093fb" font-size="11" font-weight="bold">看见结果</text>
+  <text x="130" y="100" text-anchor="middle" fill="#888" font-size="9">截图验证渲染</text>
+  <text x="130" y="118" text-anchor="middle" fill="#888" font-size="9">图表/UI/动画</text>
+  <text x="130" y="136" text-anchor="middle" fill="#888" font-size="9">自动判断对错</text>
+  <text x="130" y="158" text-anchor="middle" fill="#4facfe" font-size="8">闭环: 改→看→再改</text>
+
+  <!-- 2. Understand -->
+  <rect x="230" y="50" width="160" height="120" rx="8" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="310" y="75" text-anchor="middle" fill="#667eea" font-size="11" font-weight="bold">理解视觉输入</text>
+  <text x="310" y="100" text-anchor="middle" fill="#888" font-size="9">设计稿 → 代码</text>
+  <text x="310" y="118" text-anchor="middle" fill="#888" font-size="9">手绘草图 → 架构</text>
+  <text x="310" y="136" text-anchor="middle" fill="#888" font-size="9">论文图表 → 实现</text>
+  <text x="310" y="158" text-anchor="middle" fill="#4facfe" font-size="8">消除"翻译"损耗</text>
+
+  <!-- 3. Operate -->
+  <rect x="410" y="50" width="160" height="120" rx="8" fill="#1e1e2e" stroke="#00f2fe44"/>
+  <text x="490" y="75" text-anchor="middle" fill="#00f2fe" font-size="11" font-weight="bold">操作 GUI</text>
+  <text x="490" y="100" text-anchor="middle" fill="#888" font-size="9">浏览器/IDE/终端</text>
+  <text x="490" y="118" text-anchor="middle" fill="#888" font-size="9">跨应用工作流</text>
+  <text x="490" y="136" text-anchor="middle" fill="#888" font-size="9">非代码工具操作</text>
+  <text x="490" y="158" text-anchor="middle" fill="#4facfe" font-size="8">Computer Use 范式</text>
+
+  <!-- 4. Debug -->
+  <rect x="590" y="50" width="160" height="120" rx="8" fill="#1e1e2e" stroke="#6bcb7744"/>
+  <text x="670" y="75" text-anchor="middle" fill="#6bcb77" font-size="11" font-weight="bold">视觉 Debug</text>
+  <text x="670" y="100" text-anchor="middle" fill="#888" font-size="9">DevTools 瀑布图</text>
+  <text x="670" y="118" text-anchor="middle" fill="#888" font-size="9">Performance 火焰图</text>
+  <text x="670" y="136" text-anchor="middle" fill="#888" font-size="9">TensorBoard 曲线</text>
+  <text x="670" y="158" text-anchor="middle" fill="#4facfe" font-size="8">一眼定位瓶颈</text>
+
+  <!-- 5. Verify -->
+  <rect x="230" y="190" width="440" height="110" rx="8" fill="#1e1e2e" stroke="#ffa94d44"/>
+  <text x="450" y="215" text-anchor="middle" fill="#ffa94d" font-size="11" font-weight="bold">端到端验证闭环 (最大单一缺口)</text>
+  <text x="450" y="245" text-anchor="middle" fill="#c4c4d4" font-size="10">CLI: 代码 → 运行 → 读log → 猜问题 → 改代码 (盲改)</text>
+  <text x="450" y="270" text-anchor="middle" fill="#f093fb" font-size="10">VLM: 代码 → 运行 → 截图 → 看到问题 → 精准修复 (闭环)</text>
+  <text x="450" y="292" text-anchor="middle" fill="#555" font-size="9">前端/可视化/UI 任务的"最后一公里"— 当前必须人工确认，VLM 可自动化</text>
+</svg>
+<p class="caption">VLM 的核心价值不是替代 CLI，而是补全"视觉验证"这个关键缺失环节</p>
+</div>
+
+<!-- ===== 3. 刚需场景 ===== -->
+<h2>3. 用户刚需但当前 Claude Code 无法做到的场景</h2>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★★★</span>
+  <h4>设计稿 → 代码</h4>
+  <p>用户丢一张 Figma 截图或手绘草图，说"实现这个界面"。当前必须把视觉设计翻译成文字描述，信息损耗巨大。</p>
+  <div class="flow"><span class="step">Figma截图</span><span class="arrow">→</span><span class="step">VLM理解布局/颜色/间距</span><span class="arrow">→</span><span class="step">生成HTML/CSS</span><span class="arrow">→</span><span class="step">截图对比验证</span></div>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★★★</span>
+  <h4>运行结果视觉验证</h4>
+  <p>改完 CSS/图表代码后，agent 说"done"但实际渲染可能完全错误。用户必须自己打开浏览器验证。</p>
+  <div class="flow"><span class="step">修改代码</span><span class="arrow">→</span><span class="step">启动dev server</span><span class="arrow">→</span><span class="step">截图</span><span class="arrow">→</span><span class="step">VLM判断是否正确</span><span class="arrow">→</span><span class="step">自动修复</span></div>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★★☆</span>
+  <h4>错误截图理解</h4>
+  <p>用户手机拍了生产环境的错误弹窗，或同事发来 Slack 截图里的 stack trace。当前需手动 OCR 重新输入。</p>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★★☆</span>
+  <h4>实时屏幕感知</h4>
+  <p>"这个页面加载很慢" — agent 应能直接看到 DevTools Network 瀑布图、Performance 火焰图，而非让用户手动复制。</p>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★☆☆</span>
+  <h4>视频/动画 Debug</h4>
+  <p>页面滚动 jank、动画不流畅、拖拽延迟 — 这类问题完全无法用文字描述清楚，需要逐帧分析。</p>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★☆☆</span>
+  <h4>白板手绘 → 代码结构</h4>
+  <p>用户在白板画了系统架构图（手绘箭头、方框），拍照发给 agent 说"按这个搭项目"。空间关系用文字表达极其低效。</p>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★☆☆</span>
+  <h4>终端 TUI 感知</h4>
+  <p>htop/nvtop GPU 监控、k9s、vim 分屏 — ANSI 彩色 TUI pipe 出来信息严重丢失，VLM 直接看终端截图获得完整上下文。</p>
+</div>
+
+<div class="scenario">
+  <span class="tag">刚需 ★★★☆☆</span>
+  <h4>论文图表 → 实现</h4>
+  <p>用户发一张论文里的模型架构图说"照这个实现"。论文核心信息往往在图表里，不在文字中。</p>
+</div>
+
+<!-- ===== 4. 对比表 ===== -->
+<h2>4. 能力缺失矩阵</h2>
+
+<table>
+<thead><tr><th>能力</th><th>刚需度</th><th>技术可行性</th><th>预计落地</th><th>关键挑战</th></tr></thead>
+<tbody>
+<tr><td><strong>设计稿→代码</strong></td><td>★★★★★</td><td>高</td><td>2026 H2</td><td>像素级精度、响应式适配</td></tr>
+<tr><td><strong>运行结果视觉验证</strong></td><td>★★★★★</td><td>高</td><td>2026 H2</td><td>自动截图 + 判断标准</td></tr>
+<tr><td><strong>错误截图理解</strong></td><td>★★★★☆</td><td>高</td><td>已部分支持</td><td>OCR 精度、上下文关联</td></tr>
+<tr><td><strong>实时屏幕感知</strong></td><td>★★★★☆</td><td>中</td><td>2027</td><td>延迟、隐私、带宽</td></tr>
+<tr><td><strong>视频/动画 Debug</strong></td><td>★★★☆☆</td><td>中</td><td>2027+</td><td>多帧推理成本高</td></tr>
+<tr><td><strong>白板手绘→代码</strong></td><td>★★★☆☆</td><td>高</td><td>2026 H2</td><td>手绘识别鲁棒性</td></tr>
+<tr><td><strong>TUI 终端感知</strong></td><td>★★★☆☆</td><td>高</td><td>2026 H2</td><td>ANSI 渲染 + 状态理解</td></tr>
+<tr><td><strong>多屏协作感知</strong></td><td>★★☆☆☆</td><td>低</td><td>2028+</td><td>隐私、实时性、多窗口</td></tr>
+</tbody>
+</table>
+
+<!-- ===== 5. 最新研究 ===== -->
+<h2>5. 最新研究动态 (2025-2026)</h2>
+
+<table>
+<thead><tr><th>方向</th><th>代表工作</th><th>核心贡献</th></tr></thead>
+<tbody>
+<tr><td><strong>GUI Grounding</strong></td><td>InfiGUIAgent (EACL 2026)</td><td>原生推理+反思的通用 GUI agent</td></tr>
+<tr><td><strong>长任务记忆</strong></td><td>Agentic Multimodal Memory Control</td><td>解决长 horizon 任务中视觉状态遗忘</td></tr>
+<tr><td><strong>自我进化</strong></td><td>Memory-Augmented Self-Evolution</td><td>GUI agent 从失败中自动学习改进</td></tr>
+<tr><td><strong>RL + Grounding</strong></td><td>Advancing GUI Agents (2025)</td><td>推理时精确定位 + RL 训练提升准确率</td></tr>
+<tr><td><strong>视觉技能统一</strong></td><td>Multimodal Skills for Visual Agents</td><td>统一视觉技能框架，模块化组合</td></tr>
+<tr><td><strong>SWE-bench M</strong></td><td>SWE-bench Multimodal</td><td>617 个前端视觉任务，暴露纯文本 agent 短板</td></tr>
+<tr><td><strong>移动端开发</strong></td><td>SWE-Bench Mobile</td><td>从 Figma + PRD 生成工业级 App</td></tr>
+<tr><td><strong>Computer Use</strong></td><td>Claude Cowork / OpenAI Operator</td><td>完整桌面操作，跨应用工作流</td></tr>
+</tbody>
+</table>
+
+<!-- ===== 6. Benchmarks ===== -->
+<h2>6. 多模态 Agent Benchmark 全景</h2>
+
+<h3>代码 / 软件工程类</h3>
+<table>
+<thead><tr><th>Benchmark</th><th>特点</th><th>规模</th><th>SOTA</th></tr></thead>
+<tbody>
+<tr><td><strong>SWE-bench Multimodal</strong></td><td>前端 JS 任务，issue 含截图/UI mockup</td><td>617 任务 / 17 JS 库</td><td>~20%</td></tr>
+<tr><td><strong>SWE-bench Mobile</strong></td><td>从 Figma 设计稿 + PRD 生成工业级移动 App</td><td>多模态输入</td><td>新</td></tr>
+<tr><td><strong>VCode</strong> (Microsoft)</td><td>看图生成 SVG 代码，测试视觉→代码能力</td><td>多领域图表</td><td>—</td></tr>
+<tr><td><strong>VizAgentBench</strong></td><td>多视图可视化交互 + 视觉问答</td><td>协调分析任务</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h3>Web / 浏览器操作类</h3>
+<table>
+<thead><tr><th>Benchmark</th><th>特点</th><th>规模</th><th>SOTA</th></tr></thead>
+<tbody>
+<tr><td><strong>VisualWebArena</strong></td><td>需要视觉理解的 Web 任务（图片搜索、视觉对比）</td><td>910 任务</td><td>~26%</td></tr>
+<tr><td><strong>WebArena</strong></td><td>自托管 SaaS 环境中的多步 Web 操作</td><td>812 任务</td><td>58% (CUA)</td></tr>
+<tr><td><strong>VisualWebBench</strong></td><td>7 类网页理解+定位任务</td><td>1.5K 样本</td><td>—</td></tr>
+<tr><td><strong>Mind2Web-2</strong></td><td>长 horizon 搜索任务 + Agent-as-Judge 评估</td><td>真实网站</td><td>新</td></tr>
+<tr><td><strong>Online-Mind2Web</strong></td><td>300 任务，136 个真实网站在线评估</td><td>在线环境</td><td>—</td></tr>
+</tbody>
+</table>
+
+<h3>全系统 / 桌面操作类</h3>
+<table>
+<thead><tr><th>Benchmark</th><th>特点</th><th>规模</th><th>SOTA</th></tr></thead>
+<tbody>
+<tr><td><strong>OSWorld</strong></td><td>完整 Linux/Windows/macOS 桌面操作</td><td>369 任务</td><td>38% (CUA)</td></tr>
+<tr><td><strong>ScreenSpot-Pro</strong></td><td>专业 GUI 元素精确定位（高难度）</td><td>专业场景</td><td>—</td></tr>
+<tr><td><strong>AgentVista</strong></td><td>25 子领域 × 7 类别，超难视觉场景 + 工具混合</td><td>极端场景</td><td>—</td></tr>
+<tr><td><strong>VisualAgentBench</strong> (清华)</td><td>模拟环境 + GUI + 设计任务统一评估</td><td>多环境</td><td>—</td></tr>
+</tbody>
+</table>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 240" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">Benchmark 难度 vs Agent 能力 (2026)</text>
+
+  <!-- Axes -->
+  <line x1="100" y1="200" x2="820" y2="200" stroke="#333" stroke-width="1.5"/>
+  <line x1="100" y1="200" x2="100" y2="40" stroke="#333" stroke-width="1.5"/>
+  <text x="460" y="230" text-anchor="middle" fill="#555" font-size="10">任务复杂度 →</text>
+  <text x="60" y="120" text-anchor="middle" fill="#555" font-size="10" transform="rotate(-90,60,120)">SOTA 成功率</text>
+
+  <!-- Data points -->
+  <circle cx="220" cy="65" r="10" fill="#4facfe44" stroke="#4facfe"/>
+  <text x="220" y="55" text-anchor="middle" fill="#4facfe" font-size="8">WebArena 58%</text>
+
+  <circle cx="350" cy="100" r="10" fill="#667eea44" stroke="#667eea"/>
+  <text x="350" y="90" text-anchor="middle" fill="#667eea" font-size="8">OSWorld 38%</text>
+
+  <circle cx="480" cy="130" r="10" fill="#f093fb44" stroke="#f093fb"/>
+  <text x="480" y="120" text-anchor="middle" fill="#f093fb" font-size="8">VisualWebArena 26%</text>
+
+  <circle cx="620" cy="160" r="10" fill="#f5576c44" stroke="#f5576c"/>
+  <text x="620" y="150" text-anchor="middle" fill="#f5576c" font-size="8">SWE-bench M ~20%</text>
+
+  <circle cx="740" cy="185" r="8" fill="#ffa94d44" stroke="#ffa94d"/>
+  <text x="740" y="175" text-anchor="middle" fill="#ffa94d" font-size="8">SWE-bench Mobile ?%</text>
+
+  <!-- Trend line -->
+  <path d="M 180 70 Q 450 100 780 190" stroke="#f093fb33" stroke-width="2" fill="none" stroke-dasharray="4"/>
+  <text x="700" y="220" fill="#555" font-size="9">越复杂的视觉任务，agent 表现越差</text>
+</svg>
+<p class="caption">关键洞察：纯代码任务 (SWE-bench) 已达 60%+，但加入视觉维度后骤降至 20% — 这就是 VLM 的机会窗口</p>
+</div>
+
+<div class="key-point"><strong>OpenHands-Versa 的启示：</strong>将多模态浏览 + 代码编辑 + Web 搜索结合的混合 agent，在 WebArena/VisualWebArena/OSWorld 上均超越纯文本或纯视觉方案 9+ 个百分点。证明混合范式 > 单一范式。</div>
+
+<!-- ===== 7. 未来判断 ===== -->
+<h2>7. 趋势判断</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Timeline -->
+  <line x1="100" y1="100" x2="800" y2="100" stroke="#333" stroke-width="2"/>
+
+  <!-- 2026 -->
+  <circle cx="200" cy="100" r="6" fill="#4facfe"/>
+  <text x="200" y="80" text-anchor="middle" fill="#4facfe" font-size="11" font-weight="bold">2026</text>
+  <text x="200" y="130" text-anchor="middle" fill="#888" font-size="9">CLI 为主</text>
+  <text x="200" y="145" text-anchor="middle" fill="#888" font-size="9">VLM 补充验证</text>
+
+  <!-- 2027 -->
+  <circle cx="400" cy="100" r="6" fill="#667eea"/>
+  <text x="400" y="80" text-anchor="middle" fill="#667eea" font-size="11" font-weight="bold">2027</text>
+  <text x="400" y="130" text-anchor="middle" fill="#888" font-size="9">混合范式标准化</text>
+  <text x="400" y="145" text-anchor="middle" fill="#888" font-size="9">自动切换 CLI/VLM</text>
+
+  <!-- 2028 -->
+  <circle cx="600" cy="100" r="6" fill="#f093fb"/>
+  <text x="600" y="80" text-anchor="middle" fill="#f093fb" font-size="11" font-weight="bold">2028+</text>
+  <text x="600" y="130" text-anchor="middle" fill="#888" font-size="9">VLM-native Agent</text>
+  <text x="600" y="145" text-anchor="middle" fill="#888" font-size="9">实时感知+操作+验证</text>
+
+  <!-- Annotations -->
+  <text x="200" y="170" text-anchor="middle" fill="#555" font-size="8">SWE-bench 70%+</text>
+  <text x="400" y="170" text-anchor="middle" fill="#555" font-size="8">SWE-bench M 50%+</text>
+  <text x="600" y="170" text-anchor="middle" fill="#555" font-size="8">端到端自主开发</text>
+</svg>
+<p class="caption">从纯文本 CLI → 混合范式 → VLM-native，视觉能力逐步从"补充"变为"核心"</p>
+</div>
+
+<div class="key-point"><strong>短期 (2026)：</strong>CLI agent 仍是代码任务主力。代码本质是文本，CLI 读写效率远高于截图。VLM 作为"视觉验证层"补充，处理前端/UI/可视化的最后一公里。</div>
+
+<div class="key-point"><strong>中期 (2027)：</strong>混合范式成为标准 — 默认 CLI 模式处理代码，遇到 UI/前端/可视化任务时自动切换 VLM 截图验证。Computer Use 处理非代码工作流（部署、配置、测试）。</div>
+
+<div class="key-point"><strong>杀手级场景：</strong>端到端前端开发 — 从设计稿到代码到视觉验证，全程 VLM 闭环，人类只需审核最终效果。这将彻底改变前端工程师的工作方式。</div>
+
+<!-- ===== 8. 训练路线图 ===== -->
+<h2>8. 达到 Future VLM Agent 能力的训练路线图</h2>
+
+<p>要让 VLM 具备上述 Agent 能力（GUI 理解、截图验证、设计稿→代码、视频 Debug），需要在每个训练阶段做针对性的模型创新和数据创新。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">VLM Agent 训练全流程 — 六阶段能力积累</text>
+
+  <!-- Pipeline arrow -->
+  <path d="M 50 180 L 870 180" stroke="#333" stroke-width="2"/>
+
+  <!-- Stage 1: ViT Pretrain -->
+  <rect x="40" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="100" y="80" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">ViT Pretrain</text>
+  <text x="100" y="96" text-anchor="middle" fill="#888" font-size="7">视觉基座</text>
+  <text x="100" y="112" text-anchor="middle" fill="#555" font-size="7">CLIP/SigLIP/RADIO</text>
+  <text x="100" y="126" text-anchor="middle" fill="#555" font-size="7">MIM + 对比学习</text>
+  <text x="100" y="140" text-anchor="middle" fill="#555" font-size="7">动态分辨率</text>
+  <circle cx="100" cy="180" r="5" fill="#4facfe"/>
+
+  <!-- Stage 2: LM Pretrain -->
+  <rect x="175" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#ffa94d44"/>
+  <text x="235" y="80" text-anchor="middle" fill="#ffa94d" font-size="9" font-weight="bold">LM Pretrain</text>
+  <text x="235" y="96" text-anchor="middle" fill="#888" font-size="7">语言基座</text>
+  <text x="235" y="112" text-anchor="middle" fill="#555" font-size="7">代码+推理+工具</text>
+  <text x="235" y="126" text-anchor="middle" fill="#555" font-size="7">长上下文</text>
+  <text x="235" y="140" text-anchor="middle" fill="#555" font-size="7">结构化输出</text>
+  <circle cx="235" cy="180" r="5" fill="#ffa94d"/>
+
+  <!-- Stage 3: VLM Pretrain -->
+  <rect x="310" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="370" y="80" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">VLM Pretrain</text>
+  <text x="370" y="96" text-anchor="middle" fill="#888" font-size="7">跨模态对齐</text>
+  <text x="370" y="112" text-anchor="middle" fill="#555" font-size="7">图文配对 (B级)</text>
+  <text x="370" y="126" text-anchor="middle" fill="#555" font-size="7">Projector 训练</text>
+  <text x="370" y="140" text-anchor="middle" fill="#555" font-size="7">视觉-语言桥接</text>
+  <circle cx="370" cy="180" r="5" fill="#667eea"/>
+
+  <!-- Stage 4: VLM Midtrain -->
+  <rect x="445" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#f093fb44"/>
+  <text x="505" y="80" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">VLM Midtrain</text>
+  <text x="505" y="96" text-anchor="middle" fill="#888" font-size="7">能力注入</text>
+  <text x="505" y="112" text-anchor="middle" fill="#555" font-size="7">GUI/截图理解</text>
+  <text x="505" y="126" text-anchor="middle" fill="#555" font-size="7">OCR/文档/图表</text>
+  <text x="505" y="140" text-anchor="middle" fill="#555" font-size="7">视频时序理解</text>
+  <circle cx="505" cy="180" r="5" fill="#f093fb"/>
+
+  <!-- Stage 5: VLM SFT -->
+  <rect x="580" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#6bcb7744"/>
+  <text x="640" y="80" text-anchor="middle" fill="#6bcb77" font-size="9" font-weight="bold">VLM SFT</text>
+  <text x="640" y="96" text-anchor="middle" fill="#888" font-size="7">任务对齐</text>
+  <text x="640" y="112" text-anchor="middle" fill="#555" font-size="7">Agent 指令数据</text>
+  <text x="640" y="126" text-anchor="middle" fill="#555" font-size="7">GUI grounding</text>
+  <text x="640" y="140" text-anchor="middle" fill="#555" font-size="7">CoT 规划</text>
+  <circle cx="640" cy="180" r="5" fill="#6bcb77"/>
+
+  <!-- Stage 6: VLM RL -->
+  <rect x="715" y="60" width="120" height="100" rx="8" fill="#1e1e2e" stroke="#ff6b6b44"/>
+  <text x="775" y="80" text-anchor="middle" fill="#ff6b6b" font-size="9" font-weight="bold">VLM RL</text>
+  <text x="775" y="96" text-anchor="middle" fill="#888" font-size="7">在线优化</text>
+  <text x="775" y="112" text-anchor="middle" fill="#555" font-size="7">环境交互奖励</text>
+  <text x="775" y="126" text-anchor="middle" fill="#555" font-size="7">任务完成率</text>
+  <text x="775" y="140" text-anchor="middle" fill="#555" font-size="7">自我进化</text>
+  <circle cx="775" cy="180" r="5" fill="#ff6b6b"/>
+
+  <!-- Bottom: capabilities gained -->
+  <text x="100" y="210" text-anchor="middle" fill="#4facfe" font-size="7">→ 像素感知</text>
+  <text x="100" y="223" text-anchor="middle" fill="#4facfe" font-size="7">→ 空间理解</text>
+  <text x="235" y="210" text-anchor="middle" fill="#ffa94d" font-size="7">→ 代码生成</text>
+  <text x="235" y="223" text-anchor="middle" fill="#ffa94d" font-size="7">→ 逻辑推理</text>
+  <text x="370" y="210" text-anchor="middle" fill="#667eea" font-size="7">→ 图文关联</text>
+  <text x="370" y="223" text-anchor="middle" fill="#667eea" font-size="7">→ 视觉描述</text>
+  <text x="505" y="210" text-anchor="middle" fill="#f093fb" font-size="7">→ GUI识别</text>
+  <text x="505" y="223" text-anchor="middle" fill="#f093fb" font-size="7">→ 代码-视觉映射</text>
+  <text x="640" y="210" text-anchor="middle" fill="#6bcb77" font-size="7">→ 精准操作</text>
+  <text x="640" y="223" text-anchor="middle" fill="#6bcb77" font-size="7">→ 多步规划</text>
+  <text x="775" y="210" text-anchor="middle" fill="#ff6b6b" font-size="7">→ 自主决策</text>
+  <text x="775" y="223" text-anchor="middle" fill="#ff6b6b" font-size="7">→ 错误恢复</text>
+
+  <!-- Data scale -->
+  <text x="100" y="248" text-anchor="middle" fill="#333" font-size="7">~1B images</text>
+  <text x="235" y="248" text-anchor="middle" fill="#333" font-size="7">~10T tokens</text>
+  <text x="370" y="248" text-anchor="middle" fill="#333" font-size="7">~500M pairs</text>
+  <text x="505" y="248" text-anchor="middle" fill="#333" font-size="7">~50M 专项</text>
+  <text x="640" y="248" text-anchor="middle" fill="#333" font-size="7">~2M 指令</text>
+  <text x="775" y="248" text-anchor="middle" fill="#333" font-size="7">~100K 轨迹</text>
+</svg>
+<p class="caption">六阶段能力递进：视觉感知 → 语言推理 → 跨模态对齐 → 专项能力 → 任务对齐 → 在线优化</p>
+</div>
+
+<!-- Stage 1 Detail -->
+<h3>Stage 1: ViT Pretrain — 视觉基座</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>动态分辨率 (NaViT/NaFlex)</strong>：不固定 224/384，支持任意宽高比 → Agent 需要处理各种 UI 截图尺寸</li>
+<li><strong>高分辨率编码</strong>：1024+ 分辨率，小字体/小按钮的 GUI 需要精细像素感知</li>
+<li><strong>Conv3D Patch Embed</strong>：支持视频帧序列输入 → 动画/视频 Debug 的基础</li>
+<li><strong>多教师蒸馏 (RADIO)</strong>：CLIP(语义) + DINOv2(空间) + SAM(分割) → 同时具备语义和空间精度</li>
+<li><strong>Token 压缩</strong>：Pixel Shuffle / PatchMerger 2×2 → 高分辨率下控制 token 数</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新</h4>
+<ul>
+<li><strong>Web 截图大规模爬取</strong>：~1B 网页截图，覆盖各种 UI 风格、布局、暗色/亮色主题</li>
+<li><strong>多分辨率混合</strong>：从 256×256 到 2048×2048 混合训练，不偏向单一尺寸</li>
+<li><strong>GUI 元素标注</strong>：按钮、输入框、菜单等 UI 元素的 bounding box 预训练</li>
+<li><strong>代码截图 + IDE 截图</strong>：终端、VS Code、浏览器 DevTools 作为训练数据</li>
+<li><strong>视频帧序列</strong>：屏幕录制切帧，学习 UI 状态变化的时序模式</li>
+</ul>
+</div>
+</div>
+
+<!-- Stage 2 Detail -->
+<h3>Stage 2: LM Pretrain — 语言基座（为 Agent 准备的核心能力）</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>代码能力优先</strong>：Agent 本质是写代码+调用工具。LM 必须在代码上足够强（代码占比 20-30% 预训练数据）</li>
+<li><strong>长上下文 (128K+)</strong>：GUI Agent 的多步操作轨迹很长（截图序列 + 中间推理），需要原生长上下文支持</li>
+<li><strong>结构化输出</strong>：Agent 需要输出 JSON/坐标/函数调用格式，LM 必须稳定生成结构化内容</li>
+<li><strong>工具调用 (Function Calling)</strong>：click(x,y)、type(text)、scroll(dir) 等 Agent 动作本质是 tool use</li>
+<li><strong>推理链 (CoT)</strong>：复杂 GUI 任务需要"先观察→再推理→最后行动"的思维链能力</li>
+<li><strong>MoE 架构</strong>：Agent 需要同时具备代码/推理/语言/工具多种能力，MoE 的专家分工天然适合</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新</h4>
+<ul>
+<li><strong>代码数据 (~3T tokens)</strong>：GitHub 全量代码，重点 HTML/CSS/JS/Python — Agent 改代码的基础</li>
+<li><strong>数学+推理 (~500B)</strong>：逻辑推理能力 → 多步规划、条件判断、错误诊断</li>
+<li><strong>工具调用语料 (~100B)</strong>：API 文档 + 函数签名 + 调用示例 → function calling 能力</li>
+<li><strong>指令跟随 (预训练阶段混入)</strong>：少量高质量指令数据混入预训练 → 更好的指令遵循</li>
+<li><strong>多语言 (~2T)</strong>：GUI 文本可能是任何语言，LM 需要多语言理解</li>
+<li><strong>网页文本 (~5T)</strong>：HTML 结构、CSS 属性、DOM 层级 — 理解网页的文本表示</li>
+</ul>
+</div>
+</div>
+
+<div class="key-point"><strong>LM 对 VLM Agent 的关键贡献：</strong>① 代码生成能力（设计稿→代码的"写"的部分）；② 推理规划能力（多步 GUI 操作的分解和排序）；③ 工具调用格式（将视觉理解转化为可执行动作）；④ 长上下文（容纳多轮截图+操作的完整轨迹）。LM 越强，VLM Agent 的上限越高。</div>
+
+<!-- Stage 3 Detail -->
+<h3>Stage 3: VLM Pretrain — 跨模态对齐</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>Deepstack 注入</strong>：视觉 token 不只放在序列开头，而是注入 LLM 中间层 → 更深层的视觉-语言融合</li>
+<li><strong>可变长度视觉序列</strong>：不同图片产生不同数量的 token（不 pad 到固定长度）</li>
+<li><strong>Projector 设计</strong>：从 linear → 2-layer MLP → SwiGLU Merger → 逐步增加映射能力</li>
+<li><strong>渐进式解冻</strong>：先冻 ViT + LLM 只训 Projector → 解冻 ViT → 全参微调</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新</h4>
+<ul>
+<li><strong>图文配对 (500M+)</strong>：LAION-style 大规模弱标注对齐，建立基础视觉-语言关联</li>
+<li><strong>交错图文 (Interleaved)</strong>：网页中图文混排数据，学习多图上下文理解</li>
+<li><strong>Grounding 数据</strong>：图片区域 + 文字描述配对，建立空间指代能力</li>
+<li><strong>截图-HTML 配对</strong>：网页渲染结果 + 对应源代码，学习视觉→代码的映射</li>
+</ul>
+</div>
+</div>
+
+<!-- Stage 3 Detail -->
+<h3>Stage 4: VLM Midtrain — 专项能力注入</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>高分辨率 Tile 切分</strong>：AnyRes — 大图切成多个 tile 分别编码再拼接，保持细节</li>
+<li><strong>视频 Token 压缩</strong>：时间维度池化/采样，30fps → 关键帧提取，控制长视频 token 量</li>
+<li><strong>坐标输出头</strong>：额外的 [x,y,w,h] 回归头或坐标 token 化，精确定位 GUI 元素</li>
+<li><strong>多尺度特征</strong>：ViT 中间层特征也传给 LLM（不只是最后一层），小元素识别靠浅层特征</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新（关键差异化阶段）</h4>
+<ul>
+<li><strong>GUI 截图 + 元素标注 (~10M)</strong>：截图中每个可交互元素的位置、类型、文字</li>
+<li><strong>OCR + 文档理解 (~20M)</strong>：PDF/PPT/手写笔记识别 → 论文图表→代码的前置能力</li>
+<li><strong>代码渲染对 (~5M)</strong>：HTML/CSS/SVG 代码 + 渲染截图配对 → 设计稿→代码的核心</li>
+<li><strong>屏幕录制 + 操作轨迹 (~5M)</strong>：[截图, action, 截图, action...] 序列 → 学习 UI 操作的因果关系</li>
+<li><strong>错误截图 + 修复对 (~2M)</strong>：UI bug 截图 + 对应的代码修复 diff</li>
+<li><strong>图表数据 (~5M)</strong>：matplotlib/echarts 输出图片 + 生成代码 + 数据表 → 可视化审查能力</li>
+</ul>
+</div>
+</div>
+
+<div class="key-point"><strong>Midtrain 是差异化关键：</strong>这个阶段决定了 VLM 是"通用聊天模型"还是"GUI Agent"。数据质量远比数量重要 — 10M 高质量 GUI 标注 > 1B 低质量图文对。</div>
+
+<!-- Stage 4 Detail -->
+<h3>Stage 5: VLM SFT — 任务格式对齐</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>Set-of-Mark (SoM) Prompting</strong>：在截图上叠加数字标记，模型输出标记 ID 而非坐标 → 更稳定</li>
+<li><strong>Think-then-Act 格式</strong>：先输出 reasoning (我看到了X，需要点Y) 再输出 action → 可解释性</li>
+<li><strong>多轮视觉对话</strong>：[截图1→动作1→截图2→动作2...] 的对话格式训练</li>
+<li><strong>Tool Use 集成</strong>：将 click/type/scroll 封装为 tool call 格式，复用 LLM 的 function calling 能力</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新</h4>
+<ul>
+<li><strong>GUI Grounding 指令 (~500K)</strong>："点击登录按钮" → [x=234, y=567] 精确坐标标注</li>
+<li><strong>多步任务轨迹 (~200K)</strong>：完整的 GUI 操作序列（如"订一张机票"的 10-20 步操作）</li>
+<li><strong>代码生成+视觉验证对 (~500K)</strong>："实现这个设计" → 代码 → 截图 → 判断是否匹配</li>
+<li><strong>错误诊断对话 (~200K)</strong>：用户发截图问"哪里有bug" → 模型定位并解释</li>
+<li><strong>CoT 规划数据 (~100K)</strong>：复杂任务的分步规划（含中间截图验证步骤）</li>
+</ul>
+</div>
+</div>
+
+<!-- Stage 5 Detail -->
+<h3>Stage 6: VLM RL — 在线自我优化</h3>
+
+<div class="compare-grid">
+<div class="compare-card cli">
+<h4>模型创新</h4>
+<ul>
+<li><strong>环境交互 RL</strong>：在 OSWorld/WebArena 等环境中实际操作，任务成功率作为奖励</li>
+<li><strong>视觉 Verifier</strong>：训练一个判断模型评估"截图是否达到目标状态" → 自动化奖励</li>
+<li><strong>探索策略</strong>：GUI 操作空间巨大，需要高效探索（如 Monte Carlo Tree Search on screenshots）</li>
+<li><strong>错误恢复训练</strong>：故意注入错误操作，训练模型识别异常截图并回退/修复</li>
+<li><strong>Self-Play</strong>：一个模型出题（生成 UI 任务），另一个模型解题 → 无限数据生成</li>
+</ul>
+</div>
+<div class="compare-card vlm">
+<h4>数据创新</h4>
+<ul>
+<li><strong>在线交互轨迹 (~100K+)</strong>：模型实际操作产生的 (state, action, reward) 序列</li>
+<li><strong>失败轨迹 + 修正 (~50K)</strong>：失败案例的 DPO 对 — (失败轨迹, 成功轨迹) 对比学习</li>
+<li><strong>人类演示对比 (~20K)</strong>：人类操作 vs 模型操作的偏好标注 → RLHF for agents</li>
+<li><strong>合成任务 (无限)</strong>：程序化生成 UI + 任务指令 → 自动验证 → 无需人工标注</li>
+<li><strong>跨环境迁移</strong>：在 Web 上学到的操作模式迁移到 Desktop、Mobile</li>
+</ul>
+</div>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">各阶段数据投入 vs 获得的 Agent 能力</text>
+
+  <!-- Table-like layout -->
+  <rect x="50" y="40" width="800" height="30" rx="4" fill="#16162a"/>
+  <text x="130" y="60" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">训练阶段</text>
+  <text x="300" y="60" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">核心数据</text>
+  <text x="520" y="60" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">获得能力</text>
+  <text x="730" y="60" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">对 Agent 的作用</text>
+
+  <!-- ViT -->
+  <text x="130" y="90" text-anchor="middle" fill="#4facfe" font-size="8">ViT Pretrain</text>
+  <text x="300" y="90" text-anchor="middle" fill="#888" font-size="7">Web截图+多分辨率 (1B)</text>
+  <text x="520" y="90" text-anchor="middle" fill="#888" font-size="7">像素感知、空间理解、小元素识别</text>
+  <text x="730" y="90" text-anchor="middle" fill="#555" font-size="7">能"看清"GUI 细节</text>
+
+  <!-- LM Pretrain -->
+  <text x="130" y="112" text-anchor="middle" fill="#ffa94d" font-size="8">LM Pretrain</text>
+  <text x="300" y="112" text-anchor="middle" fill="#888" font-size="7">代码+推理+工具调用 (10T)</text>
+  <text x="520" y="112" text-anchor="middle" fill="#888" font-size="7">代码生成、逻辑推理、结构化输出</text>
+  <text x="730" y="112" text-anchor="middle" fill="#555" font-size="7">能"思考"和"写代码"</text>
+
+  <!-- VLM Pretrain -->
+  <text x="130" y="134" text-anchor="middle" fill="#667eea" font-size="8">VLM Pretrain</text>
+  <text x="300" y="134" text-anchor="middle" fill="#888" font-size="7">图文对+交错+截图-HTML (500M)</text>
+  <text x="520" y="134" text-anchor="middle" fill="#888" font-size="7">视觉-语言对齐、图文关联</text>
+  <text x="730" y="134" text-anchor="middle" fill="#555" font-size="7">能"描述"看到的界面</text>
+
+  <!-- Midtrain -->
+  <text x="130" y="156" text-anchor="middle" fill="#f093fb" font-size="8">VLM Midtrain</text>
+  <text x="300" y="156" text-anchor="middle" fill="#888" font-size="7">GUI标注+OCR+代码渲染对 (50M)</text>
+  <text x="520" y="156" text-anchor="middle" fill="#888" font-size="7">元素定位、文档理解、代码-视觉映射</text>
+  <text x="730" y="156" text-anchor="middle" fill="#555" font-size="7">能"理解" UI 结构和代码关系</text>
+
+  <!-- SFT -->
+  <text x="130" y="178" text-anchor="middle" fill="#6bcb77" font-size="8">VLM SFT</text>
+  <text x="300" y="178" text-anchor="middle" fill="#888" font-size="7">Grounding指令+操作轨迹 (2M)</text>
+  <text x="520" y="178" text-anchor="middle" fill="#888" font-size="7">精准操作、多步规划、CoT 推理</text>
+  <text x="730" y="178" text-anchor="middle" fill="#555" font-size="7">能"执行"具体 GUI 操作</text>
+
+  <!-- RL -->
+  <text x="130" y="200" text-anchor="middle" fill="#ff6b6b" font-size="8">VLM RL</text>
+  <text x="300" y="200" text-anchor="middle" fill="#888" font-size="7">环境交互+失败修正 (100K轨迹)</text>
+  <text x="520" y="200" text-anchor="middle" fill="#888" font-size="7">自主决策、错误恢复、探索能力</text>
+  <text x="730" y="200" text-anchor="middle" fill="#555" font-size="7">能"自主完成"复杂长任务</text>
+
+  <!-- Bottom insight -->
+  <rect x="100" y="220" width="700" height="28" rx="6" fill="#f093fb08" stroke="#f093fb22"/>
+  <text x="450" y="238" text-anchor="middle" fill="#f093fb" font-size="8">关键瓶颈: LM 的代码+推理能力决定 Agent 上限; Midtrain 数据稀缺; RL 环境效率低</text>
+</svg>
+<p class="caption">数据量逐级递减但质量递增：从 10T 通用文本到 100K 高质量交互轨迹，LM 基座的推理能力是整个 pipeline 的天花板</p>
+</div>
+
+<div class="key-point"><strong>当前最大瓶颈：</strong>① Midtrain 阶段缺乏大规模高质量 GUI 标注数据（元素级 bounding box + 功能描述）；② RL 阶段缺乏高效稳定的 GUI 交互环境（OSWorld 太慢，每个 episode ~2min）。谁先解决数据和环境问题，谁就能率先做出真正可用的 VLM Agent。</div>
+
+<footer><p>Generated 2026.05.28</p></footer>
+</div>
+</body>
+</html>

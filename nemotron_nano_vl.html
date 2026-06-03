@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nemotron-Nano-12B-v2-VL Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #76b900, #a0e040); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #76b900; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #76b9000a; border: 1px solid #76b90022; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #76b900; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 24px; align-items: start; margin: 24px 0; }
+.three-col pre { height: 100%; }
+.three-col .svg-block { margin: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.three-col .explanation { padding: 16px; background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; }
+.three-col .explanation h3 { margin-top: 0; }
+.three-col .explanation p { font-size: 0.84rem; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+@media (max-width: 1100px) { .three-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Nemotron-Nano-12B-v2-VL</h1>
+<p class="subtitle">Hybrid Mamba+MoE Vision-Language Model — Zero Attention Layers, Pure State-Space Architecture</p>
+
+<!-- ===== 1. Hybrid Mamba+MoE ===== -->
+<h2>1. Hybrid Mamba+MoE (Zero Attention Layers)</h2>
+
+<div class="three-col">
+<pre><span class="cm"># Layer pattern: repeating blocks</span>
+<span class="cm"># NO attention layers anywhere</span>
+
+<span class="kw">class</span> <span class="fn">NemotronNanoBlock</span>:
+    <span class="cm">"""Repeating pattern:
+    Block 2k:   Mamba + Dense MLP
+    Block 2k+1: Mamba + MoE
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, layer_idx):
+        self.mamba = MambaLayer(
+            d_model=<span class="num">5120</span>,
+            d_inner=<span class="num">10240</span>,
+            n_heads=<span class="num">128</span>,
+        )
+        <span class="kw">if</span> layer_idx % <span class="num">2</span> == <span class="num">0</span>:
+            self.ffn = DenseMLP(
+                d_model=<span class="num">5120</span>,
+                d_ff=<span class="num">20480</span>)
+        <span class="kw">else</span>:
+            self.ffn = MoELayer(
+                n_experts=<span class="num">64</span>,
+                top_k=<span class="num">4</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        x = x + self.mamba(x)
+        x = x + self.ffn(x)
+        <span class="kw">return</span> x</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 400" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#76b900"/></marker></defs>
+  <text x="180" y="20" text-anchor="middle" fill="#6b6b80" font-size="10">Layer Stack Pattern</text>
+  <!-- Block 0 -->
+  <rect x="80" y="35" width="200" height="35" rx="6" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="57" text-anchor="middle" fill="#76b900" font-size="10">Mamba</text>
+  <rect x="80" y="78" width="200" height="30" rx="6" fill="#1e1e2e" stroke="#61afef55"/>
+  <text x="180" y="97" text-anchor="middle" fill="#61afef" font-size="9">Dense MLP</text>
+  <text x="30" y="65" fill="#555" font-size="9">L0</text>
+  <!-- Block 1 -->
+  <rect x="80" y="120" width="200" height="35" rx="6" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="142" text-anchor="middle" fill="#76b900" font-size="10">Mamba</text>
+  <rect x="80" y="163" width="200" height="30" rx="6" fill="#1e1e2e" stroke="#c678dd55"/>
+  <text x="180" y="182" text-anchor="middle" fill="#c678dd" font-size="9">MoE (64 experts, top-4)</text>
+  <text x="30" y="150" fill="#555" font-size="9">L1</text>
+  <!-- Block 2 -->
+  <rect x="80" y="205" width="200" height="35" rx="6" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="227" text-anchor="middle" fill="#76b900" font-size="10">Mamba</text>
+  <rect x="80" y="248" width="200" height="30" rx="6" fill="#1e1e2e" stroke="#61afef55"/>
+  <text x="180" y="267" text-anchor="middle" fill="#61afef" font-size="9">Dense MLP</text>
+  <text x="30" y="235" fill="#555" font-size="9">L2</text>
+  <!-- Block 3 -->
+  <rect x="80" y="290" width="200" height="35" rx="6" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="312" text-anchor="middle" fill="#76b900" font-size="10">Mamba</text>
+  <rect x="80" y="333" width="200" height="30" rx="6" fill="#1e1e2e" stroke="#c678dd55"/>
+  <text x="180" y="352" text-anchor="middle" fill="#c678dd" font-size="9">MoE (64 experts, top-4)</text>
+  <text x="30" y="320" fill="#555" font-size="9">L3</text>
+  <!-- Dots -->
+  <text x="180" y="385" text-anchor="middle" fill="#555" font-size="12">...</text>
+  <!-- Arrows -->
+  <path d="M 180 108 L 180 120" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M 180 193 L 180 205" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M 180 278 L 180 290" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Key Insight</h3>
+<p><strong style="color:#76b900">Zero attention layers.</strong> Unlike typical hybrid models that mix attention with Mamba, Nemotron-Nano-v2-VL uses <em>no attention at all</em> in the language backbone.</p>
+<p>The pattern alternates: <strong>Mamba + Dense MLP</strong> followed by <strong>Mamba + MoE</strong>. This gives the model both efficient sequence modeling (Mamba) and sparse capacity scaling (MoE).</p>
+<p style="margin-top:12px"><strong style="color:#c678dd">MoE config:</strong> 64 experts with top-4 routing. Only 4 experts activate per token, keeping FLOPs manageable while providing massive parameter count.</p>
+<p style="margin-top:12px"><strong style="color:#61afef">Implications:</strong> No KV cache needed at inference. Memory is constant regardless of sequence length. Throughput scales linearly with sequence length.</p>
+</div>
+</div>
+
+<!-- ===== 2. Mamba Layers ===== -->
+<h2>2. Mamba Layer (Selective State Space)</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">MambaLayer</span>(nn.Module):
+    <span class="cm">"""Selective State Space Model
+    128 heads, head_dim=80
+    d_inner=10240, d_state=128, d_conv=4
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.d_inner = <span class="num">10240</span>
+        self.d_state = <span class="num">128</span>
+        self.d_conv = <span class="num">4</span>
+        self.n_heads = <span class="num">128</span>
+        self.head_dim = <span class="num">80</span>
+
+        <span class="cm"># Input projection</span>
+        self.in_proj = Linear(
+            <span class="num">5120</span>, <span class="num">2</span>*self.d_inner)
+        <span class="cm"># Conv for local context</span>
+        self.conv1d = Conv1d(
+            self.d_inner, self.d_inner,
+            kernel_size=<span class="num">4</span>, groups=self.d_inner)
+        <span class="cm"># SSM parameters (input-dependent)</span>
+        self.dt_proj = Linear(self.d_inner, self.n_heads)
+        self.B_proj = Linear(self.d_inner, self.d_state)
+        self.C_proj = Linear(self.d_inner, self.d_state)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># x: [B, L, 5120]</span>
+        xz = self.in_proj(x)
+        x, z = xz.chunk(<span class="num">2</span>, dim=-<span class="num">1</span>)
+        x = self.conv1d(x)
+        x = silu(x)
+        <span class="cm"># Input-dependent SSM params</span>
+        dt = F.softplus(self.dt_proj(x))
+        B = self.B_proj(x)
+        C = self.C_proj(x)
+        <span class="cm"># Selective scan</span>
+        y = selective_scan(x, dt, B, C)
+        <span class="kw">return</span> y * silu(z)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Mamba Selective Scan</text>
+  <!-- Input -->
+  <rect x="120" y="30" width="120" height="28" rx="5" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="180" y="48" text-anchor="middle" fill="#76b900" font-size="9">x [B, L, 5120]</text>
+  <path d="M 180 58 L 180 75" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- In proj -->
+  <rect x="100" y="78" width="160" height="28" rx="5" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="180" y="96" text-anchor="middle" fill="#61afef" font-size="9">in_proj -> 2*d_inner</text>
+  <!-- Split -->
+  <path d="M 150 106 L 110 130" stroke="#c678dd" stroke-width="1.2"/>
+  <path d="M 210 106 L 250 130" stroke="#d19a66" stroke-width="1.2"/>
+  <rect x="70" y="132" width="80" height="24" rx="4" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="110" y="148" text-anchor="middle" fill="#c678dd" font-size="8">x branch</text>
+  <rect x="210" y="132" width="80" height="24" rx="4" fill="#d19a6622" stroke="#d19a66"/>
+  <text x="250" y="148" text-anchor="middle" fill="#d19a66" font-size="8">z (gate)</text>
+  <!-- Conv -->
+  <path d="M 110 156 L 110 172" stroke="#c678dd" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="60" y="175" width="100" height="24" rx="4" fill="#1e1e2e" stroke="#c678dd"/>
+  <text x="110" y="191" text-anchor="middle" fill="#c678dd" font-size="8">Conv1d(k=4) + SiLU</text>
+  <!-- SSM params -->
+  <path d="M 110 199 L 110 218" stroke="#c678dd" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="40" y="220" width="140" height="50" rx="5" fill="#76b90011" stroke="#76b900"/>
+  <text x="110" y="238" text-anchor="middle" fill="#76b900" font-size="8" font-weight="bold">Input-Dependent SSM</text>
+  <text x="110" y="253" text-anchor="middle" fill="#888" font-size="7">dt = softplus(dt_proj(x))</text>
+  <text x="110" y="265" text-anchor="middle" fill="#888" font-size="7">B = B_proj(x), C = C_proj(x)</text>
+  <!-- Selective scan -->
+  <path d="M 110 270 L 110 290" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="50" y="293" width="120" height="30" rx="5" fill="#76b90022" stroke="#76b900"/>
+  <text x="110" y="312" text-anchor="middle" fill="#76b900" font-size="9" font-weight="bold">Selective Scan</text>
+  <!-- Recurrence formula -->
+  <text x="110" y="340" text-anchor="middle" fill="#888" font-size="7">h_t = A_t * h_{t-1} + B_t * x_t</text>
+  <text x="110" y="355" text-anchor="middle" fill="#888" font-size="7">y_t = C_t * h_t</text>
+  <!-- Gate multiply -->
+  <path d="M 110 360 L 180 385" stroke="#76b900" stroke-width="1.2"/>
+  <path d="M 250 156 L 250 370 L 180 385" stroke="#d19a66" stroke-width="1.2"/>
+  <circle cx="180" cy="385" r="8" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="180" y="389" text-anchor="middle" fill="#76b900" font-size="8">x</text>
+  <text x="180" y="412" text-anchor="middle" fill="#76b900" font-size="8">y * silu(z)</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Selective State Space</h3>
+<p><strong style="color:#76b900">Core idea:</strong> Unlike transformers that attend to all positions, Mamba uses a recurrent state that selectively remembers or forgets information based on the current input.</p>
+<p style="margin-top:10px"><strong>Parameters:</strong></p>
+<p>- 128 heads, head_dim=80<br>- d_inner=10240 (2x model dim)<br>- d_state=128 (recurrent state size)<br>- d_conv=4 (local context window)</p>
+<p style="margin-top:10px"><strong style="color:#c678dd">Input-dependent:</strong> dt, B, C are all computed from the input. This is what makes it "selective" — the model learns <em>what</em> to remember based on content, not position.</p>
+<p style="margin-top:10px"><strong style="color:#61afef">Inference:</strong> O(1) per token. The recurrent state is fixed-size regardless of sequence length. No positional embeddings needed — position is encoded implicitly in the evolving state.</p>
+</div>
+</div>
+
+<!-- ===== 3. Vision: RADIO ViT ===== -->
+<h2>3. Vision Encoder: RADIO ViT</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">RADIOViT</span>(nn.Module):
+    <span class="cm">"""RADIO: Robust And Diverse
+    Image-text Object detection encoder
+
+    Multi-teacher distillation:
+      CLIP + DINOv2 + SAM
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.num_layers = <span class="num">32</span>
+        self.hidden_size = <span class="num">1280</span>
+        self.patch_size = <span class="num">16</span>
+        self.image_size = <span class="num">512</span>
+        <span class="cm"># 512/16 = 32 patches per side</span>
+        <span class="cm"># 32*32 = 1024 tokens</span>
+        self.num_patches = <span class="num">1024</span>
+
+        self.patch_embed = Conv2d(
+            <span class="num">3</span>, <span class="num">1280</span>,
+            kernel_size=<span class="num">16</span>, stride=<span class="num">16</span>)
+        self.layers = nn.ModuleList([
+            ViTBlock(<span class="num">1280</span>, heads=<span class="num">16</span>)
+            <span class="kw">for</span> _ <span class="kw">in</span> range(<span class="num">32</span>)
+        ])
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, img):
+        <span class="cm"># img: [B, 3, 512, 512]</span>
+        x = self.patch_embed(img)
+        <span class="cm"># x: [B, 1024, 1280]</span>
+        <span class="kw">for</span> layer <span class="kw">in</span> self.layers:
+            x = layer(x)
+        <span class="kw">return</span> x  <span class="cm"># [B, 1024, 1280]</span></pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">RADIO ViT Architecture</text>
+  <!-- Image input -->
+  <rect x="110" y="30" width="140" height="35" rx="6" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="180" y="45" text-anchor="middle" fill="#76b900" font-size="9">Image</text>
+  <text x="180" y="58" text-anchor="middle" fill="#555" font-size="7">512 x 512 x 3</text>
+  <path d="M 180 65 L 180 80" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Patch embed -->
+  <rect x="90" y="83" width="180" height="30" rx="5" fill="#61afef22" stroke="#61afef"/>
+  <text x="180" y="102" text-anchor="middle" fill="#61afef" font-size="9">Patch Embed (16x16) -> 1024 tokens</text>
+  <path d="M 180 113 L 180 130" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- ViT blocks -->
+  <rect x="80" y="133" width="200" height="100" rx="8" fill="#1e1e2e" stroke="#76b90055"/>
+  <text x="180" y="155" text-anchor="middle" fill="#76b900" font-size="9" font-weight="bold">32x ViT Blocks</text>
+  <text x="180" y="175" text-anchor="middle" fill="#888" font-size="8">hidden=1280, heads=16</text>
+  <!-- Teachers -->
+  <rect x="100" y="190" width="55" height="22" rx="4" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="127" y="205" text-anchor="middle" fill="#c678dd" font-size="7">CLIP</text>
+  <rect x="162" y="190" width="55" height="22" rx="4" fill="#d19a6622" stroke="#d19a66"/>
+  <text x="189" y="205" text-anchor="middle" fill="#d19a66" font-size="7">DINOv2</text>
+  <rect x="224" y="190" width="55" height="22" rx="4" fill="#61afef22" stroke="#61afef"/>
+  <text x="251" y="205" text-anchor="middle" fill="#61afef" font-size="7">SAM</text>
+  <text x="180" y="225" text-anchor="middle" fill="#555" font-size="7">Multi-teacher distillation</text>
+  <path d="M 180 233 L 180 250" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Output -->
+  <rect x="100" y="253" width="160" height="28" rx="5" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="271" text-anchor="middle" fill="#76b900" font-size="9">[B, 1024, 1280]</text>
+  <!-- Annotation -->
+  <text x="180" y="305" text-anchor="middle" fill="#6b6b80" font-size="8">Semantic + Spatial + Segmentation</text>
+  <text x="180" y="320" text-anchor="middle" fill="#6b6b80" font-size="8">features unified in one encoder</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>RADIO Encoder</h3>
+<p><strong style="color:#76b900">RADIO</strong> = Robust And Diverse Image-text Object detection encoder. A ViT trained via multi-teacher distillation from three complementary teachers:</p>
+<p style="margin-top:8px">- <strong style="color:#c678dd">CLIP:</strong> semantic/text-aligned features<br>- <strong style="color:#d19a66">DINOv2:</strong> spatial/structural features<br>- <strong style="color:#61afef">SAM:</strong> segmentation-quality features</p>
+<p style="margin-top:10px"><strong>Architecture:</strong> 32 layers, hidden_size=1280, 16 attention heads. Patch size 16 on 512x512 images produces 1024 visual tokens.</p>
+<p style="margin-top:10px">The result is a single encoder that captures semantics, spatial structure, and fine-grained segmentation — all properties needed for a strong VLM vision backbone.</p>
+</div>
+</div>
+
+<!-- ===== 4. Pixel Shuffle Downsampling ===== -->
+<h2>4. Pixel Shuffle Downsampling</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">PixelShuffleDown</span>(nn.Module):
+    <span class="cm">"""Reduce spatial tokens by
+    rearranging into channel dim.
+
+    scale_factor=0.5:
+      32x32 spatial -> 16x16 spatial
+      1024 tokens -> 256 tokens (4x reduction)
+      1280 channels -> 5120 channels
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, scale_factor=<span class="num">0.5</span>):
+        self.factor = <span class="kw">int</span>(<span class="num">1</span> / scale_factor)
+        <span class="cm"># factor = 2</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># x: [B, 1024, 1280]</span>
+        B, N, C = x.shape
+        h = w = <span class="kw">int</span>(N ** <span class="num">0.5</span>)  <span class="cm"># 32</span>
+        x = x.view(B, h, w, C)
+        <span class="cm"># Rearrange 2x2 spatial blocks</span>
+        <span class="cm"># into channel dimension</span>
+        x = x.view(B,
+            h//<span class="num">2</span>, <span class="num">2</span>,
+            w//<span class="num">2</span>, <span class="num">2</span>, C)
+        x = x.permute(<span class="num">0</span>,<span class="num">1</span>,<span class="num">3</span>,<span class="num">2</span>,<span class="num">4</span>,<span class="num">5</span>)
+        x = x.reshape(B,
+            h//<span class="num">2</span> * w//<span class="num">2</span>,
+            <span class="num">4</span> * C)
+        <span class="cm"># [B, 256, 5120]</span>
+        <span class="kw">return</span> x</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 350" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Pixel Shuffle (scale=0.5)</text>
+  <!-- Input grid -->
+  <text x="90" y="45" text-anchor="middle" fill="#76b900" font-size="9">32 x 32 patches</text>
+  <rect x="30" y="55" width="120" height="120" rx="4" fill="none" stroke="#76b90055"/>
+  <!-- 4x4 sub-grid to show pattern -->
+  <rect x="30" y="55" width="30" height="30" fill="#76b90033" stroke="#76b900"/>
+  <rect x="60" y="55" width="30" height="30" fill="#61afef33" stroke="#61afef"/>
+  <rect x="30" y="85" width="30" height="30" fill="#c678dd33" stroke="#c678dd"/>
+  <rect x="60" y="85" width="30" height="30" fill="#d19a6633" stroke="#d19a66"/>
+  <rect x="90" y="55" width="30" height="30" fill="#76b90033" stroke="#76b900"/>
+  <rect x="120" y="55" width="30" height="30" fill="#61afef33" stroke="#61afef"/>
+  <rect x="90" y="85" width="30" height="30" fill="#c678dd33" stroke="#c678dd"/>
+  <rect x="120" y="85" width="30" height="30" fill="#d19a6633" stroke="#d19a66"/>
+  <text x="90" y="195" text-anchor="middle" fill="#555" font-size="8">1024 tokens x 1280 ch</text>
+  <!-- Arrow -->
+  <path d="M 165 115 L 210 115" stroke="#76b900" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="187" y="105" text-anchor="middle" fill="#76b900" font-size="8">2x2</text>
+  <text x="187" y="130" text-anchor="middle" fill="#555" font-size="7">merge</text>
+  <!-- Output grid -->
+  <text x="280" y="45" text-anchor="middle" fill="#76b900" font-size="9">16 x 16 patches</text>
+  <rect x="230" y="55" width="100" height="100" rx="4" fill="none" stroke="#76b90055"/>
+  <!-- Merged cells -->
+  <rect x="230" y="55" width="50" height="50" rx="2" fill="#1e1e2e" stroke="#76b900"/>
+  <rect x="234" y="59" width="10" height="10" fill="#76b90055"/>
+  <rect x="246" y="59" width="10" height="10" fill="#61afef55"/>
+  <rect x="234" y="71" width="10" height="10" fill="#c678dd55"/>
+  <rect x="246" y="71" width="10" height="10" fill="#d19a6655"/>
+  <rect x="280" y="55" width="50" height="50" rx="2" fill="#1e1e2e" stroke="#76b900"/>
+  <rect x="284" y="59" width="10" height="10" fill="#76b90055"/>
+  <rect x="296" y="59" width="10" height="10" fill="#61afef55"/>
+  <rect x="284" y="71" width="10" height="10" fill="#c678dd55"/>
+  <rect x="296" y="71" width="10" height="10" fill="#d19a6655"/>
+  <text x="280" y="175" text-anchor="middle" fill="#555" font-size="8">256 tokens x 5120 ch</text>
+  <!-- Summary -->
+  <rect x="60" y="220" width="240" height="55" rx="8" fill="#76b90008" stroke="#76b90033"/>
+  <text x="180" y="240" text-anchor="middle" fill="#76b900" font-size="9">Token Reduction: 4x</text>
+  <text x="180" y="258" text-anchor="middle" fill="#888" font-size="8">1024 -> 256 tokens</text>
+  <text x="180" y="273" text-anchor="middle" fill="#888" font-size="8">1280 -> 5120 channels</text>
+  <!-- Info preserved -->
+  <text x="180" y="310" text-anchor="middle" fill="#6b6b80" font-size="8">No information loss — spatial features</text>
+  <text x="180" y="325" text-anchor="middle" fill="#6b6b80" font-size="8">rearranged into channel dimension</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Spatial Compression</h3>
+<p><strong style="color:#76b900">Purpose:</strong> Reduce the number of visual tokens fed to the language model from 1024 to 256 — a 4x reduction that dramatically cuts compute in the language backbone.</p>
+<p style="margin-top:10px"><strong>Mechanism:</strong> Each 2x2 block of adjacent spatial patches is merged into a single token by concatenating their features along the channel dimension:</p>
+<p style="margin-top:6px; font-family:monospace; font-size:0.8rem; color:#c4c4e0">
+[B, 32, 32, 1280]<br>
+-> [B, 16, 16, 4*1280]<br>
+-> [B, 256, 5120]
+</p>
+<p style="margin-top:10px"><strong style="color:#61afef">Lossless:</strong> No information is discarded. Spatial relationships are preserved in the channel ordering. The projector MLP then maps 5120 back to the language model dimension.</p>
+</div>
+</div>
+
+<!-- ===== 5. MLP Projector ===== -->
+<h2>5. MLP Projector (Squared ReLU)</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">VisionProjector</span>(nn.Module):
+    <span class="cm">"""2-layer MLP with squared_relu.
+    Maps vision features to LM dim.
+
+    5120 -> 20480 -> 5120
+    squared_relu: relu(x)^2
+      - Sparsity-inducing activation
+      - Most values become exactly 0
+      - More selective than standard relu
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.fc1 = Linear(<span class="num">5120</span>, <span class="num">20480</span>)
+        self.fc2 = Linear(<span class="num">20480</span>, <span class="num">5120</span>)
+
+    <span class="kw">def</span> <span class="fn">squared_relu</span>(self, x):
+        <span class="kw">return</span> F.relu(x) ** <span class="num">2</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># x: [B, 256, 5120]</span>
+        x = self.fc1(x)
+        <span class="cm"># [B, 256, 20480]</span>
+        x = self.squared_relu(x)
+        <span class="cm"># ~90% sparsity</span>
+        x = self.fc2(x)
+        <span class="cm"># [B, 256, 5120]</span>
+        <span class="kw">return</span> x</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 350" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">MLP Projector with Squared ReLU</text>
+  <!-- Input -->
+  <rect x="110" y="35" width="140" height="30" rx="5" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="180" y="54" text-anchor="middle" fill="#76b900" font-size="9">[B, 256, 5120]</text>
+  <path d="M 180 65 L 180 85" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- FC1 -->
+  <rect x="90" y="88" width="180" height="30" rx="5" fill="#61afef22" stroke="#61afef"/>
+  <text x="180" y="107" text-anchor="middle" fill="#61afef" font-size="9">Linear(5120, 20480)</text>
+  <path d="M 180 118 L 180 140" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Squared ReLU -->
+  <rect x="80" y="143" width="200" height="50" rx="8" fill="#c678dd11" stroke="#c678dd"/>
+  <text x="180" y="163" text-anchor="middle" fill="#c678dd" font-size="9" font-weight="bold">Squared ReLU</text>
+  <text x="180" y="182" text-anchor="middle" fill="#888" font-size="8">f(x) = max(0, x)^2</text>
+  <!-- Sparsity visualization -->
+  <path d="M 180 193 L 180 213" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="100" y="216" width="160" height="25" rx="4" fill="#1e1e2e" stroke="#555"/>
+  <!-- Sparse bar -->
+  <rect x="104" y="220" width="15" height="17" fill="#76b90066"/>
+  <rect x="121" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="138" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="155" y="220" width="15" height="17" fill="#76b90066"/>
+  <rect x="172" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="189" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="206" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="223" y="220" width="15" height="17" fill="#0a0a0f"/>
+  <rect x="240" y="220" width="15" height="17" fill="#76b90066"/>
+  <text x="180" y="256" text-anchor="middle" fill="#555" font-size="7">~90% activations are zero</text>
+  <!-- FC2 -->
+  <path d="M 180 262 L 180 278" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="90" y="281" width="180" height="30" rx="5" fill="#61afef22" stroke="#61afef"/>
+  <text x="180" y="300" text-anchor="middle" fill="#61afef" font-size="9">Linear(20480, 5120)</text>
+  <path d="M 180 311 L 180 328" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Output -->
+  <rect x="110" y="330" width="140" height="28" rx="5" fill="#76b90022" stroke="#76b900"/>
+  <text x="180" y="348" text-anchor="middle" fill="#76b900" font-size="9">[B, 256, 5120]</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Squared ReLU Projector</h3>
+<p><strong style="color:#76b900">Role:</strong> Bridge between vision encoder output (after pixel shuffle) and the Mamba language model input space.</p>
+<p style="margin-top:10px"><strong style="color:#c678dd">Squared ReLU:</strong> f(x) = max(0, x)^2. Unlike standard ReLU, squaring creates a much sparser activation pattern. Approximately 90% of intermediate activations become zero.</p>
+<p style="margin-top:10px"><strong>Why sparsity matters:</strong></p>
+<p>- Forces the projector to be highly selective about which visual features to pass through<br>- Reduces effective compute in the second linear layer<br>- Acts as an information bottleneck that filters noise</p>
+<p style="margin-top:10px"><strong>Dimensions:</strong> 5120 -> 20480 (4x expansion) -> 5120. The output directly matches the Mamba model dimension, so vision tokens can be concatenated with text embeddings.</p>
+</div>
+</div>
+
+<!-- ===== 6. No Positional Embeddings ===== -->
+<h2>6. No Positional Embeddings in Language</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">NemotronNanoVL</span>(nn.Module):
+    <span class="cm">"""Full model assembly.
+    No positional embeddings in LM.
+    Position encoded in Mamba state.
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        <span class="cm"># Vision</span>
+        self.vit = RADIOViT()
+        self.pixel_shuffle = PixelShuffleDown(
+            scale_factor=<span class="num">0.5</span>)
+        self.projector = VisionProjector()
+
+        <span class="cm"># Language (NO pos_embed!)</span>
+        self.embed = Embedding(
+            vocab_size=<span class="num">131072</span>,
+            d_model=<span class="num">5120</span>)
+        <span class="cm"># No self.pos_embed</span>
+        <span class="cm"># No RoPE, no ALiBi, no learned PE</span>
+
+        self.layers = nn.ModuleList([
+            NemotronNanoBlock(i)
+            <span class="kw">for</span> i <span class="kw">in</span> range(<span class="num">80</span>)
+        ])
+        self.head = Linear(<span class="num">5120</span>, <span class="num">131072</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, tokens, images):
+        <span class="cm"># Text embeddings</span>
+        txt = self.embed(tokens)
+        <span class="cm"># Vision pipeline</span>
+        vis = self.vit(images)
+        vis = self.pixel_shuffle(vis)
+        vis = self.projector(vis)
+        <span class="cm"># Merge (no pos needed)</span>
+        x = merge(txt, vis)
+        <span class="kw">for</span> layer <span class="kw">in</span> self.layers:
+            x = layer(x)
+        <span class="kw">return</span> self.head(x)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Full Pipeline — No Positional Encoding</text>
+  <!-- Image path -->
+  <rect x="20" y="35" width="100" height="25" rx="4" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="70" y="51" text-anchor="middle" fill="#76b900" font-size="8">Image 512x512</text>
+  <path d="M 70 60 L 70 78" stroke="#76b900" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="20" y="80" width="100" height="22" rx="4" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="70" y="95" text-anchor="middle" fill="#61afef" font-size="7">RADIO ViT (32L)</text>
+  <path d="M 70 102 L 70 115" stroke="#76b900" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="20" y="117" width="100" height="22" rx="4" fill="#1e1e2e" stroke="#c678dd"/>
+  <text x="70" y="132" text-anchor="middle" fill="#c678dd" font-size="7">PixelShuffle 1024->256</text>
+  <path d="M 70 139 L 70 152" stroke="#76b900" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="20" y="154" width="100" height="22" rx="4" fill="#1e1e2e" stroke="#d19a66"/>
+  <text x="70" y="169" text-anchor="middle" fill="#d19a66" font-size="7">MLP Projector</text>
+  <!-- Text path -->
+  <rect x="240" y="35" width="100" height="25" rx="4" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="290" y="51" text-anchor="middle" fill="#76b900" font-size="8">Text Tokens</text>
+  <path d="M 290 60 L 290 78" stroke="#76b900" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="240" y="80" width="100" height="22" rx="4" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="290" y="95" text-anchor="middle" fill="#61afef" font-size="7">Embedding (131K)</text>
+  <!-- NO pos embed -->
+  <rect x="230" y="115" width="120" height="30" rx="6" fill="#f5576c11" stroke="#f5576c55"/>
+  <text x="290" y="128" text-anchor="middle" fill="#f5576c" font-size="7" font-weight="bold">NO Positional Embed</text>
+  <text x="290" y="140" text-anchor="middle" fill="#f5576c" font-size="6">No RoPE / ALiBi / Learned</text>
+  <!-- Merge -->
+  <path d="M 70 176 L 70 200 L 180 215" stroke="#76b900" stroke-width="1.5"/>
+  <path d="M 290 145 L 290 200 L 180 215" stroke="#76b900" stroke-width="1.5"/>
+  <circle cx="180" cy="215" r="10" fill="#76b90033" stroke="#76b900"/>
+  <text x="180" y="219" text-anchor="middle" fill="#76b900" font-size="8">+</text>
+  <!-- Mamba stack -->
+  <path d="M 180 225 L 180 245" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="100" y="248" width="160" height="80" rx="8" fill="#76b90011" stroke="#76b900"/>
+  <text x="180" y="270" text-anchor="middle" fill="#76b900" font-size="9" font-weight="bold">80x Mamba+MoE Layers</text>
+  <text x="180" y="290" text-anchor="middle" fill="#888" font-size="7">Position encoded in</text>
+  <text x="180" y="303" text-anchor="middle" fill="#888" font-size="7">recurrent state h_t</text>
+  <text x="180" y="320" text-anchor="middle" fill="#555" font-size="7">h_t = f(h_{t-1}, x_t)</text>
+  <!-- Output -->
+  <path d="M 180 328 L 180 348" stroke="#76b900" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="110" y="350" width="140" height="25" rx="5" fill="#1e1e2e" stroke="#76b900"/>
+  <text x="180" y="366" text-anchor="middle" fill="#76b900" font-size="8">LM Head -> 131K vocab</text>
+  <!-- Annotation -->
+  <text x="180" y="400" text-anchor="middle" fill="#6b6b80" font-size="8">Constant memory inference, no KV cache</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Position-Free Design</h3>
+<p><strong style="color:#f5576c">Fundamental difference from transformers:</strong> This model has NO positional embeddings of any kind — no RoPE, no ALiBi, no learned positional encoding.</p>
+<p style="margin-top:10px"><strong style="color:#76b900">How position is encoded:</strong> Mamba's recurrent state naturally encodes position. Since h_t = f(h_{t-1}, x_t), the state at position t is a function of all previous inputs in order. The model implicitly knows "where" it is through its accumulated state.</p>
+<p style="margin-top:10px"><strong>Implications for VLM:</strong></p>
+<p>- Vision tokens and text tokens are simply concatenated<br>- No need for special position handling at the vision-text boundary<br>- Sequence length is theoretically unlimited (no position embedding table to overflow)</p>
+<p style="margin-top:10px"><strong style="color:#61afef">Inference:</strong> 80 layers, each with constant-memory Mamba + either dense MLP or MoE. Total inference cost is O(L) in sequence length with constant memory — fundamentally more efficient than transformer VLMs.</p>
+</div>
+</div>
+
+<footer>Generated 2026.06.02 | Nemotron-Nano-12B-v2-VL Architecture Analysis</footer>
+</div>
+</body>
+</html>

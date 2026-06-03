@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flash Attention: V1 → V2 → V3</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #667eea; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .st { color: #98c379; } .num { color: #d19a66; }
+.key-point { background: #667eea0a; border: 1px solid #667eea22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #667eea; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #667eea; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Flash Attention</h1>
+<p class="subtitle">从 V1 到 V3：IO-Aware → Parallelism → Asynchrony on Hopper</p>
+
+<!-- ===== Standard Attention Problem ===== -->
+<h2>0. 标准 Attention 的瓶颈</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 220" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">Standard Attention: O(N²) memory, HBM-bound</text>
+  <!-- HBM -->
+  <rect x="50" y="50" width="800" height="60" rx="8" fill="#1a1a28" stroke="#f5576c44"/>
+  <text x="450" y="85" text-anchor="middle" fill="#f5576c" font-size="13" font-weight="bold">HBM (High Bandwidth Memory) — slow, large</text>
+  <!-- SRAM -->
+  <rect x="300" y="140" width="300" height="50" rx="8" fill="#1a1a28" stroke="#667eea44"/>
+  <text x="450" y="170" text-anchor="middle" fill="#667eea" font-size="13" font-weight="bold">SRAM (On-chip) — fast, small</text>
+  <!-- Arrows showing data movement -->
+  <path d="M 200 110 L 200 140" stroke="#f5576c" stroke-width="2" marker-end="url(#ar)"/>
+  <path d="M 350 140 L 350 110" stroke="#f5576c" stroke-width="2" marker-end="url(#ar)"/>
+  <path d="M 550 110 L 550 140" stroke="#f5576c" stroke-width="2" marker-end="url(#ar)"/>
+  <path d="M 700 140 L 700 110" stroke="#f5576c" stroke-width="2" marker-end="url(#ar)"/>
+  <defs><marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f5576c"/></marker></defs>
+  <text x="200" y="130" text-anchor="middle" fill="#f5576c" font-size="9">Q,K,V</text>
+  <text x="350" y="130" text-anchor="middle" fill="#f5576c" font-size="9">S=QK^T</text>
+  <text x="550" y="130" text-anchor="middle" fill="#f5576c" font-size="9">P=softmax(S)</text>
+  <text x="700" y="130" text-anchor="middle" fill="#f5576c" font-size="9">O=PV</text>
+  <text x="450" y="210" text-anchor="middle" fill="#555" font-size="11">问题：N×N 的 S 和 P 矩阵必须写回 HBM → IO 成为瓶颈</text>
+</svg>
+<p class="caption">标准 Attention 需要 4 次 HBM 读写，中间矩阵 S、P 占 O(N²) 显存</p>
+</div>
+
+<!-- ===== Flash Attention V1 ===== -->
+<h2>1. Flash Attention V1 — IO-Aware Tiling</h2>
+
+<p><strong>核心思想：</strong>将 Q、K、V 分块（tiling），在 SRAM 中完成 softmax 和乘法，永远不把 N×N 矩阵写回 HBM。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#667eea" font-size="13" font-weight="bold">Flash Attention V1: Tiled Computation</text>
+  <!-- Q blocks -->
+  <rect x="50" y="50" width="60" height="240" rx="4" fill="#667eea22" stroke="#667eea"/>
+  <text x="80" y="170" text-anchor="middle" fill="#667eea" font-size="11" transform="rotate(-90,80,170)">Q (N×d)</text>
+  <rect x="55" y="55" width="50" height="55" rx="2" fill="#667eea44"/><text x="80" y="85" text-anchor="middle" fill="#fff" font-size="9">Q₁</text>
+  <rect x="55" y="115" width="50" height="55" rx="2" fill="#667eea33"/><text x="80" y="145" text-anchor="middle" fill="#fff" font-size="9">Q₂</text>
+  <rect x="55" y="175" width="50" height="55" rx="2" fill="#667eea22"/><text x="80" y="205" text-anchor="middle" fill="#fff" font-size="9">Q₃</text>
+  <rect x="55" y="235" width="50" height="50" rx="2" fill="#667eea11"/><text x="80" y="262" text-anchor="middle" fill="#fff" font-size="9">Q₄</text>
+
+  <!-- K,V blocks -->
+  <rect x="160" y="50" width="240" height="60" rx="4" fill="#764ba222" stroke="#764ba2"/>
+  <text x="280" y="85" text-anchor="middle" fill="#764ba2" font-size="11">K^T / V (N×d) — 按列分块</text>
+  <rect x="165" y="55" width="55" height="50" rx="2" fill="#764ba244"/><text x="192" y="82" text-anchor="middle" fill="#fff" font-size="9">K₁V₁</text>
+  <rect x="225" y="55" width="55" height="50" rx="2" fill="#764ba233"/><text x="252" y="82" text-anchor="middle" fill="#fff" font-size="9">K₂V₂</text>
+  <rect x="285" y="55" width="55" height="50" rx="2" fill="#764ba222"/><text x="312" y="82" text-anchor="middle" fill="#fff" font-size="9">K₃V₃</text>
+  <rect x="345" y="55" width="50" height="50" rx="2" fill="#764ba211"/><text x="370" y="82" text-anchor="middle" fill="#fff" font-size="9">K₄V₄</text>
+
+  <!-- SRAM computation -->
+  <rect x="480" y="80" width="380" height="200" rx="12" fill="#11111a" stroke="#667eea"/>
+  <text x="670" y="105" text-anchor="middle" fill="#667eea" font-size="12" font-weight="bold">SRAM (on-chip)</text>
+  <!-- Steps inside -->
+  <rect x="500" y="115" width="340" height="30" rx="4" fill="#1e1e2e"/>
+  <text x="670" y="135" text-anchor="middle" fill="#c4c4d4" font-size="10">① Load Q_i, K_j, V_j block into SRAM</text>
+  <rect x="500" y="155" width="340" height="30" rx="4" fill="#1e1e2e"/>
+  <text x="670" y="175" text-anchor="middle" fill="#c4c4d4" font-size="10">② Compute S_ij = Q_i × K_j^T (block-level)</text>
+  <rect x="500" y="195" width="340" height="30" rx="4" fill="#1e1e2e"/>
+  <text x="670" y="215" text-anchor="middle" fill="#c4c4d4" font-size="10">③ Online softmax: update m_i, l_i, O_i incrementally</text>
+  <rect x="500" y="235" width="340" height="30" rx="4" fill="#1e1e2e"/>
+  <text x="670" y="255" text-anchor="middle" fill="#c4c4d4" font-size="10">④ Write only final O_i back to HBM</text>
+
+  <!-- Arrow -->
+  <path d="M 400 100 L 475 150" stroke="#667eea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ar2)"/>
+  <defs><marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#667eea"/></marker></defs>
+
+  <text x="450" y="310" text-anchor="middle" fill="#555" font-size="11">Online Softmax: 无需完整行即可增量计算 — 关键创新</text>
+</svg>
+<p class="caption">V1 通过分块 + Online Softmax 将 IO 从 O(N²) 降至 O(N²d²/M)，M 为 SRAM 大小</p>
+</div>
+
+<h3>Online Softmax 核心</h3>
+<pre><span class="cm"># 增量更新 softmax，无需存储完整 N×N 矩阵</span>
+<span class="kw">for</span> j <span class="kw">in</span> range(num_kv_blocks):
+    S_ij = Q_i @ K_j.T / sqrt(d)          <span class="cm"># block attention score</span>
+    m_new = max(m_i, S_ij.max(dim=-1))    <span class="cm"># running max</span>
+    P_ij = exp(S_ij - m_new)              <span class="cm"># safe exp</span>
+    l_i = exp(m_i - m_new) * l_i + P_ij.sum(dim=-1)  <span class="cm"># running sum</span>
+    O_i = exp(m_i - m_new) * O_i + P_ij @ V_j        <span class="cm"># rescale + accumulate</span>
+    m_i = m_new
+O_i = O_i / l_i                           <span class="cm"># final normalize</span></pre>
+
+<div class="key-point"><strong>V1 关键贡献：</strong>证明 exact attention（非近似）可以在 O(N) 显存下完成，速度提升 2-4×，训练长序列成为可能。</div>
+
+<!-- ===== Flash Attention V2 ===== -->
+<h2>2. Flash Attention V2 — Better Parallelism</h2>
+
+<p><strong>核心改进：</strong>调换内外循环顺序 + 减少非矩阵乘 FLOPs + 更好的 warp 并行。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">V1 vs V2: Loop Order & Parallelism</text>
+
+  <!-- V1 -->
+  <rect x="50" y="40" width="380" height="220" rx="10" fill="#1e1e2e" stroke="#f5576c33"/>
+  <text x="240" y="65" text-anchor="middle" fill="#f5576c" font-size="12" font-weight="bold">V1: Outer=KV, Inner=Q</text>
+  <rect x="70" y="80" width="340" height="35" rx="4" fill="#f5576c11"/>
+  <text x="240" y="102" text-anchor="middle" fill="#c4c4d4" font-size="10">for j in KV_blocks:  ← outer loop</text>
+  <rect x="90" y="125" width="300" height="35" rx="4" fill="#f5576c08"/>
+  <text x="240" y="147" text-anchor="middle" fill="#a8a8be" font-size="10">  for i in Q_blocks:  ← inner loop</text>
+  <text x="240" y="185" text-anchor="middle" fill="#555" font-size="10">❌ Q blocks 间无法并行</text>
+  <text x="240" y="205" text-anchor="middle" fill="#555" font-size="10">❌ 每个 warp 需要共享 K,V</text>
+  <text x="240" y="225" text-anchor="middle" fill="#555" font-size="10">❌ 非矩阵乘操作多（rescale）</text>
+  <text x="240" y="248" text-anchor="middle" fill="#f5576c" font-size="10">GPU 利用率 ~35% of peak</text>
+
+  <!-- V2 -->
+  <rect x="470" y="40" width="380" height="220" rx="10" fill="#1e1e2e" stroke="#667eea33"/>
+  <text x="660" y="65" text-anchor="middle" fill="#667eea" font-size="12" font-weight="bold">V2: Outer=Q, Inner=KV</text>
+  <rect x="490" y="80" width="340" height="35" rx="4" fill="#667eea11"/>
+  <text x="660" y="102" text-anchor="middle" fill="#c4c4d4" font-size="10">for i in Q_blocks:  ← outer (parallel across SMs)</text>
+  <rect x="510" y="125" width="300" height="35" rx="4" fill="#667eea08"/>
+  <text x="660" y="147" text-anchor="middle" fill="#a8a8be" font-size="10">  for j in KV_blocks:  ← inner (sequential)</text>
+  <text x="660" y="185" text-anchor="middle" fill="#8b8b9e" font-size="10">✓ Q blocks 天然并行 → 更多 SMs</text>
+  <text x="660" y="205" text-anchor="middle" fill="#8b8b9e" font-size="10">✓ 4 warps 分工: 减少 shared mem 读写</text>
+  <text x="660" y="225" text-anchor="middle" fill="#8b8b9e" font-size="10">✓ 延迟 rescale 到最后 → 少 2× non-matmul</text>
+  <text x="660" y="248" text-anchor="middle" fill="#667eea" font-size="10">GPU 利用率 ~72% of peak</text>
+</svg>
+<p class="caption">V2 通过交换循环顺序让 Q blocks 跨 SM 并行，GPU 利用率翻倍</p>
+</div>
+
+<pre><span class="cm"># V2 伪代码 — outer loop on Q enables parallelism</span>
+<span class="cm"># Each thread block handles one Q_i block independently</span>
+<span class="kw">parallel for</span> i <span class="kw">in</span> range(num_q_blocks):   <span class="cm"># ← parallel across SMs</span>
+    O_i, m_i, l_i = zeros, -inf, zeros
+    <span class="kw">for</span> j <span class="kw">in</span> range(num_kv_blocks):       <span class="cm"># ← sequential</span>
+        S_ij = Q_i @ K_j.T * scale
+        m_new = max(m_i, rowmax(S_ij))
+        P_ij = exp(S_ij - m_new)
+        l_i = exp(m_i - m_new) * l_i + rowsum(P_ij)
+        O_i = diag(exp(m_i - m_new)) @ O_i + P_ij @ V_j
+        m_i = m_new
+    O_i = O_i / l_i</pre>
+
+<!-- ===== Flash Attention V3 ===== -->
+<h2>3. Flash Attention V3 — Hopper Asynchrony</h2>
+
+<p><strong>核心改进：</strong>利用 H100 Hopper 架构的 TMA + WGMMA + 异步流水线，实现计算与数据搬运完全重叠。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">V3: Asynchronous Pipeline on Hopper (H100)</text>
+
+  <!-- Pipeline stages -->
+  <rect x="50" y="50" width="800" height="230" rx="12" fill="#0d0d16" stroke="#2a2a3a"/>
+
+  <!-- Time axis -->
+  <line x1="100" y1="260" x2="800" y2="260" stroke="#3a3a4a"/>
+  <text x="450" y="278" text-anchor="middle" fill="#555" font-size="10">Time →</text>
+
+  <!-- Producer warpgroup (TMA) -->
+  <text x="70" y="90" fill="#4facfe" font-size="10" font-weight="bold" transform="rotate(-90,70,130)">Producer</text>
+  <rect x="100" y="70" width="150" height="35" rx="4" fill="#4facfe33" stroke="#4facfe"/>
+  <text x="175" y="92" text-anchor="middle" fill="#4facfe" font-size="9">TMA Load K₁V₁</text>
+  <rect x="260" y="70" width="150" height="35" rx="4" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="335" y="92" text-anchor="middle" fill="#4facfe" font-size="9">TMA Load K₂V₂</text>
+  <rect x="420" y="70" width="150" height="35" rx="4" fill="#4facfe11" stroke="#4facfe"/>
+  <text x="495" y="92" text-anchor="middle" fill="#4facfe" font-size="9">TMA Load K₃V₃</text>
+  <rect x="580" y="70" width="150" height="35" rx="4" fill="#4facfe08" stroke="#4facfe"/>
+  <text x="655" y="92" text-anchor="middle" fill="#4facfe" font-size="9">TMA Load K₄V₄</text>
+
+  <!-- Consumer warpgroup (WGMMA) -->
+  <text x="70" y="160" fill="#f093fb" font-size="10" font-weight="bold" transform="rotate(-90,70,190)">Consumer</text>
+  <rect x="180" y="120" width="160" height="35" rx="4" fill="#f093fb33" stroke="#f093fb"/>
+  <text x="260" y="142" text-anchor="middle" fill="#f093fb" font-size="9">WGMMA: Q×K₁ᵀ → softmax → ×V₁</text>
+  <rect x="350" y="120" width="160" height="35" rx="4" fill="#f093fb22" stroke="#f093fb"/>
+  <text x="430" y="142" text-anchor="middle" fill="#f093fb" font-size="9">WGMMA: Q×K₂ᵀ → softmax → ×V₂</text>
+  <rect x="520" y="120" width="160" height="35" rx="4" fill="#f093fb11" stroke="#f093fb"/>
+  <text x="600" y="142" text-anchor="middle" fill="#f093fb" font-size="9">WGMMA: Q×K₃ᵀ → softmax → ×V₃</text>
+
+  <!-- Overlap arrows -->
+  <path d="M 260 105 L 260 120" stroke="#667eea" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 420 105 L 420 120" stroke="#667eea" stroke-width="1" stroke-dasharray="3"/>
+
+  <!-- Softmax pipeline -->
+  <rect x="180" y="170" width="550" height="30" rx="4" fill="#667eea11" stroke="#667eea33"/>
+  <text x="455" y="189" text-anchor="middle" fill="#667eea" font-size="9">2-stage softmax: online rescale in registers (low-precision → FP32 accumulator)</text>
+
+  <!-- Key features -->
+  <rect x="100" y="210" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="200" y="226" text-anchor="middle" fill="#4facfe" font-size="9">TMA: async DMA, no SM cost</text>
+  <rect x="320" y="210" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="420" y="226" text-anchor="middle" fill="#f093fb" font-size="9">WGMMA: Tensor Core MMA</text>
+  <rect x="540" y="210" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="640" y="226" text-anchor="middle" fill="#667eea" font-size="9">FP8 support (1.2 PFLOPs)</text>
+</svg>
+<p class="caption">V3 利用 Hopper 的 TMA（异步搬运）和 WGMMA（Tensor Core），Producer-Consumer 流水线完全重叠 IO 与计算</p>
+</div>
+
+<!-- ===== Flash Attention V4 ===== -->
+<h2>4. Flash Attention V4 — Blackwell Co-Design</h2>
+
+<p><strong>核心问题：</strong>Blackwell (B200) 的 Tensor Core 吞吐增长远快于 shared memory 带宽和 SFU（exp/div 特殊功能单元），非 matmul 操作成为新瓶颈。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="450" y="20" text-anchor="middle" fill="#6b6b80" font-size="12">V4: Pingpong MMA + Software-Emulated Softmax on Blackwell</text>
+
+  <rect x="50" y="40" width="800" height="260" rx="12" fill="#0d0d16" stroke="#2a2a3a"/>
+
+  <!-- Time axis -->
+  <line x1="100" y1="280" x2="800" y2="280" stroke="#3a3a4a"/>
+  <text x="450" y="298" text-anchor="middle" fill="#555" font-size="10">Time →</text>
+
+  <!-- Warpgroup A (QK^T) -->
+  <text x="70" y="85" fill="#4facfe" font-size="9" font-weight="bold" transform="rotate(-90,70,110)">WG-A</text>
+  <rect x="100" y="60" width="140" height="35" rx="4" fill="#4facfe33" stroke="#4facfe"/>
+  <text x="170" y="82" text-anchor="middle" fill="#4facfe" font-size="9">MMA: Q×K₁ᵀ</text>
+  <rect x="380" y="60" width="140" height="35" rx="4" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="450" y="82" text-anchor="middle" fill="#4facfe" font-size="9">MMA: Q×K₂ᵀ</text>
+  <rect x="660" y="60" width="140" height="35" rx="4" fill="#4facfe11" stroke="#4facfe"/>
+  <text x="730" y="82" text-anchor="middle" fill="#4facfe" font-size="9">MMA: Q×K₃ᵀ</text>
+
+  <!-- Warpgroup B (PV) -->
+  <text x="70" y="135" fill="#f093fb" font-size="9" font-weight="bold" transform="rotate(-90,70,155)">WG-B</text>
+  <rect x="240" y="105" width="140" height="35" rx="4" fill="#f093fb33" stroke="#f093fb"/>
+  <text x="310" y="127" text-anchor="middle" fill="#f093fb" font-size="9">MMA: P₁×V₁</text>
+  <rect x="520" y="105" width="140" height="35" rx="4" fill="#f093fb22" stroke="#f093fb"/>
+  <text x="590" y="127" text-anchor="middle" fill="#f093fb" font-size="9">MMA: P₂×V₂</text>
+
+  <!-- Pingpong arrows -->
+  <path d="M 240 78 L 240 105" stroke="#667eea" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 520 78 L 520 105" stroke="#667eea" stroke-width="1" stroke-dasharray="3"/>
+  <text x="255" y="98" fill="#667eea" font-size="8">pingpong</text>
+
+  <!-- Software exp -->
+  <rect x="100" y="155" width="700" height="30" rx="4" fill="#ff6b6b11" stroke="#ff6b6b33"/>
+  <text x="450" y="174" text-anchor="middle" fill="#ff6b6b" font-size="9">Software-emulated exp2f: 用 MMA 指令模拟 — 避免 SFU 争用（Blackwell SFU 已成瓶颈）</text>
+
+  <!-- DMA async -->
+  <rect x="100" y="195" width="700" height="30" rx="4" fill="#667eea11" stroke="#667eea33"/>
+  <text x="450" y="214" text-anchor="middle" fill="#667eea" font-size="9">TMA Async DMA: 全程与 MMA 重叠，Tensor Memory 直接供给 warpgroup</text>
+
+  <!-- Result -->
+  <rect x="150" y="240" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="250" y="256" text-anchor="middle" fill="#4facfe" font-size="9">1605 TFLOPs/s (BF16)</text>
+  <rect x="370" y="240" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="470" y="256" text-anchor="middle" fill="#f093fb" font-size="9">71% HW utilization</text>
+  <rect x="590" y="240" width="200" height="25" rx="4" fill="#1e1e2e"/>
+  <text x="690" y="256" text-anchor="middle" fill="#667eea" font-size="9">1.3× faster than cuDNN 9.13</text>
+</svg>
+<p class="caption">V4 用 Pingpong 调度让两个 warpgroup 交替执行 QKᵀ 和 PV，同时用 MMA 软件模拟 exp 避开 SFU 瓶颈</p>
+</div>
+
+<h3>V4 三大技术突破</h3>
+
+<div class="key-point"><strong>① Pingpong Scheduling：</strong>两个 warpgroup 交替占用 Tensor Core — WG-A 做 S=QKᵀ 时，WG-B 做 O=PV。两个 GEMM 完全重叠，Tensor Core 利用率接近 100%。</div>
+
+<div class="key-point"><strong>② 软件模拟 exp2f：</strong>Blackwell 的 SFU 吞吐跟不上 Tensor Core。V4 用多项式近似 + MMA 指令实现 exp，将 softmax 计算从 SFU 卸载到 Tensor Core，消除功能单元争用。</div>
+
+<div class="key-point"><strong>③ 算法-Kernel 协同重排：</strong>重新安排 online softmax 的 rescale 时机，使其恰好落在 MMA 的 pipeline bubble 中被掩盖，而非阻塞主计算路径。</div>
+
+<h3>FlexAttention 集成</h3>
+<p>V4 与 PyTorch <strong>FlexAttention</strong> 深度集成：通过 CuTeDSL 自动生成自定义 score/mask 函数，JIT 编译为 FA4 kernel 变体。支持 causal、sliding window、document mask 等任意 attention pattern，无需手写 CUDA。</p>
+
+<!-- ===== Comparison Table ===== -->
+<h2>5. 版本对比</h2>
+
+<table>
+<thead><tr><th>维度</th><th>V1 (2022)</th><th>V2 (2023)</th><th>V3 (2024)</th><th>V4 (2026)</th></tr></thead>
+<tbody>
+<tr><td><strong>核心思想</strong></td><td>IO-aware tiling + online softmax</td><td>交换循环 + warp 并行</td><td>Hopper 异步流水线</td><td>Pingpong MMA + 软件 exp</td></tr>
+<tr><td><strong>显存</strong></td><td>O(N)</td><td>O(N)</td><td>O(N)</td><td>O(N)</td></tr>
+<tr><td><strong>GPU 利用率</strong></td><td>~35%</td><td>~72%</td><td>~75%</td><td>~71% (绝对吞吐最高)</td></tr>
+<tr><td><strong>峰值吞吐</strong></td><td>—</td><td>—</td><td>~740 TFLOPs (H100)</td><td>1605 TFLOPs (B200)</td></tr>
+<tr><td><strong>vs cuDNN</strong></td><td>—</td><td>—</td><td>~1.0×</td><td>1.3× faster</td></tr>
+<tr><td><strong>硬件要求</strong></td><td>Ampere+</td><td>Ampere+</td><td>Hopper (H100)</td><td>Blackwell (B200)</td></tr>
+<tr><td><strong>FP8 支持</strong></td><td>❌</td><td>❌</td><td>✓ block-wise</td><td>✓ + BF16 主力</td></tr>
+<tr><td><strong>框架集成</strong></td><td>独立包</td><td>独立包</td><td>独立包</td><td>PyTorch FlexAttention JIT</td></tr>
+<tr><td><strong>关键瓶颈</strong></td><td>HBM 带宽</td><td>SM 并行度</td><td>Producer-Consumer 同步</td><td>SFU + SMEM 带宽</td></tr>
+<tr><td><strong>Causal 优化</strong></td><td>跳过 masked blocks</td><td>更细粒度 skip</td><td>warp specialization</td><td>FlexAttention 任意 mask</td></tr>
+</tbody>
+</table>
+
+<div class="key-point"><strong>选择建议：</strong>A100 用 V2（最成熟），H100/H200 用 V3，B200 用 V4。所有版本结果数学等价（exact attention）。V4 还通过 FlexAttention 支持任意自定义 attention pattern。</div>
+
+<footer><p>Generated 2026.05.27 · V4 ref: <a href="https://arxiv.org/abs/2603.05451" style="color:#667eea;">arXiv:2603.05451</a></p></footer>
+</div>
+</body>
+</html>

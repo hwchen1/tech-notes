@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniCPM-o — End-to-End Omni-Modal</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #e599f7, #b266f7, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #e599f7; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #e599f70a; border: 1px solid #e599f722; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #e599f7; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #e599f7; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #e599f7; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>MiniCPM-o — End-to-End Omni-Modal</h1>
+<p class="subtitle">OpenBMB / Tsinghua | Vision + Audio + Text | Real-Time Streaming | Edge Deployment | 8B Parameters</p>
+
+<!-- ===== 1. Core Concept ===== -->
+<h2>1. 核心理念 — 端侧 Omni-Modal 实时交互</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MiniCPM-o: End-to-End Omni-Modal Model</span>
+<span class="cm"># 核心: Vision + Audio + Text 端到端实时交互</span>
+
+<span class="cm"># Architecture Components</span>
+<span class="kw">class</span> <span class="fn">MiniCPM_o</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        <span class="cm"># === Vision Encoder ===</span>
+        self.vision_encoder = SigLIP(
+            model=<span class="st">"SigLIP-400M"</span>,
+            resolution=<span class="st">"adaptive"</span>,
+            <span class="cm"># max 1344x1344 with slice</span>
+        )
+
+        <span class="cm"># === Audio Encoder ===</span>
+        self.audio_encoder = WhisperEncoder(
+            model=<span class="st">"Whisper-medium"</span>,
+            sample_rate=<span class="num">16000</span>,
+            streaming=<span class="kw">True</span>,
+            <span class="cm"># chunked streaming input</span>
+        )
+
+        <span class="cm"># === LLM Backbone ===</span>
+        self.llm = MiniCPM_LLM(
+            params=<span class="st">"8B"</span>,
+            architecture=<span class="st">"decoder-only"</span>,
+        )
+
+        <span class="cm"># === TTS Decoder ===</span>
+        self.tts_decoder = SpeechDecoder(
+            codebook_size=<span class="num">4096</span>,
+            <span class="cm"># end-to-end speech generation</span>
+        )
+
+<span class="cm"># End-to-End Streaming Pipeline</span>
+<span class="kw">def</span> <span class="fn">streaming_inference</span>(model, image, audio_stream):
+    <span class="cm"># 1. Encode image (one-shot)</span>
+    vis_tokens = model.vision_encoder(image)
+
+    <span class="cm"># 2. Encode audio (streaming chunks)</span>
+    <span class="kw">for</span> chunk <span class="kw">in</span> audio_stream:
+        audio_tokens = model.audio_encoder(chunk)
+
+        <span class="cm"># 3. LLM processes combined input</span>
+        output = model.llm(
+            vis_tokens, audio_tokens
+        )
+
+        <span class="cm"># 4. Generate text + speech simultaneously</span>
+        text_out = output.text_logits
+        speech_out = model.tts_decoder(
+            output.speech_codes
+        )
+        <span class="kw">yield</span> text_out, speech_out</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#e599f7"/></marker>
+    <marker id="ar1b" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#4facfe"/></marker>
+    <marker id="ar1g" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#98c379"/></marker>
+    <marker id="ar1o" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f7971e"/></marker>
+  </defs>
+
+  <text x="200" y="18" text-anchor="middle" fill="#e599f7" font-size="9" font-weight="bold">MiniCPM-o: Omni-Modal Architecture</text>
+
+  <!-- Input: Image -->
+  <rect x="20" y="40" width="90" height="35" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="65" y="55" text-anchor="middle" fill="#4facfe" font-size="7">Image</text>
+  <text x="65" y="68" text-anchor="middle" fill="#6b6b80" font-size="5">Camera / Photo</text>
+
+  <!-- Input: Audio -->
+  <rect x="155" y="40" width="90" height="35" rx="5" fill="#1e1e2e" stroke="#f7971e44"/>
+  <text x="200" y="55" text-anchor="middle" fill="#f7971e" font-size="7">Audio Stream</text>
+  <text x="200" y="68" text-anchor="middle" fill="#6b6b80" font-size="5">16kHz Real-time</text>
+
+  <!-- Input: Text -->
+  <rect x="290" y="40" width="90" height="35" rx="5" fill="#1e1e2e" stroke="#98c37944"/>
+  <text x="335" y="55" text-anchor="middle" fill="#98c379" font-size="7">Text</text>
+  <text x="335" y="68" text-anchor="middle" fill="#6b6b80" font-size="5">Prompt / Chat</text>
+
+  <!-- Arrows to encoders -->
+  <path d="M 65 75 L 65 100" stroke="#4facfe" stroke-width="1" marker-end="url(#ar1b)"/>
+  <path d="M 200 75 L 200 100" stroke="#f7971e" stroke-width="1" marker-end="url(#ar1o)"/>
+  <path d="M 335 75 L 335 100" stroke="#98c379" stroke-width="1" marker-end="url(#ar1g)"/>
+
+  <!-- SigLIP Encoder -->
+  <rect x="15" y="103" width="100" height="50" rx="6" fill="#16162a" stroke="#4facfe"/>
+  <text x="65" y="122" text-anchor="middle" fill="#4facfe" font-size="7" font-weight="bold">SigLIP</text>
+  <text x="65" y="136" text-anchor="middle" fill="#a8a8be" font-size="5">Vision Encoder</text>
+  <text x="65" y="148" text-anchor="middle" fill="#6b6b80" font-size="4">Adaptive Resolution</text>
+
+  <!-- Whisper Encoder -->
+  <rect x="150" y="103" width="100" height="50" rx="6" fill="#16162a" stroke="#f7971e"/>
+  <text x="200" y="122" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Whisper</text>
+  <text x="200" y="136" text-anchor="middle" fill="#a8a8be" font-size="5">Audio Encoder</text>
+  <text x="200" y="148" text-anchor="middle" fill="#6b6b80" font-size="4">Streaming Chunks</text>
+
+  <!-- Tokenizer -->
+  <rect x="285" y="103" width="100" height="50" rx="6" fill="#16162a" stroke="#98c379"/>
+  <text x="335" y="122" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">Tokenizer</text>
+  <text x="335" y="136" text-anchor="middle" fill="#a8a8be" font-size="5">Text Tokens</text>
+  <text x="335" y="148" text-anchor="middle" fill="#6b6b80" font-size="4">BPE</text>
+
+  <!-- Arrows converging to LLM -->
+  <path d="M 65 153 L 120 185" stroke="#4facfe" stroke-width="1.2" marker-end="url(#ar1b)"/>
+  <path d="M 200 153 L 200 185" stroke="#f7971e" stroke-width="1.2" marker-end="url(#ar1o)"/>
+  <path d="M 335 153 L 280 185" stroke="#98c379" stroke-width="1.2" marker-end="url(#ar1g)"/>
+
+  <!-- Token merge label -->
+  <rect x="100" y="170" width="200" height="18" rx="4" fill="#e599f711" stroke="#e599f744"/>
+  <text x="200" y="182" text-anchor="middle" fill="#e599f7" font-size="5">[visual_tokens | audio_tokens | text_tokens]</text>
+
+  <!-- LLM backbone -->
+  <rect x="60" y="195" width="280" height="80" rx="10" fill="#1e1e2e" stroke="#e599f7" stroke-width="1.5"/>
+  <text x="200" y="218" text-anchor="middle" fill="#e599f7" font-size="10" font-weight="bold">MiniCPM-8B LLM</text>
+  <text x="200" y="236" text-anchor="middle" fill="#a8a8be" font-size="6">Unified Multimodal Understanding</text>
+  <text x="200" y="252" text-anchor="middle" fill="#a8a8be" font-size="6">Causal Decoder-Only Transformer</text>
+  <text x="200" y="266" text-anchor="middle" fill="#6b6b80" font-size="5">Real-time streaming processing</text>
+
+  <!-- Streaming indicator -->
+  <rect x="275" y="200" width="55" height="16" rx="4" fill="#98c37922" stroke="#98c379"/>
+  <text x="302" y="211" text-anchor="middle" fill="#98c379" font-size="5">STREAMING</text>
+
+  <!-- Output arrows -->
+  <path d="M 140 275 L 140 310" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar1g)"/>
+  <path d="M 260 275 L 260 310" stroke="#f7971e" stroke-width="1.5" marker-end="url(#ar1o)"/>
+
+  <!-- Text output -->
+  <rect x="80" y="313" width="120" height="40" rx="6" fill="#16162a" stroke="#98c379"/>
+  <text x="140" y="332" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">Text Output</text>
+  <text x="140" y="346" text-anchor="middle" fill="#a8a8be" font-size="5">Generated Response</text>
+
+  <!-- Speech output -->
+  <rect x="200" y="313" width="120" height="40" rx="6" fill="#16162a" stroke="#f7971e"/>
+  <text x="260" y="332" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Speech Output</text>
+  <text x="260" y="346" text-anchor="middle" fill="#a8a8be" font-size="5">TTS Decoder</text>
+
+  <!-- Final output -->
+  <path d="M 140 353 L 140 375" stroke="#98c379" stroke-width="1" marker-end="url(#ar1g)"/>
+  <path d="M 260 353 L 260 375" stroke="#f7971e" stroke-width="1" marker-end="url(#ar1o)"/>
+
+  <rect x="80" y="378" width="120" height="22" rx="4" fill="#98c37922" stroke="#98c37944"/>
+  <text x="140" y="392" text-anchor="middle" fill="#98c379" font-size="5">Chat Text</text>
+
+  <rect x="200" y="378" width="120" height="22" rx="4" fill="#f7971e22" stroke="#f7971e44"/>
+  <text x="260" y="392" text-anchor="middle" fill="#f7971e" font-size="5">Audio Waveform</text>
+
+  <!-- Edge device badge -->
+  <rect x="145" y="405" width="110" height="14" rx="4" fill="#e599f711" stroke="#e599f744"/>
+  <text x="200" y="414" text-anchor="middle" fill="#e599f7" font-size="4">Runs on Phone / Laptop (Edge)</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Key Insight</h3>
+<p><strong>First open-source omni-modal model</strong> competitive with GPT-4o on combined vision+audio tasks. Designed for edge deployment (phone/laptop).</p>
+<div class="key-point">
+<strong>Omni = Vision + Audio + Text</strong> in one model, with real-time streaming capability and speech output.
+</div>
+<h3>Architecture Summary</h3>
+<table>
+<tr><th>Component</th><th>Choice</th></tr>
+<tr><td>Vision Encoder</td><td>SigLIP-400M</td></tr>
+<tr><td>Audio Encoder</td><td>Whisper (medium)</td></tr>
+<tr><td>LLM Backbone</td><td>MiniCPM-8B</td></tr>
+<tr><td>Speech Output</td><td>End-to-End TTS</td></tr>
+<tr><td>Total Params</td><td>~8B</td></tr>
+</table>
+<h3>Core Capabilities</h3>
+<p>1. <strong>Real-time voice conversation</strong> with visual understanding</p>
+<p>2. <strong>Streaming inference</strong> — low-latency turn-taking</p>
+<p>3. <strong>Multimodal reasoning</strong> — simultaneous image + audio understanding</p>
+<p>4. <strong>Edge-friendly</strong> — 8B params, quantizable to INT4</p>
+<h3>vs GPT-4o</h3>
+<p>Competitive on audio+vision benchmarks while being fully open-source and small enough for local deployment.</p>
+</div>
+</div>
+
+<!-- ===== 2. Encoding Pipeline ===== -->
+<h2>2. 多模态编码与流式处理</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MiniCPM-o: Multimodal Encoding Pipeline</span>
+<span class="cm"># Image + Audio + Text → Unified Token Space</span>
+
+<span class="cm"># === Vision Encoding (SigLIP + Adaptive Slice) ===</span>
+<span class="kw">class</span> <span class="fn">VisionEncoder</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.siglip = SigLIP_ViT(
+            patch_size=<span class="num">14</span>,
+            hidden_dim=<span class="num">1152</span>,
+        )
+        self.projector = nn.Linear(
+            <span class="num">1152</span>, <span class="num">4096</span>  <span class="cm"># → LLM dim</span>
+        )
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, image):
+        <span class="cm"># Adaptive resolution slicing</span>
+        <span class="cm"># (like LLaVA-NeXT / InternVL)</span>
+        slices = adaptive_slice(
+            image,
+            max_res=<span class="num">1344</span>,  <span class="cm"># max 1344x1344</span>
+            grid_options=[
+                (<span class="num">1</span>,<span class="num">1</span>), (<span class="num">1</span>,<span class="num">2</span>), (<span class="num">2</span>,<span class="num">1</span>),
+                (<span class="num">2</span>,<span class="num">2</span>), (<span class="num">1</span>,<span class="num">3</span>), (<span class="num">3</span>,<span class="num">1</span>),
+            ]
+        )
+        <span class="cm"># Each slice → 448x448 → SigLIP</span>
+
+        all_tokens = []
+        <span class="kw">for</span> s <span class="kw">in</span> slices:
+            feat = self.siglip(s)
+            <span class="cm"># [num_patches, 1152]</span>
+            tokens = self.projector(feat)
+            all_tokens.append(tokens)
+
+        <span class="kw">return</span> torch.cat(all_tokens)
+        <span class="cm"># → visual_tokens in LLM space</span>
+
+<span class="cm"># === Audio Encoding (Whisper + Streaming) ===</span>
+<span class="kw">class</span> <span class="fn">AudioEncoder</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.whisper = WhisperEncoder(
+            n_mels=<span class="num">128</span>,
+            d_model=<span class="num">1024</span>,
+        )
+        self.projector = nn.Linear(
+            <span class="num">1024</span>, <span class="num">4096</span>  <span class="cm"># → LLM dim</span>
+        )
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, audio_chunk):
+        <span class="cm"># Streaming: process in chunks</span>
+        <span class="cm"># chunk_size ≈ 0.5~2s of audio</span>
+        mel = log_mel_spectrogram(
+            audio_chunk, sr=<span class="num">16000</span>
+        )
+        feat = self.whisper(mel)
+        <span class="cm"># [T, 1024] — T depends on duration</span>
+        tokens = self.projector(feat)
+        <span class="kw">return</span> tokens
+        <span class="cm"># → audio_tokens in LLM space</span>
+
+<span class="cm"># === Interleaved Input Format ===</span>
+<span class="cm"># [IMG_START] visual_tokens [IMG_END]</span>
+<span class="cm"># [AUD_START] audio_tokens [AUD_END]</span>
+<span class="cm"># text_tokens</span>
+<span class="cm"># → all fed into MiniCPM-8B LLM</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 410 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#e599f7"/></marker>
+    <marker id="ar2b" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#4facfe"/></marker>
+    <marker id="ar2o" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f7971e"/></marker>
+  </defs>
+
+  <text x="205" y="16" text-anchor="middle" fill="#e599f7" font-size="9" font-weight="bold">Multimodal Encoding + Streaming Pipeline</text>
+
+  <!-- Time axis -->
+  <line x1="20" y1="405" x2="390" y2="405" stroke="#2a2a3a" stroke-width="1"/>
+  <text x="205" y="418" text-anchor="middle" fill="#6b6b80" font-size="5">Time (streaming) →</text>
+  <path d="M 380 405 L 390 405" stroke="#6b6b80" stroke-width="1" marker-end="url(#ar2)"/>
+
+  <!-- === IMAGE PATH (left) === -->
+  <text x="75" y="38" text-anchor="middle" fill="#4facfe" font-size="7" font-weight="bold">Vision Path</text>
+
+  <!-- Input image -->
+  <rect x="30" y="45" width="90" height="35" rx="4" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="75" y="60" text-anchor="middle" fill="#4facfe" font-size="6">Input Image</text>
+  <text x="75" y="72" text-anchor="middle" fill="#6b6b80" font-size="4">any resolution</text>
+
+  <path d="M 75 80 L 75 98" stroke="#4facfe" stroke-width="1" marker-end="url(#ar2b)"/>
+
+  <!-- Adaptive Slice -->
+  <rect x="20" y="100" width="110" height="50" rx="5" fill="#16162a" stroke="#4facfe"/>
+  <text x="75" y="116" text-anchor="middle" fill="#4facfe" font-size="6" font-weight="bold">Adaptive Slice</text>
+  <text x="75" y="130" text-anchor="middle" fill="#a8a8be" font-size="5">Dynamic resolution</text>
+  <text x="75" y="142" text-anchor="middle" fill="#6b6b80" font-size="4">max 1344x1344</text>
+
+  <!-- Slice grid illustration -->
+  <rect x="25" y="155" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <rect x="43" y="155" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <rect x="61" y="155" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <rect x="25" y="169" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <rect x="43" y="169" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <rect x="61" y="169" width="16" height="12" rx="1" fill="#4facfe22" stroke="#4facfe44"/>
+  <text x="97" y="170" fill="#6b6b80" font-size="4">slices</text>
+
+  <path d="M 75 183 L 75 200" stroke="#4facfe" stroke-width="1" marker-end="url(#ar2b)"/>
+
+  <!-- SigLIP -->
+  <rect x="20" y="203" width="110" height="40" rx="5" fill="#16162a" stroke="#4facfe"/>
+  <text x="75" y="220" text-anchor="middle" fill="#4facfe" font-size="6" font-weight="bold">SigLIP ViT</text>
+  <text x="75" y="234" text-anchor="middle" fill="#6b6b80" font-size="4">patch=14, dim=1152</text>
+
+  <path d="M 75 243 L 75 260" stroke="#4facfe" stroke-width="1" marker-end="url(#ar2b)"/>
+
+  <!-- Visual Projector -->
+  <rect x="25" y="263" width="100" height="28" rx="4" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="75" y="280" text-anchor="middle" fill="#4facfe" font-size="5">Projector → 4096d</text>
+
+  <!-- === AUDIO PATH (center) === -->
+  <text x="220" y="38" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Audio Path (Streaming)</text>
+
+  <!-- Audio stream -->
+  <rect x="170" y="45" width="100" height="35" rx="4" fill="#1e1e2e" stroke="#f7971e44"/>
+  <text x="220" y="60" text-anchor="middle" fill="#f7971e" font-size="6">Audio Input</text>
+  <text x="220" y="72" text-anchor="middle" fill="#6b6b80" font-size="4">16kHz continuous</text>
+
+  <path d="M 220 80 L 220 98" stroke="#f7971e" stroke-width="1" marker-end="url(#ar2o)"/>
+
+  <!-- Chunking -->
+  <rect x="165" y="100" width="110" height="40" rx="5" fill="#16162a" stroke="#f7971e"/>
+  <text x="220" y="116" text-anchor="middle" fill="#f7971e" font-size="6" font-weight="bold">Streaming Chunker</text>
+  <text x="220" y="130" text-anchor="middle" fill="#6b6b80" font-size="4">~0.5-2s chunks</text>
+
+  <!-- Stream chunks visualization -->
+  <rect x="170" y="148" width="20" height="10" rx="2" fill="#f7971e33" stroke="#f7971e44"/>
+  <rect x="193" y="148" width="20" height="10" rx="2" fill="#f7971e33" stroke="#f7971e44"/>
+  <rect x="216" y="148" width="20" height="10" rx="2" fill="#f7971e33" stroke="#f7971e44"/>
+  <rect x="239" y="148" width="20" height="10" rx="2" fill="#f7971e55" stroke="#f7971e"/>
+  <text x="270" y="156" fill="#6b6b80" font-size="4">chunk_t</text>
+
+  <path d="M 220 160 L 220 175" stroke="#f7971e" stroke-width="1" marker-end="url(#ar2o)"/>
+
+  <!-- Mel spectrogram -->
+  <rect x="165" y="178" width="110" height="30" rx="4" fill="#16162a" stroke="#f7971e44"/>
+  <text x="220" y="196" text-anchor="middle" fill="#f7971e" font-size="5">Log-Mel Spectrogram (128)</text>
+
+  <path d="M 220 208 L 220 218" stroke="#f7971e" stroke-width="1" marker-end="url(#ar2o)"/>
+
+  <!-- Whisper -->
+  <rect x="165" y="220" width="110" height="35" rx="5" fill="#16162a" stroke="#f7971e"/>
+  <text x="220" y="236" text-anchor="middle" fill="#f7971e" font-size="6" font-weight="bold">Whisper Encoder</text>
+  <text x="220" y="248" text-anchor="middle" fill="#6b6b80" font-size="4">d_model=1024</text>
+
+  <path d="M 220 255 L 220 270" stroke="#f7971e" stroke-width="1" marker-end="url(#ar2o)"/>
+
+  <!-- Audio Projector -->
+  <rect x="170" y="273" width="100" height="28" rx="4" fill="#f7971e22" stroke="#f7971e"/>
+  <text x="220" y="290" text-anchor="middle" fill="#f7971e" font-size="5">Projector → 4096d</text>
+
+  <!-- === TEXT PATH (right) === -->
+  <text x="355" y="38" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">Text Path</text>
+
+  <rect x="310" y="45" width="90" height="35" rx="4" fill="#1e1e2e" stroke="#98c37944"/>
+  <text x="355" y="60" text-anchor="middle" fill="#98c379" font-size="6">Text Input</text>
+  <text x="355" y="72" text-anchor="middle" fill="#6b6b80" font-size="4">prompt/history</text>
+
+  <path d="M 355 80 L 355 263" stroke="#98c379" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#ar2)"/>
+
+  <rect x="310" y="266" width="90" height="28" rx="4" fill="#98c37922" stroke="#98c379"/>
+  <text x="355" y="283" text-anchor="middle" fill="#98c379" font-size="5">BPE Tokens (4096d)</text>
+
+  <!-- Convergence to LLM -->
+  <path d="M 75 291 L 140 330" stroke="#4facfe" stroke-width="1.2" marker-end="url(#ar2b)"/>
+  <path d="M 220 301 L 205 330" stroke="#f7971e" stroke-width="1.2" marker-end="url(#ar2o)"/>
+  <path d="M 355 294 L 280 330" stroke="#98c379" stroke-width="1.2" marker-end="url(#ar2)"/>
+
+  <!-- Interleaved sequence -->
+  <rect x="60" y="320" width="290" height="18" rx="4" fill="#11111a" stroke="#e599f744"/>
+  <text x="205" y="332" text-anchor="middle" fill="#e599f7" font-size="5">[IMG_S] vis_tokens [IMG_E] [AUD_S] aud_tokens [AUD_E] text_tokens</text>
+
+  <!-- Arrow to LLM -->
+  <path d="M 205 338 L 205 355" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+  <!-- LLM -->
+  <rect x="100" y="358" width="210" height="35" rx="8" fill="#1e1e2e" stroke="#e599f7" stroke-width="1.5"/>
+  <text x="205" y="377" text-anchor="middle" fill="#e599f7" font-size="8" font-weight="bold">MiniCPM-8B LLM</text>
+  <text x="205" y="389" text-anchor="middle" fill="#a8a8be" font-size="5">Unified multimodal generation</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Encoding Key Numbers</h3>
+<table>
+<tr><th>Component</th><th>Spec</th></tr>
+<tr><td>SigLIP resolution</td><td>up to 1344x1344</td></tr>
+<tr><td>SigLIP patch size</td><td>14</td></tr>
+<tr><td>Audio sample rate</td><td>16kHz</td></tr>
+<tr><td>Whisper d_model</td><td>1024</td></tr>
+<tr><td>LLM hidden dim</td><td>4096</td></tr>
+<tr><td>Streaming chunk</td><td>~0.5-2s</td></tr>
+</table>
+<h3>Adaptive Resolution (Vision)</h3>
+<p><strong>Dynamic slice strategy</strong> (similar to LLaVA-NeXT): input image is split into optimal grid (1x1, 1x2, 2x2, etc.) based on aspect ratio. Each slice is resized to 448x448 and processed by SigLIP independently.</p>
+<div class="formula">
+$N_{\text{vis}} = N_{\text{slices}} \times \left(\frac{448}{14}\right)^2 = N_s \times 1024$
+</div>
+<h3>Streaming Audio</h3>
+<p><strong>Chunked processing:</strong> Audio is split into overlapping chunks (~0.5-2s), enabling real-time turn-taking without waiting for utterance completion.</p>
+<p>This enables sub-second latency for voice conversations.</p>
+<h3>Interleaved Format</h3>
+<p>Special tokens <code>[IMG_START]</code>, <code>[IMG_END]</code>, <code>[AUD_START]</code>, <code>[AUD_END]</code> delineate modality boundaries in the unified sequence.</p>
+</div>
+</div>
+
+<!-- ===== 3. Speech Output + Training ===== -->
+<h2>3. 端到端语音输出 + 训练</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MiniCPM-o: End-to-End Speech Generation</span>
+<span class="cm"># LLM directly generates speech codes (no TTS post-processing)</span>
+
+<span class="cm"># === Speech Code Generation ===</span>
+<span class="kw">class</span> <span class="fn">SpeechOutputHead</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        <span class="cm"># Speech codebook (learned discrete codes)</span>
+        self.speech_head = nn.Linear(
+            <span class="num">4096</span>, <span class="num">4096</span>  <span class="cm"># codebook size</span>
+        )
+        <span class="cm"># The LLM learns to output speech codes</span>
+        <span class="cm"># alongside text tokens!</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, hidden_states):
+        <span class="cm"># hidden: [B, T, 4096] from LLM</span>
+        speech_logits = self.speech_head(hidden_states)
+        <span class="cm"># [B, T, 4096] — codebook distribution</span>
+        <span class="kw">return</span> speech_logits
+
+<span class="cm"># === Speech Decoder (Codes → Waveform) ===</span>
+<span class="kw">class</span> <span class="fn">SpeechDecoder</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.codebook = nn.Embedding(
+            <span class="num">4096</span>, <span class="num">512</span>
+        )
+        self.vocoder = ConvDecoder(
+            <span class="cm"># codes → mel → waveform</span>
+            upsample_rates=[<span class="num">8</span>, <span class="num">5</span>, <span class="num">4</span>, <span class="num">2</span>],
+            <span class="cm"># total upsample: 320x</span>
+        )
+
+    <span class="kw">def</span> <span class="fn">decode</span>(self, speech_codes):
+        <span class="cm"># speech_codes: [B, T_speech]</span>
+        embeddings = self.codebook(speech_codes)
+        waveform = self.vocoder(embeddings)
+        <span class="cm"># [B, T_audio] — raw audio output</span>
+        <span class="kw">return</span> waveform
+
+<span class="cm"># === Multi-Stage Training ===</span>
+training_stages = {
+    <span class="st">"stage_1"</span>: {
+        <span class="st">"name"</span>: <span class="st">"Vision Pretrain"</span>,
+        <span class="st">"data"</span>: <span class="st">"image-text pairs"</span>,
+        <span class="st">"train"</span>: [<span class="st">"projector"</span>],
+        <span class="st">"freeze"</span>: [<span class="st">"siglip"</span>, <span class="st">"llm"</span>],
+    },
+    <span class="st">"stage_2"</span>: {
+        <span class="st">"name"</span>: <span class="st">"Audio Pretrain"</span>,
+        <span class="st">"data"</span>: <span class="st">"speech-text pairs (ASR/TTS)"</span>,
+        <span class="st">"train"</span>: [<span class="st">"audio_proj"</span>, <span class="st">"speech_head"</span>],
+        <span class="st">"freeze"</span>: [<span class="st">"whisper"</span>, <span class="st">"llm"</span>],
+    },
+    <span class="st">"stage_3"</span>: {
+        <span class="st">"name"</span>: <span class="st">"Omni Joint Training"</span>,
+        <span class="st">"data"</span>: <span class="st">"mixed multimodal (V+A+T)"</span>,
+        <span class="st">"train"</span>: [<span class="st">"all"</span>],  <span class="cm"># full model</span>
+        <span class="st">"objective"</span>: <span class="st">"NTP(text) + NTP(speech)"</span>,
+    },
+    <span class="st">"stage_4"</span>: {
+        <span class="st">"name"</span>: <span class="st">"RLHF Alignment"</span>,
+        <span class="st">"data"</span>: <span class="st">"preference data"</span>,
+        <span class="st">"method"</span>: <span class="st">"DPO / RLHF"</span>,
+        <span class="st">"goal"</span>: <span class="st">"naturalness + safety"</span>,
+    },
+}
+
+<span class="cm"># === Training Objective ===</span>
+<span class="cm"># L_total = L_text_ntp + λ * L_speech_ntp</span>
+<span class="cm"># The model learns WHEN to speak,</span>
+<span class="cm"># WHAT tone to use, all from one LLM!</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar3" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#e599f7"/></marker>
+    <marker id="ar3g" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#98c379"/></marker>
+    <marker id="ar3o" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f7971e"/></marker>
+  </defs>
+
+  <text x="200" y="16" text-anchor="middle" fill="#e599f7" font-size="9" font-weight="bold">End-to-End Speech Output + Training Stages</text>
+
+  <!-- === Output Pipeline (top half) === -->
+  <text x="200" y="38" text-anchor="middle" fill="#c4c4d8" font-size="6">Output Generation Pipeline</text>
+
+  <!-- LLM hidden states -->
+  <rect x="100" y="48" width="200" height="30" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="200" y="66" text-anchor="middle" fill="#e599f7" font-size="7" font-weight="bold">LLM Hidden States [B, T, 4096]</text>
+
+  <!-- Two output branches -->
+  <path d="M 150 78 L 100 100" stroke="#98c379" stroke-width="1.2" marker-end="url(#ar3g)"/>
+  <path d="M 250 78 L 300 100" stroke="#f7971e" stroke-width="1.2" marker-end="url(#ar3o)"/>
+
+  <!-- Text head -->
+  <rect x="40" y="103" width="120" height="30" rx="5" fill="#16162a" stroke="#98c379"/>
+  <text x="100" y="118" text-anchor="middle" fill="#98c379" font-size="6" font-weight="bold">Text LM Head</text>
+  <text x="100" y="128" text-anchor="middle" fill="#6b6b80" font-size="4">Linear(4096, vocab_size)</text>
+
+  <!-- Speech head -->
+  <rect x="240" y="103" width="120" height="30" rx="5" fill="#16162a" stroke="#f7971e"/>
+  <text x="300" y="118" text-anchor="middle" fill="#f7971e" font-size="6" font-weight="bold">Speech Code Head</text>
+  <text x="300" y="128" text-anchor="middle" fill="#6b6b80" font-size="4">Linear(4096, 4096_codes)</text>
+
+  <!-- Text output -->
+  <path d="M 100 133 L 100 148" stroke="#98c379" stroke-width="1" marker-end="url(#ar3g)"/>
+  <rect x="50" y="150" width="100" height="22" rx="4" fill="#98c37922" stroke="#98c37944"/>
+  <text x="100" y="164" text-anchor="middle" fill="#98c379" font-size="5">Text Tokens → Response</text>
+
+  <!-- Speech codes -->
+  <path d="M 300 133 L 300 148" stroke="#f7971e" stroke-width="1" marker-end="url(#ar3o)"/>
+  <rect x="250" y="150" width="100" height="22" rx="4" fill="#f7971e22" stroke="#f7971e44"/>
+  <text x="300" y="164" text-anchor="middle" fill="#f7971e" font-size="5">Speech Codes [T_s]</text>
+
+  <!-- Speech decoder -->
+  <path d="M 300 172 L 300 188" stroke="#f7971e" stroke-width="1" marker-end="url(#ar3o)"/>
+  <rect x="240" y="190" width="120" height="35" rx="5" fill="#16162a" stroke="#f7971e"/>
+  <text x="300" y="206" text-anchor="middle" fill="#f7971e" font-size="6" font-weight="bold">Speech Decoder</text>
+  <text x="300" y="218" text-anchor="middle" fill="#6b6b80" font-size="4">Codebook → Vocoder → Waveform</text>
+
+  <!-- Final audio output -->
+  <path d="M 300 225 L 300 240" stroke="#f7971e" stroke-width="1" marker-end="url(#ar3o)"/>
+  <rect x="250" y="242" width="100" height="22" rx="4" fill="#f7971e33" stroke="#f7971e"/>
+  <text x="300" y="256" text-anchor="middle" fill="#f7971e" font-size="5" font-weight="bold">Audio Waveform</text>
+
+  <!-- Key insight box -->
+  <rect x="50" y="180" width="140" height="30" rx="5" fill="#e599f711" stroke="#e599f744"/>
+  <text x="120" y="194" text-anchor="middle" fill="#e599f7" font-size="5" font-weight="bold">No separate TTS!</text>
+  <text x="120" y="205" text-anchor="middle" fill="#a8a8be" font-size="4">LLM generates speech directly</text>
+
+  <!-- Separator -->
+  <line x1="20" y1="275" x2="380" y2="275" stroke="#2a2a3a" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="200" y="290" text-anchor="middle" fill="#c4c4d8" font-size="6">Multi-Stage Training Timeline</text>
+
+  <!-- Stage 1 -->
+  <rect x="20" y="300" width="80" height="55" rx="5" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="60" y="314" text-anchor="middle" fill="#4facfe" font-size="5" font-weight="bold">Stage 1</text>
+  <text x="60" y="327" text-anchor="middle" fill="#a8a8be" font-size="4">Vision Pretrain</text>
+  <text x="60" y="339" text-anchor="middle" fill="#6b6b80" font-size="4">Train: projector</text>
+  <text x="60" y="350" text-anchor="middle" fill="#6b6b80" font-size="4">Freeze: SigLIP+LLM</text>
+
+  <!-- Arrow -->
+  <path d="M 100 327 L 112 327" stroke="#e599f7" stroke-width="1" marker-end="url(#ar3)"/>
+
+  <!-- Stage 2 -->
+  <rect x="115" y="300" width="80" height="55" rx="5" fill="#1e1e2e" stroke="#f7971e"/>
+  <text x="155" y="314" text-anchor="middle" fill="#f7971e" font-size="5" font-weight="bold">Stage 2</text>
+  <text x="155" y="327" text-anchor="middle" fill="#a8a8be" font-size="4">Audio Pretrain</text>
+  <text x="155" y="339" text-anchor="middle" fill="#6b6b80" font-size="4">Train: audio proj</text>
+  <text x="155" y="350" text-anchor="middle" fill="#6b6b80" font-size="4">Freeze: Whisper+LLM</text>
+
+  <!-- Arrow -->
+  <path d="M 195 327 L 207 327" stroke="#e599f7" stroke-width="1" marker-end="url(#ar3)"/>
+
+  <!-- Stage 3 -->
+  <rect x="210" y="300" width="80" height="55" rx="5" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="250" y="314" text-anchor="middle" fill="#e599f7" font-size="5" font-weight="bold">Stage 3</text>
+  <text x="250" y="327" text-anchor="middle" fill="#a8a8be" font-size="4">Omni Joint</text>
+  <text x="250" y="339" text-anchor="middle" fill="#6b6b80" font-size="4">Train: ALL</text>
+  <text x="250" y="350" text-anchor="middle" fill="#6b6b80" font-size="4">V+A+T unified</text>
+
+  <!-- Arrow -->
+  <path d="M 290 327 L 302 327" stroke="#e599f7" stroke-width="1" marker-end="url(#ar3)"/>
+
+  <!-- Stage 4 -->
+  <rect x="305" y="300" width="80" height="55" rx="5" fill="#1e1e2e" stroke="#c678dd"/>
+  <text x="345" y="314" text-anchor="middle" fill="#c678dd" font-size="5" font-weight="bold">Stage 4</text>
+  <text x="345" y="327" text-anchor="middle" fill="#a8a8be" font-size="4">RLHF Align</text>
+  <text x="345" y="339" text-anchor="middle" fill="#6b6b80" font-size="4">DPO / RLHF</text>
+  <text x="345" y="350" text-anchor="middle" fill="#6b6b80" font-size="4">Natural + Safe</text>
+
+  <!-- Training objective -->
+  <rect x="60" y="370" width="280" height="35" rx="6" fill="#11111a" stroke="#e599f744"/>
+  <text x="200" y="386" text-anchor="middle" fill="#e599f7" font-size="6" font-weight="bold">Training Objective</text>
+  <text x="200" y="399" text-anchor="middle" fill="#a8a8be" font-size="5">L_total = L_text_NTP + lambda * L_speech_NTP</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>End-to-End Speech Innovation</h3>
+<p><strong>Key difference from traditional systems:</strong> No separate TTS pipeline. The LLM itself generates discrete speech codes that are decoded into audio waveform.</p>
+<div class="key-point">
+<strong>The model learns:</strong> WHEN to speak, WHAT to say, and HOW to say it (tone, emotion, pacing) — all from a single unified LLM.
+</div>
+<h3>Training Loss</h3>
+<div class="formula">
+$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{text}}^{\text{NTP}} + \lambda \cdot \mathcal{L}_{\text{speech}}^{\text{NTP}}$
+</div>
+<p>Both text and speech generation are trained with next-token prediction. The speech codes are treated as a separate "language" that the model learns jointly.</p>
+<h3>Training Stages</h3>
+<p>1. <strong>Vision Pretrain:</strong> Align visual encoder with LLM (projector only)</p>
+<p>2. <strong>Audio Pretrain:</strong> Align audio encoder + speech output (projector + speech head)</p>
+<p>3. <strong>Omni Joint:</strong> Full model training on mixed multimodal data</p>
+<p>4. <strong>RLHF:</strong> Align for naturalness, safety, and user preference</p>
+<h3>Benchmark Performance</h3>
+<table>
+<tr><th>Task</th><th>MiniCPM-o</th></tr>
+<tr><td>Audio Understanding</td><td>Competitive w/ GPT-4o-mini</td></tr>
+<tr><td>Vision + Audio QA</td><td>SOTA for open-source</td></tr>
+<tr><td>Real-time Voice</td><td>Sub-second latency</td></tr>
+<tr><td>Edge Deployment</td><td>INT4 on mobile</td></tr>
+</table>
+<p><strong>Open-source advantage:</strong> Fully reproducible, customizable for domain-specific voice assistants, and deployable on consumer hardware.</p>
+</div>
+</div>
+
+<footer>
+Generated 2026.06.01 | MiniCPM-o (OpenBMB/Tsinghua) Omni-Modal Architecture Analysis
+</footer>
+
+</div>
+</body>
+</html>

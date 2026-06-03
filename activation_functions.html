@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Activation Functions 激活函数对比</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f093fb, #667eea); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f093fb; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f093fb0a; border: 1px solid #f093fb22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f093fb; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #f093fb; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+.grid-row { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 24px; margin: 30px 0; align-items: start; }
+.grid-row .code-col { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; overflow-x: auto; }
+.grid-row .svg-col { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 24px; }
+.grid-row .caption-col { color: #a8a8be; font-size: 0.88rem; line-height: 1.8; padding-top: 8px; }
+.grid-row .caption-col strong { color: #f093fb; }
+.grid-row .caption-col .pro { color: #98c379; }
+.grid-row .caption-col .con { color: #f5576c; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Activation Functions</h1>
+<p class="subtitle">常用激活函数对比 — 从 ReLU 到 SwiGLU 的演进</p>
+
+<!-- ===== 1. ReLU ===== -->
+<h2>1. ReLU</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># ReLU: Rectified Linear Unit</span>
+<span class="cm"># f(x) = max(0, x)</span>
+
+<span class="kw">def</span> <span class="fn">relu</span>(x):
+    <span class="kw">return</span> torch.max(x, <span class="num">0</span>)
+
+<span class="cm"># 导数:</span>
+<span class="cm"># f'(x) = 1  if x > 0</span>
+<span class="cm"># f'(x) = 0  if x < 0</span>
+<span class="cm"># x=0 处不可导</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 400 250" xmlns="http://www.w3.org/2000/svg">
+  <!-- Axes -->
+  <line x1="40" y1="125" x2="380" y2="125" stroke="#333" stroke-width="1.5"/>
+  <line x1="200" y1="20" x2="200" y2="230" stroke="#333" stroke-width="1.5"/>
+  <text x="375" y="118" fill="#555" font-size="10">x</text>
+  <text x="205" y="25" fill="#555" font-size="10">f(x)</text>
+  <!-- Grid -->
+  <line x1="40" y1="65" x2="380" y2="65" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <line x1="40" y1="185" x2="380" y2="185" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <!-- ReLU curve -->
+  <line x1="40" y1="125" x2="200" y2="125" stroke="#f5576c" stroke-width="2.5"/>
+  <line x1="200" y1="125" x2="360" y2="30" stroke="#667eea" stroke-width="2.5"/>
+  <!-- Labels -->
+  <text x="100" y="115" fill="#f5576c" font-size="11" font-weight="bold">= 0 (dead)</text>
+  <text x="270" y="60" fill="#667eea" font-size="11" font-weight="bold">= x</text>
+  <!-- Zero point -->
+  <circle cx="200" cy="125" r="4" fill="#fff"/>
+  <text x="205" y="140" fill="#6b6b80" font-size="9">0</text>
+</svg>
+</div>
+<div class="caption-col">
+<strong>最经典的激活函数</strong><br><br>
+<span class="pro">+ 计算极快：一次比较操作</span><br>
+<span class="pro">+ 缓解梯度消失（正区间梯度恒=1）</span><br>
+<span class="pro">+ 稀疏激活，正则化效果</span><br><br>
+<span class="con">− Dead neuron：x&lt;0 梯度=0，永远不更新</span><br>
+<span class="con">− 输出非零中心</span><br>
+<span class="con">− x=0 不可导（硬拐角）</span><br><br>
+<strong>用于：</strong>CNN（ResNet, VGG）
+</div>
+</div>
+
+<!-- ===== 2. LeakyReLU ===== -->
+<h2>2. Leaky ReLU</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># Leaky ReLU</span>
+<span class="cm"># f(x) = x       if x > 0</span>
+<span class="cm"># f(x) = α·x     if x ≤ 0</span>
+<span class="cm"># 通常 α = 0.01</span>
+
+<span class="kw">def</span> <span class="fn">leaky_relu</span>(x, alpha=<span class="num">0.01</span>):
+    <span class="kw">return</span> torch.where(x > <span class="num">0</span>, x, alpha * x)
+
+<span class="cm"># 变体: PReLU — α 可学习</span>
+<span class="cm"># 变体: ELU — 负区间用指数曲线</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 400 250" xmlns="http://www.w3.org/2000/svg">
+  <line x1="40" y1="125" x2="380" y2="125" stroke="#333" stroke-width="1.5"/>
+  <line x1="200" y1="20" x2="200" y2="230" stroke="#333" stroke-width="1.5"/>
+  <text x="375" y="118" fill="#555" font-size="10">x</text>
+  <text x="205" y="25" fill="#555" font-size="10">f(x)</text>
+  <!-- Leaky ReLU curve -->
+  <line x1="40" y1="127" x2="200" y2="125" stroke="#f5576c" stroke-width="2.5"/>
+  <line x1="200" y1="125" x2="360" y2="30" stroke="#667eea" stroke-width="2.5"/>
+  <!-- Slope annotation -->
+  <text x="80" y="115" fill="#f5576c" font-size="10">slope = 0.01</text>
+  <text x="270" y="60" fill="#667eea" font-size="11" font-weight="bold">slope = 1</text>
+  <!-- Compare with ReLU (dashed) -->
+  <line x1="40" y1="125" x2="200" y2="125" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <text x="60" y="145" fill="#555" font-size="9">ReLU (对比)</text>
+  <circle cx="200" cy="125" r="4" fill="#fff"/>
+</svg>
+</div>
+<div class="caption-col">
+<strong>解决 Dead Neuron</strong><br><br>
+<span class="pro">+ 负区间仍有梯度 (α)，不会"死亡"</span><br>
+<span class="pro">+ 计算同样简单</span><br>
+<span class="pro">+ PReLU 让 α 可学习，更灵活</span><br><br>
+<span class="con">− α 是超参数需要调</span><br>
+<span class="con">− 仍然非光滑 (x=0 有拐角)</span><br>
+<span class="con">− 实践中改进通常很小</span><br><br>
+<strong>用于：</strong>GAN (DCGAN), 目标检测
+</div>
+</div>
+
+<!-- ===== 3. GELU ===== -->
+<h2>3. GELU</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># GELU: Gaussian Error Linear Unit</span>
+<span class="cm"># f(x) = x · Φ(x)</span>
+<span class="cm"># Φ(x) = 标准正态 CDF</span>
+
+<span class="cm"># Tanh 近似 (PyTorch 默认):</span>
+<span class="kw">def</span> <span class="fn">gelu</span>(x):
+    <span class="kw">return</span> <span class="num">0.5</span> * x * (
+        <span class="num">1</span> + torch.tanh(
+            math.sqrt(<span class="num">2</span>/math.pi) *
+            (x + <span class="num">0.044715</span> * x**<span class="num">3</span>)
+        )
+    )
+
+<span class="cm"># 直觉: x 越大 → Φ(x)≈1 → 保留</span>
+<span class="cm">#       x 越小 → Φ(x)≈0 → 抑制</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 400 250" xmlns="http://www.w3.org/2000/svg">
+  <line x1="40" y1="145" x2="380" y2="145" stroke="#333" stroke-width="1.5"/>
+  <line x1="200" y1="20" x2="200" y2="230" stroke="#333" stroke-width="1.5"/>
+  <text x="375" y="138" fill="#555" font-size="10">x</text>
+  <text x="205" y="25" fill="#555" font-size="10">f(x)</text>
+  <!-- GELU curve (approximated with path) -->
+  <path d="M 40,146 C 80,146 120,148 140,148 C 160,148 175,149 185,148 C 195,146 200,145 210,140 C 230,130 260,100 300,65 C 330,40 360,20 380,5"
+        stroke="#667eea" stroke-width="2.5" fill="none"/>
+  <!-- ReLU for comparison -->
+  <line x1="40" y1="145" x2="200" y2="145" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <line x1="200" y1="145" x2="360" y2="50" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <text x="300" y="80" fill="#555" font-size="9">ReLU</text>
+  <!-- The bump -->
+  <circle cx="172" cy="148.5" r="3" fill="#f093fb"/>
+  <text x="130" y="170" fill="#f093fb" font-size="9">非单调区域 ≈ -0.17</text>
+  <!-- Label -->
+  <text x="250" y="45" fill="#667eea" font-size="11" font-weight="bold">GELU</text>
+  <text x="60" y="135" fill="#6b6b80" font-size="9">平滑趋近0，不截断</text>
+</svg>
+</div>
+<div class="caption-col">
+<strong>概率门控：x 自己决定保留多少</strong><br><br>
+<span class="pro">+ 处处光滑可导，梯度流稳定</span><br>
+<span class="pro">+ 负值区域保留微弱信号</span><br>
+<span class="pro">+ 非单调性增强表达能力</span><br>
+<span class="pro">+ 自门控，无额外参数</span><br><br>
+<span class="con">− 计算比 ReLU 贵 (~4x)</span><br>
+<span class="con">− tanh 近似有微小精度差</span><br><br>
+<strong>用于：</strong>BERT, GPT-2/3, ViT
+</div>
+</div>
+
+<!-- ===== 4. SiLU / Swish ===== -->
+<h2>4. SiLU / Swish</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># SiLU = Swish (Google Brain, 2017)</span>
+<span class="cm"># f(x) = x · σ(x)</span>
+<span class="cm"># σ = sigmoid</span>
+
+<span class="kw">def</span> <span class="fn">silu</span>(x):
+    <span class="kw">return</span> x * torch.sigmoid(x)
+
+<span class="cm"># 对比 GELU:</span>
+<span class="cm"># GELU = x · Φ(x)   Φ=正态CDF</span>
+<span class="cm"># SiLU = x · σ(x)   σ=sigmoid</span>
+<span class="cm"># 形状几乎一样！</span>
+<span class="cm"># 两者差异 < 1% (在常见范围内)</span>
+
+<span class="cm"># 通用形式: Swish-β</span>
+<span class="cm"># f(x) = x · σ(βx)</span>
+<span class="cm"># β→∞ 退化为 ReLU</span>
+<span class="cm"># β=1 即 SiLU</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 400 250" xmlns="http://www.w3.org/2000/svg">
+  <line x1="40" y1="145" x2="380" y2="145" stroke="#333" stroke-width="1.5"/>
+  <line x1="200" y1="20" x2="200" y2="230" stroke="#333" stroke-width="1.5"/>
+  <text x="375" y="138" fill="#555" font-size="10">x</text>
+  <!-- SiLU curve -->
+  <path d="M 40,148 C 80,150 120,153 145,154 C 165,154 180,152 190,149 C 200,145 210,138 225,125 C 250,100 290,60 340,25"
+        stroke="#f093fb" stroke-width="2.5" fill="none"/>
+  <!-- GELU for comparison -->
+  <path d="M 40,147 C 80,147 120,149 140,149 C 165,150 180,149 190,147 C 200,145 210,139 225,127 C 250,102 290,62 340,27"
+        stroke="#667eea" stroke-width="1.5" fill="none" stroke-dasharray="4"/>
+  <!-- Labels -->
+  <text x="280" y="45" fill="#f093fb" font-size="11" font-weight="bold">SiLU</text>
+  <text x="280" y="65" fill="#667eea" font-size="9">GELU (几乎重合)</text>
+  <!-- The dip below zero -->
+  <line x1="145" y1="154" x2="145" y2="145" stroke="#f5576c" stroke-width="0.8" stroke-dasharray="2"/>
+  <text x="105" y="175" fill="#f5576c" font-size="9">最低点 ≈ -0.28</text>
+  <!-- Sigmoid gate visualization -->
+  <rect x="50" y="195" width="120" height="35" rx="6" fill="#1e1e2e" stroke="#f093fb33"/>
+  <text x="110" y="216" text-anchor="middle" fill="#f093fb" font-size="9">gate = σ(x) ∈ (0,1)</text>
+</svg>
+</div>
+<div class="caption-col">
+<strong>Sigmoid 门控版本</strong><br><br>
+<span class="pro">+ 和 GELU 几乎等价，更简单的公式</span><br>
+<span class="pro">+ 自门控：σ(x) 作为门控权重</span><br>
+<span class="pro">+ Google NAS 搜索出的最优激活</span><br>
+<span class="pro">+ 光滑、非单调</span><br><br>
+<span class="con">− 需要计算 sigmoid（一次 exp）</span><br>
+<span class="con">− 负区间最低 ≈ -0.28 (可能不稳定)</span><br><br>
+<strong>用于：</strong>EfficientNet, LLaMA (作为 SwiGLU 的一部分)
+</div>
+</div>
+
+<!-- ===== 5. SwiGLU ===== -->
+<h2>5. SwiGLU</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># SwiGLU (Shazeer, 2020)</span>
+<span class="cm"># GLU: Gated Linear Unit</span>
+<span class="cm"># f(x) = (xW₁) ⊙ act(xV)</span>
+<span class="cm"># SwiGLU 用 SiLU 作为 act</span>
+
+<span class="kw">class</span> <span class="fn">SwiGLU</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d, d_ff):
+        <span class="cm"># 注意: 3 个投影矩阵!</span>
+        self.W1 = nn.Linear(d, d_ff)  <span class="cm"># gate</span>
+        self.V  = nn.Linear(d, d_ff)  <span class="cm"># value</span>
+        self.W2 = nn.Linear(d_ff, d)  <span class="cm"># down</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="kw">return</span> self.W2(
+            F.silu(self.W1(x)) * self.V(x)
+        )
+
+<span class="cm"># 参数量: 3·d·d_ff (vs 2·d·d_ff)</span>
+<span class="cm"># 所以 d_ff 通常设为 2/3 × 4d</span>
+<span class="cm">#   = 8d/3 ≈ 2.67d</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 450 280" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#667eea"/></marker>
+    <marker id="ar2" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f093fb"/></marker>
+  </defs>
+  <!-- Input -->
+  <rect x="10" y="115" width="60" height="40" rx="6" fill="#1e1e2e" stroke="#555"/>
+  <text x="40" y="139" text-anchor="middle" fill="#e0e0ea" font-size="12">x</text>
+  <!-- W1 branch (gate) -->
+  <line x1="70" y1="125" x2="130" y2="80" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="130" y="60" width="70" height="35" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="165" y="82" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">xW₁</text>
+  <!-- SiLU -->
+  <line x1="200" y1="77" x2="240" y2="77" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="240" y="60" width="60" height="35" rx="6" fill="#f093fb22" stroke="#f093fb"/>
+  <text x="270" y="82" text-anchor="middle" fill="#f093fb" font-size="10">SiLU</text>
+  <!-- V branch (value) -->
+  <line x1="70" y1="145" x2="130" y2="185" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="130" y="168" width="70" height="35" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="165" y="190" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">xV</text>
+  <!-- Element-wise multiply -->
+  <line x1="300" y1="77" x2="340" y2="130" stroke="#f093fb" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <line x1="200" y1="185" x2="340" y2="140" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <circle cx="350" cy="135" r="15" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="350" y="140" text-anchor="middle" fill="#fff" font-size="14">⊙</text>
+  <!-- W2 (down projection) -->
+  <line x1="365" y1="135" x2="400" y2="135" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="400" y="118" width="40" height="35" rx="6" fill="#1e1e2e" stroke="#555"/>
+  <text x="420" y="139" text-anchor="middle" fill="#e0e0ea" font-size="10">W₂</text>
+  <!-- Labels -->
+  <text x="270" y="42" fill="#f093fb" font-size="9">gate path</text>
+  <text x="165" y="220" fill="#667eea" font-size="9">value path</text>
+  <!-- Formula at bottom -->
+  <text x="225" y="265" text-anchor="middle" fill="#6b6b80" font-size="11">output = W₂ · [ SiLU(xW₁) ⊙ xV ]</text>
+</svg>
+</div>
+<div class="caption-col">
+<strong>显式门控：分离 gate 和 value</strong><br><br>
+<span class="pro">+ 比 GELU FFN 效果一致性更好</span><br>
+<span class="pro">+ 门控路径和值路径解耦，更强表达力</span><br>
+<span class="pro">+ PaLM 论文验证：同参数量下 loss 更低</span><br><br>
+<span class="con">− 多一个投影矩阵 (3 vs 2)</span><br>
+<span class="con">− 为保持参数量需缩小 d_ff</span><br><br>
+<strong>演进：</strong><br>
+GELU FFN: W₂·GELU(W₁·x)<br>
+→ 隐式门控 (x 自己门控自己)<br><br>
+SwiGLU: W₂·[SiLU(xW₁)⊙xV]<br>
+→ 显式门控 (两个独立路径)<br><br>
+<strong>用于：</strong>LLaMA, Qwen, Mistral, Gemma
+</div>
+</div>
+
+<!-- ===== 6. 总结对比表 ===== -->
+<h2>6. 总结对比</h2>
+
+<table>
+<tr>
+  <th>激活函数</th>
+  <th>公式</th>
+  <th>光滑</th>
+  <th>门控</th>
+  <th>计算成本</th>
+  <th>典型用途</th>
+</tr>
+<tr>
+  <td><strong>ReLU</strong></td>
+  <td>max(0, x)</td>
+  <td>❌</td>
+  <td>❌</td>
+  <td>最低</td>
+  <td>CNN (ResNet, VGG)</td>
+</tr>
+<tr>
+  <td><strong>Leaky ReLU</strong></td>
+  <td>max(αx, x)</td>
+  <td>❌</td>
+  <td>❌</td>
+  <td>最低</td>
+  <td>GAN, 目标检测</td>
+</tr>
+<tr>
+  <td><strong>GELU</strong></td>
+  <td>x·Φ(x)</td>
+  <td>✅</td>
+  <td>隐式</td>
+  <td>中</td>
+  <td>BERT, GPT, ViT</td>
+</tr>
+<tr>
+  <td><strong>SiLU/Swish</strong></td>
+  <td>x·σ(x)</td>
+  <td>✅</td>
+  <td>隐式</td>
+  <td>中</td>
+  <td>EfficientNet</td>
+</tr>
+<tr>
+  <td><strong>SwiGLU</strong></td>
+  <td>SiLU(xW₁)⊙xV</td>
+  <td>✅</td>
+  <td>显式</td>
+  <td>高 (3矩阵)</td>
+  <td>LLaMA, Qwen, Mistral</td>
+</tr>
+</table>
+
+<div class="key-point">
+<strong>演进主线：</strong>ReLU(硬截断) → GELU/SiLU(平滑自门控) → SwiGLU(显式双路径门控)。核心趋势：从"硬开关"走向"软概率门控"，从"隐式"走向"显式"分离 gate 和 value。
+</div>
+
+<!-- ===== 7. 如何选择 ===== -->
+<h2>7. 选择指南</h2>
+
+<div class="grid-row">
+<div class="code-col">
+<pre style="background:transparent;border:none;padding:0;margin:0;">
+<span class="cm"># 2024+ LLM 标配</span>
+<span class="cm"># FFN with SwiGLU:</span>
+d_model = <span class="num">4096</span>
+d_ff = <span class="kw">int</span>(<span class="num">8</span> * d_model / <span class="num">3</span>)  <span class="cm"># 10922</span>
+<span class="cm"># 对齐到 128 (tensor core)</span>
+d_ff = (d_ff + <span class="num">127</span>) // <span class="num">128</span> * <span class="num">128</span>  <span class="cm"># 11008</span>
+
+<span class="cm"># LLaMA-7B: d=4096, d_ff=11008</span>
+<span class="cm"># 参数: 3 × 4096 × 11008 = 135M per layer</span>
+
+<span class="cm"># 对比 GELU FFN:</span>
+<span class="cm"># d_ff = 4 × d = 16384</span>
+<span class="cm"># 参数: 2 × 4096 × 16384 = 134M per layer</span>
+<span class="cm"># → 参数量几乎一样，SwiGLU 效果更好</span>
+</pre>
+</div>
+<div class="svg-col">
+<svg viewBox="0 0 400 220" xmlns="http://www.w3.org/2000/svg">
+  <!-- Timeline -->
+  <line x1="50" y1="110" x2="370" y2="110" stroke="#333" stroke-width="2"/>
+  <!-- Era markers -->
+  <circle cx="80" cy="110" r="6" fill="#f5576c"/>
+  <text x="80" y="90" text-anchor="middle" fill="#f5576c" font-size="9" font-weight="bold">2012</text>
+  <text x="80" y="135" text-anchor="middle" fill="#6b6b80" font-size="8">AlexNet</text>
+  <text x="80" y="148" text-anchor="middle" fill="#6b6b80" font-size="8">ReLU</text>
+
+  <circle cx="160" cy="110" r="6" fill="#d19a66"/>
+  <text x="160" y="90" text-anchor="middle" fill="#d19a66" font-size="9" font-weight="bold">2016</text>
+  <text x="160" y="135" text-anchor="middle" fill="#6b6b80" font-size="8">GELU</text>
+  <text x="160" y="148" text-anchor="middle" fill="#6b6b80" font-size="8">论文发表</text>
+
+  <circle cx="230" cy="110" r="6" fill="#667eea"/>
+  <text x="230" y="90" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">2018</text>
+  <text x="230" y="135" text-anchor="middle" fill="#6b6b80" font-size="8">BERT/GPT</text>
+  <text x="230" y="148" text-anchor="middle" fill="#6b6b80" font-size="8">采用 GELU</text>
+
+  <circle cx="300" cy="110" r="6" fill="#f093fb"/>
+  <text x="300" y="90" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">2022</text>
+  <text x="300" y="135" text-anchor="middle" fill="#6b6b80" font-size="8">PaLM/LLaMA</text>
+  <text x="300" y="148" text-anchor="middle" fill="#6b6b80" font-size="8">SwiGLU 统一</text>
+
+  <circle cx="355" cy="110" r="6" fill="#98c379"/>
+  <text x="355" y="90" text-anchor="middle" fill="#98c379" font-size="9" font-weight="bold">2024+</text>
+  <text x="355" y="135" text-anchor="middle" fill="#6b6b80" font-size="8">SwiGLU</text>
+  <text x="355" y="148" text-anchor="middle" fill="#6b6b80" font-size="8">成为标配</text>
+
+  <!-- Bottom summary -->
+  <rect x="60" y="170" width="300" height="35" rx="8" fill="#f093fb0a" stroke="#f093fb22"/>
+  <text x="210" y="192" text-anchor="middle" fill="#b8b8d0" font-size="10">趋势: 硬截断 → 平滑门控 → 显式双路径门控</text>
+</svg>
+</div>
+<div class="caption-col">
+<strong>实用选择：</strong><br><br>
+• 新 LLM → <strong>SwiGLU</strong> (无脑选)<br>
+• CNN / 轻量模型 → <strong>ReLU</strong><br>
+• BERT-style 编码器 → <strong>GELU</strong><br>
+• GAN → <strong>LeakyReLU</strong><br><br>
+<strong>d_ff 调整公式：</strong><br>
+SwiGLU 需要 3 个矩阵，为保持参数量不变：<br>
+d_ff = ⌈8d/3⌉ 对齐到 128<br><br>
+这样 3×d×d_ff ≈ 2×d×4d
+</div>
+</div>
+
+<footer>Generated 2026.06.02 | Activation Functions Comparison</footer>
+</div>
+</body>
+</html>

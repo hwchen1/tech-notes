@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gemma4-VL Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #667eea, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #667eea; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 0; overflow-x: auto; height: 100%; display: flex; align-items: center; justify-content: center; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { color: #a8a8be; font-size: 0.85rem; padding: 16px; background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+.caption strong { color: #667eea; }
+.caption ul { margin: 8px 0; padding-left: 16px; }
+.caption li { margin-bottom: 6px; color: #a8a8be; font-size: 0.84rem; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 16px; margin: 24px 0; align-items: stretch; }
+.key-point { background: #667eea0a; border: 1px solid #667eea22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #667eea; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Gemma4-VL Architecture</h1>
+<p class="subtitle">Hybrid Sliding/Global Attention + All-MoE + K=V Tying + SigLIP Vision — Google DeepMind 2025</p>
+
+<!-- ===== 1. Hybrid Sliding/Global Attention ===== -->
+<h2>1. Hybrid Sliding/Global Attention</h2>
+<div class="key-point"><strong>Pattern (5,1):</strong> 5 sliding window layers (head_dim=256, 8 KV heads, window=1024) then 1 global layer (head_dim=512, 2 KV heads, K=V tying, RoPE base=1M). Repeating.</div>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">HybridAttention</span>(nn.Module):
+    <span class="cm"># Pattern: [S,S,S,S,S,G, S,S,S,S,S,G, ...]</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x, layer_idx):
+        is_global = (layer_idx % <span class="num">6</span>) == <span class="num">5</span>
+
+        <span class="kw">if</span> is_global:
+            <span class="cm"># head_dim=512, 2 KV heads</span>
+            <span class="cm"># RoPE base=1M, partial_rotary=0.25</span>
+            q = self.q_proj(x)  <span class="cm"># full seq</span>
+            k = self.kv_proj(x) <span class="cm"># K=V tied!</span>
+            v = k               <span class="cm"># same weights</span>
+            attn = full_attention(q, k, v)
+        <span class="kw">else</span>:
+            <span class="cm"># head_dim=256, 8 KV heads</span>
+            <span class="cm"># RoPE base=10000, window=1024</span>
+            q = self.q_proj(x)
+            k = self.k_proj(x)
+            v = self.v_proj(x)
+            attn = sliding_window(
+                q, k, v, window=<span class="num">1024</span>
+            )
+        <span class="kw">return</span> self.o_proj(attn)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="20" text-anchor="middle" fill="#6b6b80" font-size="10">Layer Pattern (5 Sliding + 1 Global)</text>
+  <!-- Sliding layers -->
+  <rect x="30" y="40" width="60" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="60" y="64" text-anchor="middle" fill="#667eea" font-size="9">S (L0)</text>
+  <rect x="100" y="40" width="60" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="130" y="64" text-anchor="middle" fill="#667eea" font-size="9">S (L1)</text>
+  <rect x="170" y="40" width="60" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="64" text-anchor="middle" fill="#667eea" font-size="9">S (L2)</text>
+  <rect x="240" y="40" width="60" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="270" y="64" text-anchor="middle" fill="#667eea" font-size="9">S (L3)</text>
+  <rect x="310" y="40" width="60" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="340" y="64" text-anchor="middle" fill="#667eea" font-size="9">S (L4)</text>
+  <!-- Global layer -->
+  <rect x="170" y="95" width="60" height="40" rx="6" fill="#a855f722" stroke="#a855f7"/>
+  <text x="200" y="119" text-anchor="middle" fill="#a855f7" font-size="9">G (L5)</text>
+  <!-- Arrows -->
+  <path d="M 200 80 L 200 95" stroke="#a855f7" stroke-width="1.5" fill="none" stroke-dasharray="3,2"/>
+
+  <!-- Sliding window detail -->
+  <rect x="20" y="155" width="180" height="160" rx="8" fill="#1a1a2a" stroke="#667eea44"/>
+  <text x="110" y="175" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">Sliding Window (w=1024)</text>
+  <rect x="40" y="190" width="140" height="100" rx="4" fill="#0a0a0f"/>
+  <!-- Window band -->
+  <path d="M 40 190 L 180 190 L 180 290 L 40 290 Z" fill="none" stroke="#333" stroke-width="0.5"/>
+  <path d="M 40 190 L 100 250 L 40 250 Z" fill="#667eea33"/>
+  <path d="M 60 210 L 140 290 L 60 290 Z" fill="#667eea33"/>
+  <text x="110" y="305" text-anchor="middle" fill="#555" font-size="8">head_dim=256, 8 KV heads</text>
+
+  <!-- Global detail -->
+  <rect x="220" y="155" width="180" height="160" rx="8" fill="#1a1a2a" stroke="#a855f744"/>
+  <text x="310" y="175" text-anchor="middle" fill="#a855f7" font-size="9" font-weight="bold">Global Attention</text>
+  <rect x="240" y="190" width="140" height="100" rx="4" fill="#0a0a0f"/>
+  <!-- Full attention -->
+  <rect x="240" y="190" width="140" height="100" fill="#a855f711"/>
+  <text x="310" y="305" text-anchor="middle" fill="#555" font-size="8">head_dim=512, 2 KV heads</text>
+  <text x="310" y="320" text-anchor="middle" fill="#a855f7" font-size="8">K=V tied, RoPE 1M</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>Why hybrid?</strong>
+<ul>
+<li>Sliding window layers are cheap — O(N*w) — and handle local patterns well</li>
+<li>Global layers every 6th position allow long-range information flow</li>
+<li>Global layers use larger head_dim (512 vs 256) but fewer KV heads (2 vs 8) — same KV cache budget</li>
+<li>RoPE base 1M on global layers enables extrapolation to very long contexts</li>
+<li>partial_rotary_factor=0.25 means only 25% of head_dim gets rotary encoding in global layers — rest is position-agnostic</li>
+</ul>
+</div>
+</div>
+
+<!-- PLACEHOLDER_SECTION_2 -->
+
+<!-- ===== 2. All-MoE Architecture ===== -->
+<h2>2. All-MoE Architecture</h2>
+<div class="key-point"><strong>Every layer is MoE:</strong> 128 experts, top-8 routing, expert ffn_dim=704, shared expert ffn_dim=2112. No dense FFN layers anywhere.</div>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">Gemma4MoELayer</span>(nn.Module):
+    <span class="cm"># 128 experts, top-8 gating</span>
+    <span class="cm"># + 1 shared expert (always active)</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Router: select top-8 of 128</span>
+        scores = self.gate(x)  <span class="cm"># [B,N,128]</span>
+        topk_w, topk_idx = scores.topk(<span class="num">8</span>)
+        topk_w = softmax(topk_w)
+
+        <span class="cm"># Routed experts (ffn_dim=704)</span>
+        routed = <span class="num">0</span>
+        <span class="kw">for</span> i, idx <span class="kw">in</span> enumerate(topk_idx):
+            expert = self.experts[idx]
+            routed += topk_w[i] * expert(x)
+
+        <span class="cm"># Shared expert (ffn_dim=2112)</span>
+        shared = self.shared_expert(x)
+
+        <span class="kw">return</span> routed + shared</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="20" text-anchor="middle" fill="#6b6b80" font-size="10">All-MoE: 128 Experts + Shared Expert</text>
+
+  <!-- Input -->
+  <rect x="160" y="35" width="100" height="30" rx="6" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="210" y="54" text-anchor="middle" fill="#e0e0ea" font-size="9">Hidden State x</text>
+
+  <!-- Router -->
+  <path d="M 210 65 L 210 85" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="150" y="85" width="120" height="30" rx="6" fill="#667eea33" stroke="#667eea"/>
+  <text x="210" y="104" text-anchor="middle" fill="#667eea" font-size="9">Router (top-8/128)</text>
+
+  <!-- Fan out to experts -->
+  <path d="M 170 115 L 60 145" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+  <path d="M 190 115 L 130 145" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+  <path d="M 210 115 L 210 145" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+  <path d="M 230 115 L 290 145" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+  <path d="M 250 115 L 360 145" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Expert boxes -->
+  <rect x="30" y="145" width="55" height="35" rx="4" fill="#1a1a2a" stroke="#667eea66"/>
+  <text x="57" y="166" text-anchor="middle" fill="#a8a8be" font-size="7">E_i (704)</text>
+  <rect x="100" y="145" width="55" height="35" rx="4" fill="#1a1a2a" stroke="#667eea66"/>
+  <text x="127" y="166" text-anchor="middle" fill="#a8a8be" font-size="7">E_j (704)</text>
+  <rect x="180" y="145" width="55" height="35" rx="4" fill="#1a1a2a" stroke="#667eea66"/>
+  <text x="207" y="166" text-anchor="middle" fill="#a8a8be" font-size="7">... x8</text>
+  <rect x="260" y="145" width="55" height="35" rx="4" fill="#1a1a2a" stroke="#667eea66"/>
+  <text x="287" y="166" text-anchor="middle" fill="#a8a8be" font-size="7">E_k (704)</text>
+  <rect x="335" y="145" width="55" height="35" rx="4" fill="#1a1a2a" stroke="#667eea66"/>
+  <text x="362" y="166" text-anchor="middle" fill="#a8a8be" font-size="7">E_l (704)</text>
+
+  <!-- Weighted sum -->
+  <path d="M 57 180 L 210 210" stroke="#667eea" stroke-width="1"/>
+  <path d="M 127 180 L 210 210" stroke="#667eea" stroke-width="1"/>
+  <path d="M 207 180 L 210 210" stroke="#667eea" stroke-width="1"/>
+  <path d="M 287 180 L 210 210" stroke="#667eea" stroke-width="1"/>
+  <path d="M 362 180 L 210 210" stroke="#667eea" stroke-width="1"/>
+
+  <circle cx="210" cy="215" r="12" fill="#667eea22" stroke="#667eea"/>
+  <text x="210" y="219" text-anchor="middle" fill="#667eea" font-size="10">Σw</text>
+
+  <!-- Shared expert path -->
+  <rect x="310" y="85" width="90" height="30" rx="6" fill="#a855f722" stroke="#a855f7"/>
+  <text x="355" y="104" text-anchor="middle" fill="#a855f7" font-size="8">Shared (2112)</text>
+  <path d="M 355 115 L 355 240 L 230 260" stroke="#a855f7" stroke-width="1.5"/>
+
+  <!-- Final add -->
+  <path d="M 210 227 L 210 250" stroke="#667eea" stroke-width="1.5"/>
+  <circle cx="210" cy="260" r="10" fill="#0a0a0f" stroke="#a855f7"/>
+  <text x="210" y="264" text-anchor="middle" fill="#a855f7" font-size="10">+</text>
+
+  <!-- Output -->
+  <path d="M 210 270 L 210 290" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="160" y="290" width="100" height="25" rx="6" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="210" y="306" text-anchor="middle" fill="#e0e0ea" font-size="9">Output</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>All-MoE design choices:</strong>
+<ul>
+<li><strong>128 experts, top-8:</strong> High capacity with sparse activation — only 8/128 = 6.25% of expert params active per token</li>
+<li><strong>Expert ffn_dim=704:</strong> Small per-expert — keeps active param count manageable</li>
+<li><strong>Shared expert (2112):</strong> Always-on expert captures common patterns, stabilizes training</li>
+<li><strong>No dense layers:</strong> Unlike Mixtral/DeepSeek which alternate dense+MoE, Gemma4 is pure MoE throughout</li>
+<li><strong>Effective active FFN:</strong> 8×704 + 2112 = 7744 active dim per token</li>
+</ul>
+</div>
+</div>
+
+<!-- PLACEHOLDER_SECTION_3 -->
+
+<!-- ===== 3. Dual Pre-Norms ===== -->
+<h2>3. Dual Pre-Norms + Logit Soft-Capping</h2>
+<div class="key-point"><strong>Two RMSNorm before attention</strong> (fused at load time), per-layer scalar multiplier, post-FFN norm, and logit soft-capping at 30.</div>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">Gemma4Block</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model):
+        <span class="cm"># Dual pre-norms (fused into one)</span>
+        self.norm1a = RMSNorm(d_model)
+        self.norm1b = RMSNorm(d_model)
+        <span class="cm"># Per-layer scalar</span>
+        self.alpha = nn.Parameter(torch.ones(<span class="num">1</span>))
+        <span class="cm"># Post-FFN norm</span>
+        self.post_ffn_norm = RMSNorm(d_model)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Dual pre-norm (fused: norm1a * norm1b)</span>
+        h = self.norm1a(x)
+        h = self.norm1b(h)
+        <span class="cm"># Attention + scalar multiplier</span>
+        h = self.attn(h)
+        x = x + self.alpha * h
+
+        <span class="cm"># FFN block</span>
+        h = self.ffn_norm(x)
+        h = self.moe(h)
+        h = self.post_ffn_norm(h)
+        x = x + h
+        <span class="kw">return</span> x
+
+<span class="kw">def</span> <span class="fn">soft_cap_logits</span>(logits, cap=<span class="num">30.0</span>):
+    <span class="cm"># Prevents logit explosion</span>
+    <span class="kw">return</span> cap * torch.tanh(logits / cap)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 360" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Gemma4 Block with Dual Pre-Norm</text>
+
+  <!-- Input -->
+  <rect x="155" y="30" width="110" height="25" rx="5" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="210" y="46" text-anchor="middle" fill="#e0e0ea" font-size="9">x (residual)</text>
+
+  <!-- Norm 1a -->
+  <path d="M 210 55 L 210 70" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="155" y="70" width="110" height="22" rx="5" fill="#a855f722" stroke="#a855f7"/>
+  <text x="210" y="85" text-anchor="middle" fill="#a855f7" font-size="8">RMSNorm 1a</text>
+
+  <!-- Norm 1b -->
+  <path d="M 210 92 L 210 102" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="155" y="102" width="110" height="22" rx="5" fill="#a855f722" stroke="#a855f7"/>
+  <text x="210" y="117" text-anchor="middle" fill="#a855f7" font-size="8">RMSNorm 1b</text>
+  <text x="290" y="95" fill="#5c6370" font-size="7" font-style="italic">fused at load</text>
+  <path d="M 265 82 L 275 90" stroke="#5c6370" stroke-width="0.5" stroke-dasharray="2,1"/>
+
+  <!-- Attention -->
+  <path d="M 210 124 L 210 140" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="145" y="140" width="130" height="28" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="210" y="158" text-anchor="middle" fill="#667eea" font-size="9">Hybrid Attention</text>
+
+  <!-- Alpha -->
+  <path d="M 210 168 L 210 185" stroke="#667eea" stroke-width="1.5"/>
+  <circle cx="210" cy="192" r="10" fill="#d19a6622" stroke="#d19a66"/>
+  <text x="210" y="196" text-anchor="middle" fill="#d19a66" font-size="8">×α</text>
+
+  <!-- Residual add -->
+  <path d="M 210 202 L 210 215" stroke="#667eea" stroke-width="1.5"/>
+  <path d="M 130 42 L 130 220 L 195 220" stroke="#667eea44" stroke-width="1" stroke-dasharray="3,2"/>
+  <circle cx="210" cy="220" r="8" fill="#0a0a0f" stroke="#667eea"/>
+  <text x="210" y="224" text-anchor="middle" fill="#667eea" font-size="9">+</text>
+
+  <!-- FFN norm -->
+  <path d="M 210 228 L 210 243" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="155" y="243" width="110" height="22" rx="5" fill="#a855f722" stroke="#a855f7"/>
+  <text x="210" y="258" text-anchor="middle" fill="#a855f7" font-size="8">FFN Norm</text>
+
+  <!-- MoE -->
+  <path d="M 210 265 L 210 278" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="155" y="278" width="110" height="28" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="210" y="296" text-anchor="middle" fill="#667eea" font-size="9">MoE FFN</text>
+
+  <!-- Post-FFN norm -->
+  <path d="M 210 306 L 210 318" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="155" y="318" width="110" height="22" rx="5" fill="#a855f722" stroke="#a855f7"/>
+  <text x="210" y="333" text-anchor="middle" fill="#a855f7" font-size="8">Post-FFN Norm</text>
+
+  <!-- Output residual -->
+  <path d="M 210 340 L 210 355" stroke="#667eea" stroke-width="1.5"/>
+  <text x="210" y="358" text-anchor="middle" fill="#e0e0ea" font-size="8">output</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>Normalization strategy:</strong>
+<ul>
+<li><strong>Dual pre-norm:</strong> Two consecutive RMSNorm before attention — empirically improves training stability at scale</li>
+<li><strong>Fused at load:</strong> The two norms are fused into a single operation for inference efficiency (norm(norm(x)) = combined_norm(x))</li>
+<li><strong>Per-layer α:</strong> Learnable scalar multiplier on attention output — controls residual contribution per layer</li>
+<li><strong>Post-FFN norm:</strong> Additional RMSNorm after MoE output, before residual addition — prevents FFN output magnitude drift</li>
+<li><strong>Logit soft-cap (30):</strong> tanh(logits/30)*30 prevents extreme logit values without hard clipping — smooth gradient everywhere</li>
+</ul>
+</div>
+</div>
+
+<!-- PLACEHOLDER_SECTION_4 -->
+
+<!-- ===== 4. Vision Encoder ===== -->
+<h2>4. Vision Encoder (SigLIP + Projector)</h2>
+<div class="key-point"><strong>SigLIP-based vision encoder</strong> with parameter-free RMSNorm projector. Bidirectional attention within image token groups — images attend freely to each other, text remains causal.</div>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">Gemma4Vision</span>(nn.Module):
+    <span class="cm"># HF: Gemma4VisionModel (SigLIP)</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, images, text_ids):
+        <span class="cm"># Encode images with SigLIP</span>
+        img_tokens = self.vision_encoder(images)
+        <span class="cm"># [B, num_patches, vision_dim]</span>
+
+        <span class="cm"># Project: parameter-free RMSNorm</span>
+        img_tokens = rms_norm(img_tokens)
+        img_tokens = self.linear_proj(img_tokens)
+        <span class="cm"># [B, num_patches, d_model]</span>
+
+        <span class="cm"># Merge into text sequence</span>
+        hidden = interleave(text_ids, img_tokens)
+
+        <span class="cm"># Attention mask:</span>
+        <span class="cm"># - text tokens: causal mask</span>
+        <span class="cm"># - image tokens: bidirectional</span>
+        <span class="cm">#   within same image group</span>
+        mask = build_hybrid_mask(hidden)
+        <span class="kw">return</span> self.decoder(hidden, mask)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Vision Pipeline + Hybrid Attention Mask</text>
+
+  <!-- Image input -->
+  <rect x="30" y="35" width="80" height="50" rx="6" fill="#667eea11" stroke="#667eea"/>
+  <text x="70" y="55" text-anchor="middle" fill="#667eea" font-size="8">Image</text>
+  <text x="70" y="72" text-anchor="middle" fill="#555" font-size="7">H×W×3</text>
+
+  <!-- SigLIP -->
+  <path d="M 110 60 L 135 60" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="135" y="40" width="90" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="180" y="57" text-anchor="middle" fill="#667eea" font-size="8">SigLIP</text>
+  <text x="180" y="70" text-anchor="middle" fill="#555" font-size="7">ViT Encoder</text>
+
+  <!-- RMSNorm projector -->
+  <path d="M 225 60 L 250 60" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="250" y="40" width="90" height="40" rx="6" fill="#a855f722" stroke="#a855f7"/>
+  <text x="295" y="55" text-anchor="middle" fill="#a855f7" font-size="7">RMSNorm</text>
+  <text x="295" y="68" text-anchor="middle" fill="#a855f7" font-size="7">(param-free)</text>
+
+  <!-- Linear proj -->
+  <path d="M 340 60 L 360 60" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="360" y="45" width="45" height="30" rx="4" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="382" y="64" text-anchor="middle" fill="#e0e0ea" font-size="7">Linear</text>
+
+  <!-- Merge -->
+  <path d="M 382 75 L 382 100 L 210 115" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Text tokens -->
+  <rect x="30" y="95" width="80" height="30" rx="4" fill="#1a1a2a" stroke="#667eea44"/>
+  <text x="70" y="114" text-anchor="middle" fill="#a8a8be" font-size="8">Text Tokens</text>
+  <path d="M 110 110 L 160 115" stroke="#667eea" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Merged sequence -->
+  <rect x="60" y="125" width="300" height="30" rx="6" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="210" y="144" text-anchor="middle" fill="#e0e0ea" font-size="8">[text ... img_tokens ... text ...]</text>
+
+  <!-- Attention mask visualization -->
+  <text x="210" y="175" text-anchor="middle" fill="#6b6b80" font-size="9">Hybrid Attention Mask</text>
+  <rect x="100" y="185" width="220" height="130" rx="6" fill="#0a0a0f" stroke="#333"/>
+
+  <!-- Causal region (text) -->
+  <rect x="100" y="185" width="80" height="80" fill="#667eea11"/>
+  <path d="M 100 185 L 180 185 L 100 265 Z" fill="#667eea33"/>
+  <text x="130" y="230" text-anchor="middle" fill="#667eea" font-size="7">Causal</text>
+  <text x="130" y="242" text-anchor="middle" fill="#667eea" font-size="6">(text)</text>
+
+  <!-- Bidirectional region (image) -->
+  <rect x="180" y="235" width="80" height="80" fill="#a855f733"/>
+  <text x="220" y="278" text-anchor="middle" fill="#a855f7" font-size="7">Bidir</text>
+  <text x="220" y="290" text-anchor="middle" fill="#a855f7" font-size="6">(image)</text>
+
+  <!-- Causal continues -->
+  <rect x="260" y="265" width="60" height="50" fill="#667eea11"/>
+  <path d="M 260 265 L 320 265 L 260 315 Z" fill="#667eea33"/>
+  <text x="290" y="295" text-anchor="middle" fill="#667eea" font-size="6">Causal</text>
+
+  <!-- Labels -->
+  <text x="320" y="330" fill="#555" font-size="7">Keys →</text>
+  <text x="85" y="250" fill="#555" font-size="7" transform="rotate(-90,85,250)">Queries →</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>Vision design:</strong>
+<ul>
+<li><strong>SigLIP encoder:</strong> Sigmoid-loss ViT — no [CLS] token, all patch tokens used</li>
+<li><strong>Parameter-free RMSNorm:</strong> Projector uses RMSNorm without learnable gain — just normalizes magnitude before linear projection</li>
+<li><strong>Bidirectional image attention:</strong> Image tokens within the same image attend to each other freely (no causal mask) — captures spatial relationships</li>
+<li><strong>Text stays causal:</strong> Text tokens still use standard causal masking — only image groups break causality</li>
+<li><strong>Cross-image isolation:</strong> Different images in the same sequence do NOT attend to each other</li>
+</ul>
+</div>
+</div>
+
+<!-- PLACEHOLDER_SECTION_5 -->
+
+<!-- ===== 5. K=V Tying ===== -->
+<h2>5. K=V Tying in Global Layers</h2>
+<div class="key-point"><strong>Key and Value share the same weight matrix</strong> in global attention layers — reduces KV cache by 50% for long-context inference while maintaining model quality.</div>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">GlobalAttentionKVTied</span>(nn.Module):
+    <span class="cm"># Global layers: K and V share weights</span>
+    <span class="cm"># head_dim=512, num_kv_heads=2</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model):
+        self.q_proj = Linear(
+            d_model, num_q_heads * <span class="num">512</span>)
+        <span class="cm"># Single projection for both K and V</span>
+        self.kv_proj = Linear(
+            d_model, <span class="num">2</span> * <span class="num">512</span>)  <span class="cm"># 2 heads</span>
+        <span class="cm"># No separate v_proj!</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        q = self.q_proj(x)
+        kv = self.kv_proj(x)
+
+        <span class="cm"># K = V = same projection output</span>
+        k = kv
+        v = kv  <span class="cm"># tied!</span>
+
+        <span class="cm"># RoPE only on 25% of head_dim</span>
+        q_rot = q[..., :<span class="num">128</span>]  <span class="cm"># 512*0.25</span>
+        k_rot = k[..., :<span class="num">128</span>]
+        q_rot = apply_rope(q_rot, base=<span class="num">1e6</span>)
+        k_rot = apply_rope(k_rot, base=<span class="num">1e6</span>)
+
+        <span class="kw">return</span> attention(q, k, v)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">K=V Tying: Shared Projection</text>
+
+  <!-- Input -->
+  <rect x="155" y="35" width="110" height="25" rx="5" fill="#1a1a2a" stroke="#667eea"/>
+  <text x="210" y="51" text-anchor="middle" fill="#e0e0ea" font-size="9">x</text>
+
+  <!-- Q projection -->
+  <path d="M 180 60 L 100 85" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="50" y="85" width="100" height="30" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="100" y="104" text-anchor="middle" fill="#667eea" font-size="8">Q proj (Nh×512)</text>
+
+  <!-- KV projection (single) -->
+  <path d="M 240 60 L 310 85" stroke="#a855f7" stroke-width="2"/>
+  <rect x="260" y="85" width="100" height="30" rx="5" fill="#a855f733" stroke="#a855f7"/>
+  <text x="310" y="104" text-anchor="middle" fill="#a855f7" font-size="8">KV proj (2×512)</text>
+
+  <!-- Fork K and V from same output -->
+  <path d="M 290 115 L 260 145" stroke="#a855f7" stroke-width="1.5"/>
+  <path d="M 330 115 L 360 145" stroke="#a855f7" stroke-width="1.5"/>
+
+  <rect x="220" y="145" width="70" height="25" rx="4" fill="#667eea11" stroke="#667eea"/>
+  <text x="255" y="161" text-anchor="middle" fill="#667eea" font-size="8">K</text>
+  <rect x="330" y="145" width="70" height="25" rx="4" fill="#667eea11" stroke="#667eea"/>
+  <text x="365" y="161" text-anchor="middle" fill="#667eea" font-size="8">V</text>
+
+  <!-- Same weights indicator -->
+  <path d="M 290 157 L 330 157" stroke="#a855f7" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="310" y="152" text-anchor="middle" fill="#a855f7" font-size="7">SAME</text>
+
+  <!-- RoPE on partial -->
+  <path d="M 100 115 L 100 145" stroke="#667eea" stroke-width="1.5"/>
+  <rect x="50" y="145" width="100" height="25" rx="4" fill="#1a1a2a" stroke="#d19a66"/>
+  <text x="100" y="161" text-anchor="middle" fill="#d19a66" font-size="7">RoPE (25% of dim)</text>
+
+  <path d="M 255 170 L 255 195" stroke="#667eea" stroke-width="1"/>
+  <rect x="220" y="195" width="70" height="20" rx="4" fill="#1a1a2a" stroke="#d19a66"/>
+  <text x="255" y="208" text-anchor="middle" fill="#d19a66" font-size="7">RoPE (25%)</text>
+
+  <!-- KV Cache comparison -->
+  <rect x="40" y="230" width="160" height="70" rx="8" fill="#1a1a2a" stroke="#f5576c44"/>
+  <text x="120" y="250" text-anchor="middle" fill="#f5576c" font-size="8">Standard KV Cache</text>
+  <text x="120" y="268" text-anchor="middle" fill="#a8a8be" font-size="7">K: [B, 2, N, 512]</text>
+  <text x="120" y="282" text-anchor="middle" fill="#a8a8be" font-size="7">V: [B, 2, N, 512]</text>
+  <text x="120" y="296" text-anchor="middle" fill="#f5576c" font-size="7">Total: 2×2×N×512</text>
+
+  <rect x="220" y="230" width="160" height="70" rx="8" fill="#1a1a2a" stroke="#4facfe44"/>
+  <text x="300" y="250" text-anchor="middle" fill="#4facfe" font-size="8">K=V Tied Cache</text>
+  <text x="300" y="268" text-anchor="middle" fill="#a8a8be" font-size="7">KV: [B, 2, N, 512]</text>
+  <text x="300" y="282" text-anchor="middle" fill="#a8a8be" font-size="7">(shared, store once)</text>
+  <text x="300" y="296" text-anchor="middle" fill="#4facfe" font-size="7">Total: 1×2×N×512 (50% saved)</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>K=V Tying rationale:</strong>
+<ul>
+<li><strong>50% KV cache reduction:</strong> Only store one tensor instead of two for global layers — critical for long-context serving</li>
+<li><strong>Why it works:</strong> In practice, K and V learn similar representations in deep layers — tying them loses little expressivity</li>
+<li><strong>Only in global layers:</strong> Sliding window layers keep separate K,V since they handle fine-grained local patterns</li>
+<li><strong>Partial RoPE (25%):</strong> Only 128/512 dims get positional encoding — the rest are position-invariant, enabling better length generalization</li>
+<li><strong>RoPE base 1M:</strong> Very high base frequency allows smooth extrapolation to sequences far beyond training length</li>
+</ul>
+</div>
+</div>
+
+<footer>Generated 2026.06.02 | Gemma4-VL Architecture Analysis</footer>
+</div>
+</body>
+</html>

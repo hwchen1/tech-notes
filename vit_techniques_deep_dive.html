@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ViT Core Techniques Deep Dive</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #667eea, #764ba2, #f093fb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 2rem; color: #fff; margin: 70px 0 12px; }
+h2 .num { color: #667eea; margin-right: 8px; }
+.section-desc { color: #8b8b9e; font-size: 0.95rem; margin-bottom: 30px; max-width: 800px; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 28px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 14px; }
+p strong { color: #e0e0f0; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 28px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 14px; font-style: italic; }
+.formula-box { background: #14141e; border-left: 3px solid #667eea; padding: 16px 24px; margin: 16px 0; border-radius: 0 8px 8px 0; font-family: 'Courier New', monospace; font-size: 0.88rem; color: #c4c4e0; overflow-x: auto; }
+.key-point { background: #667eea0a; border: 1px solid #667eea22; border-radius: 10px; padding: 16px 20px; margin: 16px 0; }
+.key-point::before { content: "KEY"; display: inline-block; background: #667eea; color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 3px; margin-right: 10px; }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+.compare-card { background: #14141e; border: 1px solid #2a2a3a; border-radius: 12px; padding: 20px; }
+.compare-card h4 { color: #667eea; font-size: 1rem; margin-bottom: 8px; }
+.compare-card.right h4 { color: #f093fb; }
+ul { padding-left: 20px; margin: 10px 0; }
+li { color: #a8a8be; font-size: 0.9rem; margin-bottom: 6px; }
+li strong { color: #d0d0e8; }
+code { background: #1a1a28; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #f093fb; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #667eea; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; }
+.divider { height: 1px; background: linear-gradient(to right, transparent, #2a2a3a, transparent); margin: 60px 0; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ViT Core Techniques Deep Dive</h1>
+<p class="subtitle">2D-RoPE & mRoPE | Masked Image Modeling | Dual-Teacher Distillation | NaFlex + SigLIP</p>
+
+<!-- ============================================ -->
+<!-- PART 1: 2D-RoPE & mRoPE -->
+<!-- ============================================ -->
+
+<h2><span class="num">01</span>2D-RoPE & mRoPE</h2>
+<p class="section-desc">位置编码从 1D 到多维的演进。2D RoPE 解决了 ViT 的空间位置建模，mRoPE 进一步统一了文本、图像和视频的时空位置表示。</p>
+
+<h3>1.1 背景：为什么需要 2D 位置编码</h3>
+<p>传统 ViT 使用 <strong>1D learnable position embeddings</strong>（如原始 ViT、CLIP），将 2D 图像 patch 展平后赋予顺序位置。这种方案的核心问题：</p>
+<ul>
+  <li><strong>固定分辨率</strong>：训练时固定 224×224 或 336×336，推理时不同分辨率需要插值，精度损失</li>
+  <li><strong>丢失空间结构</strong>：相邻 patch 的行列关系被压缩成线性距离</li>
+  <li><strong>无法泛化</strong>：不同长宽比的图像强制 resize 或 padding，破坏原始几何信息</li>
+</ul>
+
+<h3>1.2 2D RoPE 原理（Seed-ViT / MoonViT）</h3>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 440" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#667eea"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">2D RoPE: Decoupling Height and Width into Independent Rotary Dimensions</text>
+
+  <!-- Left: Standard 1D RoPE -->
+  <rect x="30" y="50" width="280" height="180" rx="10" fill="#1a1a28" stroke="#f5576c44"/>
+  <text x="170" y="75" text-anchor="middle" fill="#f5576c" font-size="12" font-weight="bold">1D RoPE (Text / Flatten ViT)</text>
+
+  <!-- 1D sequence visualization -->
+  <g transform="translate(50,90)">
+    <rect x="0" y="0" width="35" height="25" rx="3" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="17" y="17" text-anchor="middle" fill="#f5576c" font-size="9">p₀</text>
+    <rect x="40" y="0" width="35" height="25" rx="3" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="57" y="17" text-anchor="middle" fill="#f5576c" font-size="9">p₁</text>
+    <rect x="80" y="0" width="35" height="25" rx="3" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="97" y="17" text-anchor="middle" fill="#f5576c" font-size="9">p₂</text>
+    <rect x="120" y="0" width="35" height="25" rx="3" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="137" y="17" text-anchor="middle" fill="#f5576c" font-size="9">p₃</text>
+    <text x="165" y="17" fill="#555" font-size="11">...</text>
+    <rect x="185" y="0" width="35" height="25" rx="3" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="202" y="17" text-anchor="middle" fill="#f5576c" font-size="9">pₙ</text>
+
+    <text x="110" y="50" text-anchor="middle" fill="#888" font-size="9">Position = sequential index only</text>
+    <text x="110" y="66" text-anchor="middle" fill="#888" font-size="9">θₘ = m · θ (single frequency)</text>
+  </g>
+
+  <text x="170" y="200" text-anchor="middle" fill="#555" font-size="9">patch(1,3) 和 patch(2,0) 距离相同 = 丢失空间信息</text>
+
+  <!-- Arrow -->
+  <path d="M 320 140 L 380 140" stroke="#667eea" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="350" y="130" text-anchor="middle" fill="#667eea" font-size="9">evolve</text>
+
+  <!-- Right: 2D RoPE -->
+  <rect x="390" y="50" width="580" height="180" rx="10" fill="#1a1a28" stroke="#667eea44"/>
+  <text x="680" y="75" text-anchor="middle" fill="#667eea" font-size="12" font-weight="bold">2D RoPE (Seed-ViT / MoonViT)</text>
+
+  <!-- 2D grid visualization -->
+  <g transform="translate(420,90)">
+    <!-- Grid -->
+    <rect x="0" y="0" width="30" height="25" rx="3" fill="#667eea33" stroke="#667eea"/>
+    <text x="15" y="16" text-anchor="middle" fill="#fff" font-size="7">(0,0)</text>
+    <rect x="35" y="0" width="30" height="25" rx="3" fill="#667eea28" stroke="#667eea"/>
+    <text x="50" y="16" text-anchor="middle" fill="#fff" font-size="7">(0,1)</text>
+    <rect x="70" y="0" width="30" height="25" rx="3" fill="#667eea22" stroke="#667eea"/>
+    <text x="85" y="16" text-anchor="middle" fill="#fff" font-size="7">(0,2)</text>
+    <rect x="105" y="0" width="30" height="25" rx="3" fill="#667eea1a" stroke="#667eea"/>
+    <text x="120" y="16" text-anchor="middle" fill="#fff" font-size="7">(0,3)</text>
+
+    <rect x="0" y="30" width="30" height="25" rx="3" fill="#764ba233" stroke="#764ba2"/>
+    <text x="15" y="46" text-anchor="middle" fill="#fff" font-size="7">(1,0)</text>
+    <rect x="35" y="30" width="30" height="25" rx="3" fill="#764ba228" stroke="#764ba2"/>
+    <text x="50" y="46" text-anchor="middle" fill="#fff" font-size="7">(1,1)</text>
+    <rect x="70" y="30" width="30" height="25" rx="3" fill="#764ba222" stroke="#764ba2"/>
+    <text x="85" y="46" text-anchor="middle" fill="#fff" font-size="7">(1,2)</text>
+    <rect x="105" y="30" width="30" height="25" rx="3" fill="#764ba21a" stroke="#764ba2"/>
+    <text x="120" y="46" text-anchor="middle" fill="#fff" font-size="7">(1,3)</text>
+
+    <rect x="0" y="60" width="30" height="25" rx="3" fill="#f093fb22" stroke="#f093fb66"/>
+    <text x="15" y="76" text-anchor="middle" fill="#fff" font-size="7">(2,0)</text>
+    <rect x="35" y="60" width="30" height="25" rx="3" fill="#f093fb1a" stroke="#f093fb66"/>
+    <text x="50" y="76" text-anchor="middle" fill="#fff" font-size="7">(2,1)</text>
+    <rect x="70" y="60" width="30" height="25" rx="3" fill="#f093fb14" stroke="#f093fb66"/>
+    <text x="85" y="76" text-anchor="middle" fill="#fff" font-size="7">(2,2)</text>
+    <rect x="105" y="60" width="30" height="25" rx="3" fill="#f093fb0e" stroke="#f093fb66"/>
+    <text x="120" y="76" text-anchor="middle" fill="#fff" font-size="7">(2,3)</text>
+
+    <!-- Annotations -->
+    <path d="M -10 0 L -10 85" stroke="#764ba2" stroke-width="1.5"/>
+    <text x="-20" y="45" text-anchor="middle" fill="#764ba2" font-size="8" transform="rotate(-90,-20,45)">height (h)</text>
+
+    <path d="M 0 -8 L 135 -8" stroke="#667eea" stroke-width="1.5"/>
+    <text x="67" y="-14" text-anchor="middle" fill="#667eea" font-size="8">width (w)</text>
+  </g>
+
+  <!-- Formula area -->
+  <g transform="translate(590,90)">
+    <text x="0" y="12" fill="#c4c4d8" font-size="10" font-weight="bold">Embedding dimension split:</text>
+    <text x="0" y="32" fill="#a0a0b8" font-size="9">d = d_h + d_w (equal split)</text>
+
+    <text x="0" y="58" fill="#c4c4d8" font-size="10" font-weight="bold">For patch at position (h, w):</text>
+    <text x="0" y="78" fill="#667eea" font-size="9">First d/2 dims → rotate by h·θᵢ</text>
+    <text x="0" y="95" fill="#764ba2" font-size="9">Last d/2 dims → rotate by w·θⱼ</text>
+
+    <text x="0" y="120" fill="#c4c4d8" font-size="10" font-weight="bold">Result:</text>
+    <text x="0" y="137" fill="#8b8b9e" font-size="9">Attention(q,k) encodes true 2D distance</text>
+  </g>
+
+  <!-- Bottom: mRoPE section -->
+  <rect x="30" y="260" width="940" height="165" rx="10" fill="#1a1a28" stroke="#f093fb44"/>
+  <text x="500" y="285" text-anchor="middle" fill="#f093fb" font-size="13" font-weight="bold">mRoPE: Multimodal RoPE (Qwen2.5-VL) — Unified 3D Position Encoding</text>
+
+  <!-- 3 dimension visualization -->
+  <g transform="translate(60,305)">
+    <!-- Temporal dimension -->
+    <rect x="0" y="0" width="250" height="45" rx="6" fill="#4facfe11" stroke="#4facfe44"/>
+    <text x="10" y="17" fill="#4facfe" font-size="10" font-weight="bold">Temporal (T)</text>
+    <text x="10" y="35" fill="#8b8b9e" font-size="9">dims [0:16] — 16 channels dedicated to time</text>
+
+    <!-- Height dimension -->
+    <rect x="270" y="0" width="250" height="45" rx="6" fill="#667eea11" stroke="#667eea44"/>
+    <text x="280" y="17" fill="#667eea" font-size="10" font-weight="bold">Height (H)</text>
+    <text x="280" y="35" fill="#8b8b9e" font-size="9">dims [16:40] — 24 channels for y-axis</text>
+
+    <!-- Width dimension -->
+    <rect x="540" y="0" width="250" height="45" rx="6" fill="#f093fb11" stroke="#f093fb44"/>
+    <text x="550" y="17" fill="#f093fb" font-size="10" font-weight="bold">Width (W)</text>
+    <text x="550" y="35" fill="#8b8b9e" font-size="9">dims [40:64] — 24 channels for x-axis</text>
+  </g>
+
+  <!-- Usage modes -->
+  <g transform="translate(60,365)">
+    <rect x="0" y="0" width="250" height="45" rx="6" fill="#1e1e2e"/>
+    <text x="125" y="17" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Text: T increments, H=W=constant</text>
+    <text x="125" y="33" text-anchor="middle" fill="#555" font-size="8">→ degrades to standard 1D RoPE</text>
+
+    <rect x="270" y="0" width="250" height="45" rx="6" fill="#1e1e2e"/>
+    <text x="395" y="17" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">Image: T=constant, H,W vary by patch</text>
+    <text x="395" y="33" text-anchor="middle" fill="#555" font-size="8">→ degrades to 2D RoPE</text>
+
+    <rect x="540" y="0" width="250" height="45" rx="6" fill="#1e1e2e"/>
+    <text x="665" y="17" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">Video: T=real timestamp, H,W vary</text>
+    <text x="665" y="33" text-anchor="middle" fill="#555" font-size="8">→ full 3D encoding activated</text>
+  </g>
+
+  <!-- mrope_section annotation -->
+  <text x="870" y="290" fill="#f093fb" font-size="9">mrope_section: [16, 24, 24]</text>
+  <text x="870" y="305" fill="#555" font-size="8">= T:16 + H:24 + W:24 = 64 total</text>
+</svg>
+<p class="caption">Fig 1. 从 1D RoPE 到 2D RoPE 到 mRoPE 的演进 — 维度拆分实现空间/时空感知的位置编码</p>
+</div>
+
+<h3>1.3 2D RoPE 数学形式</h3>
+
+<div class="formula-box">
+<strong>Standard RoPE (1D):</strong><br>
+f(q, m) = q · e^{i·m·θ}  where θ = 10000^{-2k/d}<br><br>
+
+<strong>2D RoPE (Seed-ViT):</strong><br>
+For patch at grid position (h, w), embedding dim d = 1280, head_dim = 64:<br><br>
+
+q'[0:32]  = q[0:32]  · e^{i·h·θ₁}    ← height component<br>
+q'[32:64] = q[32:64] · e^{i·w·θ₂}    ← width component<br><br>
+
+<strong>mRoPE (Qwen2.5-VL), head_dim = 64:</strong><br>
+q'[0:16]  = q[0:16]  · e^{i·t·θ_t}   ← temporal (16 dims)<br>
+q'[16:40] = q[16:40] · e^{i·h·θ_h}   ← height (24 dims)<br>
+q'[40:64] = q[40:64] · e^{i·w·θ_w}   ← width (24 dims)<br><br>
+
+<strong>Attention score naturally encodes 3D distance:</strong><br>
+Attn(i,j) ∝ exp[ q_t·k_t·cos(Δt·θ) + q_h·k_h·cos(Δh·θ) + q_w·k_w·cos(Δw·θ) ]
+</div>
+
+<h3>1.4 关键设计差异</h3>
+
+<div class="compare-grid">
+  <div class="compare-card">
+    <h4>2D RoPE (Seed-ViT)</h4>
+    <ul>
+      <li>Head dim 64，<strong>均分 32+32</strong>（height + width）</li>
+      <li>从 MIM 阶段即开始使用，学生用 2D RoPE、教师用 learnable PE，<strong>不影响蒸馏效果</strong></li>
+      <li>天然支持任意分辨率：图像 resize 到 28 的倍数 → patch 14×14 → 不同 H/W grid</li>
+      <li>无需插值：新分辨率直接用对应整数位置</li>
+      <li>视频处理：通过 timestamp token 补充时间信息</li>
+    </ul>
+  </div>
+  <div class="compare-card right">
+    <h4>mRoPE (Qwen2.5-VL)</h4>
+    <ul>
+      <li>Head dim 64，<strong>分为 16+24+24</strong>（T + H + W）</li>
+      <li>时间维 ID 与<strong>真实时间戳对齐</strong>（非帧序号）</li>
+      <li>文本时 T 递增、H/W 不变 → 退化为 1D RoPE</li>
+      <li>图像时 T 不变、H/W 按 patch 位置 → 退化为 2D RoPE</li>
+      <li>视频时三维全激活 → 同时编码"什么时候、在哪里"</li>
+      <li>支持 YaRN 扩展到超长上下文（32K → 更长）</li>
+    </ul>
+  </div>
+</div>
+
+<div class="key-point">
+<strong>Seed-ViT 的发现：</strong>MIM 蒸馏中教师（EVA02-CLIP-E）使用 learnable position embedding，学生使用 2D RoPE，两者位置编码不一致并不影响训练效果。这证明 RoPE 的相对位置编码特性可以很好地学习空间结构，无需与教师的绝对编码对齐。
+</div>
+
+<div class="key-point">
+<strong>MoonViT 的混合方案：</strong>同时保留 SigLIP-SO-400M 原始的 learnable fixed-size absolute positional embeddings（通过插值适配新分辨率），并额外引入 2D RoPE。两种位置编码共同工作，前者保留预训练知识，后者提供高分辨率下的精细位置信息。
+</div>
+
+<div class="divider"></div>
+
+<!-- ============================================ -->
+<!-- PART 2: Masked Image Modeling -->
+<!-- ============================================ -->
+
+<h2><span class="num">02</span>Masked Image Modeling (MIM)</h2>
+<p class="section-desc">通过遮蔽-重建的自监督方式训练 ViT 的视觉几何感知和结构理解能力。Seed-ViT 和 CogViT 都将 MIM 作为 ViT 预训练的第一阶段。</p>
+
+<h3>2.1 Seed-ViT 的 MIM 方案</h3>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#667eea"/>
+    </marker>
+  </defs>
+
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">Seed-ViT Stage 1: MIM with 2D RoPE (75% masking)</text>
+
+  <!-- Input image -->
+  <rect x="30" y="50" width="120" height="100" rx="8" fill="#2a2a3a" stroke="#3a3a4a"/>
+  <text x="90" y="105" text-anchor="middle" fill="#8b8b9e" font-size="10">Input Image</text>
+  <text x="90" y="120" text-anchor="middle" fill="#555" font-size="8">(native resolution)</text>
+
+  <!-- Masking -->
+  <path d="M 155 100 L 195 100" stroke="#667eea" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <text x="175" y="90" text-anchor="middle" fill="#667eea" font-size="8">75% mask</text>
+
+  <!-- Masked patches -->
+  <rect x="205" y="50" width="120" height="100" rx="8" fill="#1a1a28" stroke="#667eea44"/>
+  <g transform="translate(215,60)">
+    <rect x="0" y="0" width="18" height="18" fill="#667eea44" stroke="#667eea"/>
+    <rect x="22" y="0" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="44" y="0" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="66" y="0" width="18" height="18" fill="#667eea44" stroke="#667eea"/>
+    <rect x="0" y="22" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="22" y="22" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="44" y="22" width="18" height="18" fill="#667eea44" stroke="#667eea"/>
+    <rect x="66" y="22" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="0" y="44" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="22" y="44" width="18" height="18" fill="#667eea44" stroke="#667eea"/>
+    <rect x="44" y="44" width="18" height="18" fill="#333" stroke="#444"/>
+    <rect x="66" y="44" width="18" height="18" fill="#333" stroke="#444"/>
+  </g>
+  <text x="265" y="135" text-anchor="middle" fill="#667eea" font-size="8">visible: 25%</text>
+
+  <!-- Student ViT -->
+  <path d="M 330 100 L 370 100" stroke="#667eea" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="380" y="45" width="180" height="110" rx="10" fill="#16162a" stroke="#667eea"/>
+  <text x="470" y="72" text-anchor="middle" fill="#667eea" font-size="11" font-weight="bold">Student: Seed-ViT</text>
+  <text x="470" y="92" text-anchor="middle" fill="#8b8b9e" font-size="9">532M, 27 layers</text>
+  <text x="470" y="108" text-anchor="middle" fill="#8b8b9e" font-size="9">2D RoPE position encoding</text>
+  <text x="470" y="124" text-anchor="middle" fill="#8b8b9e" font-size="9">Random init (from scratch)</text>
+  <text x="470" y="140" text-anchor="middle" fill="#8b8b9e" font-size="9">Processes ONLY visible patches</text>
+
+  <!-- Teacher -->
+  <rect x="380" y="190" width="180" height="80" rx="10" fill="#1a1a28" stroke="#f093fb44"/>
+  <text x="470" y="215" text-anchor="middle" fill="#f093fb" font-size="11" font-weight="bold">Teacher: EVA02-CLIP-E</text>
+  <text x="470" y="235" text-anchor="middle" fill="#8b8b9e" font-size="9">Learnable position embed</text>
+  <text x="470" y="252" text-anchor="middle" fill="#8b8b9e" font-size="9">Processes ALL patches (no mask)</text>
+
+  <!-- Student output -->
+  <path d="M 565 100 L 620 100" stroke="#667eea" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="630" y="60" width="140" height="40" rx="6" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="700" y="84" text-anchor="middle" fill="#667eea" font-size="9">Student embeddings (masked pos)</text>
+
+  <!-- Teacher output -->
+  <path d="M 565 230 L 620 230" stroke="#f093fb" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <rect x="630" y="210" width="140" height="40" rx="6" fill="#1e1e2e" stroke="#f093fb44"/>
+  <text x="700" y="234" text-anchor="middle" fill="#f093fb" font-size="9">Teacher CLIP features (masked pos)</text>
+
+  <!-- Loss -->
+  <path d="M 700 105 L 700 140" stroke="#4facfe" stroke-width="1.5"/>
+  <path d="M 700 205 L 700 170" stroke="#4facfe" stroke-width="1.5"/>
+
+  <rect x="645" y="140" width="110" height="30" rx="6" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="700" y="160" text-anchor="middle" fill="#4facfe" font-size="10" font-weight="bold">Cosine Sim Loss</text>
+
+  <!-- Result annotations -->
+  <rect x="800" y="55" width="180" height="220" rx="10" fill="#14141e" stroke="#2a2a3a"/>
+  <text x="890" y="80" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">Key Design Choices</text>
+
+  <text x="815" y="105" fill="#667eea" font-size="9">1. 75% masking ratio</text>
+  <text x="825" y="120" fill="#666" font-size="8">高比例迫使学习全局结构</text>
+
+  <text x="815" y="145" fill="#667eea" font-size="9">2. 重建目标 = CLIP特征</text>
+  <text x="825" y="160" fill="#666" font-size="8">非像素值，学习语义表征</text>
+
+  <text x="815" y="185" fill="#667eea" font-size="9">3. 位置编码不一致OK</text>
+  <text x="825" y="200" fill="#666" font-size="8">Student:2D RoPE ≠ Teacher:learnable</text>
+  <text x="825" y="215" fill="#666" font-size="8">不影响性能</text>
+
+  <text x="815" y="240" fill="#667eea" font-size="9">4. 学到能力</text>
+  <text x="825" y="255" fill="#666" font-size="8">视觉几何 + 结构感知 + 原生分辨率</text>
+
+  <!-- Bottom: Scaling observation -->
+  <rect x="30" y="300" width="940" height="65" rx="8" fill="#667eea08" stroke="#667eea22"/>
+  <text x="500" y="325" text-anchor="middle" fill="#c4c4d8" font-size="11" font-weight="bold">Scaling Observation (Seed1.5-VL):</text>
+  <text x="500" y="348" text-anchor="middle" fill="#8b8b9e" font-size="10">随着 MIM 训练规模增大，下游 VLM 在 chart/document understanding 和 OCR 任务上的能力显著提升</text>
+</svg>
+<p class="caption">Fig 2. Seed-ViT MIM 训练流程 — 75% mask + CLIP 特征重建 + cosine similarity loss</p>
+</div>
+
+<h3>2.2 CogViT 的 MIM 方案（Dual-Teacher，详见第3部分）</h3>
+<p>CogViT 的 MIM 与 Seed-ViT 有几个关键区别：</p>
+
+<table>
+  <tr><th>维度</th><th>Seed-ViT MIM</th><th>CogViT MIM</th></tr>
+  <tr><td>Masking ratio</td><td>75%</td><td>35%</td></tr>
+  <tr><td>训练分辨率</td><td>Native (any)</td><td>Fixed 224×224</td></tr>
+  <tr><td>教师模型</td><td>EVA02-CLIP-E (单教师)</td><td>SigLIP2 + DINOv3 (双教师)</td></tr>
+  <tr><td>重建目标</td><td>CLIP 语义特征</td><td>语义(SigLIP2) + 纹理(DINOv3)</td></tr>
+  <tr><td>Loss</td><td>Cosine similarity</td><td>Feature reconstruction in dual spaces</td></tr>
+  <tr><td>位置编码</td><td>2D RoPE</td><td>Learnable positional</td></tr>
+  <tr><td>优化器</td><td>AdamW</td><td>Muon + QK-Norm</td></tr>
+  <tr><td>数据配比</td><td>—</td><td>80% natural + 10% instruction + 10% scientific</td></tr>
+</table>
+
+<div class="key-point">
+<strong>为什么 Seed-ViT 用 75% 而 CogViT 用 35%？</strong>Seed-ViT 仅处理 visible patches（类似 MAE），高 mask 比例 = 更少计算 + 更强约束。CogViT 可能处理完整输入再做特征对齐，35% 是在效率和信息保留间的平衡（保留更多视觉上下文让双教师目标更易优化）。
+</div>
+
+<div class="divider"></div>
+
+<!-- ============================================ -->
+<!-- PART 3: Dual-Teacher Distillation -->
+<!-- ============================================ -->
+
+<h2><span class="num">03</span>Dual-Teacher Distillation</h2>
+<p class="section-desc">CogViT 的核心创新：同时从语义教师（SigLIP2）和纹理教师（DINOv3）蒸馏，让学生模型获得互补的视觉能力。</p>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#667eea"/>
+    </marker>
+    <marker id="arr3r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#f093fb"/>
+    </marker>
+    <marker id="arr3g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#00f2fe"/>
+    </marker>
+  </defs>
+
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">CogViT Two-Stage Pre-training with Dual-Teacher Distillation</text>
+
+  <!-- ===== STAGE 1 ===== -->
+  <rect x="20" y="45" width="480" height="420" rx="12" fill="#12121e" stroke="#667eea33"/>
+  <text x="260" y="72" text-anchor="middle" fill="#667eea" font-size="12" font-weight="bold">Stage 1: Distillation-based MIM</text>
+
+  <!-- Input image -->
+  <rect x="45" y="90" width="80" height="60" rx="6" fill="#2a2a3a"/>
+  <text x="85" y="115" text-anchor="middle" fill="#8b8b9e" font-size="8">224×224</text>
+  <text x="85" y="130" text-anchor="middle" fill="#8b8b9e" font-size="8">35% masked</text>
+
+  <!-- Student -->
+  <path d="M 130 120 L 160 120" stroke="#667eea" stroke-width="1.5" marker-end="url(#arr3)"/>
+
+  <rect x="165" y="90" width="150" height="85" rx="8" fill="#1a1a28" stroke="#667eea"/>
+  <text x="240" y="112" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">Student: CogViT-L</text>
+  <text x="240" y="128" text-anchor="middle" fill="#8b8b9e" font-size="8">403M parameters</text>
+  <text x="240" y="142" text-anchor="middle" fill="#8b8b9e" font-size="8">QK-Norm for stability</text>
+  <text x="240" y="156" text-anchor="middle" fill="#8b8b9e" font-size="8">Muon optimizer + cosine decay</text>
+
+  <!-- Teacher 1: SigLIP2 -->
+  <rect x="50" y="210" width="170" height="80" rx="8" fill="#1a1a28" stroke="#f093fb"/>
+  <text x="135" y="233" text-anchor="middle" fill="#f093fb" font-size="10" font-weight="bold">Teacher 1: SigLIP2</text>
+  <text x="135" y="250" text-anchor="middle" fill="#8b8b9e" font-size="8">Semantic representations</text>
+  <text x="135" y="264" text-anchor="middle" fill="#8b8b9e" font-size="8">High-level meaning</text>
+  <text x="135" y="278" text-anchor="middle" fill="#f093fb" font-size="8">"What is this?"</text>
+
+  <!-- Teacher 2: DINOv3 -->
+  <rect x="240" y="210" width="170" height="80" rx="8" fill="#1a1a28" stroke="#00f2fe"/>
+  <text x="325" y="233" text-anchor="middle" fill="#00f2fe" font-size="10" font-weight="bold">Teacher 2: DINOv3</text>
+  <text x="325" y="250" text-anchor="middle" fill="#8b8b9e" font-size="8">Texture/structure features</text>
+  <text x="325" y="264" text-anchor="middle" fill="#8b8b9e" font-size="8">Low-level patterns</text>
+  <text x="325" y="278" text-anchor="middle" fill="#00f2fe" font-size="8">"What does it look like?"</text>
+
+  <!-- Reconstruction target arrows -->
+  <path d="M 240 180 L 175 210" stroke="#f093fb" stroke-width="1.5" stroke-dasharray="3" marker-end="url(#arr3r)"/>
+  <path d="M 260 180 L 290 210" stroke="#00f2fe" stroke-width="1.5" stroke-dasharray="3" marker-end="url(#arr3g)"/>
+
+  <!-- Joint loss -->
+  <rect x="100" y="310" width="290" height="45" rx="8" fill="#4facfe11" stroke="#4facfe44"/>
+  <text x="245" y="330" text-anchor="middle" fill="#4facfe" font-size="10" font-weight="bold">Joint Reconstruction Loss</text>
+  <text x="245" y="345" text-anchor="middle" fill="#8b8b9e" font-size="8">Predict masked regions in BOTH feature spaces simultaneously</text>
+
+  <!-- Data mix -->
+  <rect x="50" y="375" width="410" height="70" rx="8" fill="#1e1e2e"/>
+  <text x="255" y="395" text-anchor="middle" fill="#c4c4d8" font-size="9" font-weight="bold">Training Data Mixture (quality-aware):</text>
+  <g transform="translate(70,405)">
+    <rect x="0" y="0" width="240" height="14" rx="3" fill="#2a2a3a"/>
+    <rect x="0" y="0" width="192" height="14" rx="3" fill="#667eea44"/>
+    <text x="96" y="11" text-anchor="middle" fill="#fff" font-size="7">80% natural images</text>
+    <rect x="192" y="0" width="24" height="14" rx="3" fill="#f093fb44"/>
+    <text x="204" y="11" text-anchor="middle" fill="#fff" font-size="6">10%</text>
+    <rect x="216" y="0" width="24" height="14" rx="3" fill="#00f2fe44"/>
+    <text x="228" y="11" text-anchor="middle" fill="#fff" font-size="6">10%</text>
+  </g>
+  <text x="255" y="435" text-anchor="middle" fill="#666" font-size="8">instruction-following data | scientific imagery</text>
+
+  <!-- ===== STAGE 2 ===== -->
+  <rect x="520" y="45" width="460" height="420" rx="12" fill="#12121e" stroke="#f093fb33"/>
+  <text x="750" y="72" text-anchor="middle" fill="#f093fb" font-size="12" font-weight="bold">Stage 2: Contrastive Image-Text Pre-training</text>
+
+  <!-- Upgrades list -->
+  <rect x="545" y="90" width="410" height="140" rx="8" fill="#1a1a28"/>
+  <text x="750" y="115" text-anchor="middle" fill="#fff" font-size="10" font-weight="bold">Three Key Upgrades from Stage 1:</text>
+
+  <g transform="translate(565,125)">
+    <circle cx="8" cy="8" r="4" fill="#f093fb"/>
+    <text x="20" y="12" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">NaFlex</tspan>: 224 fixed → variable-size inputs</text>
+    <text x="20" y="26" fill="#666" font-size="8">Preserve original aspect ratios, no distortion</text>
+
+    <circle cx="8" cy="43" r="4" fill="#f093fb"/>
+    <text x="20" y="47" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">Batch 64K</tspan>: Sigmoid-based SigLIP loss</text>
+    <text x="20" y="61" fill="#666" font-size="8">Bidirectional distributed implementation</text>
+
+    <circle cx="8" cy="78" r="4" fill="#f093fb"/>
+    <text x="20" y="82" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">8B bilingual</tspan>: Chinese-English corpus</text>
+    <text x="20" y="96" fill="#666" font-size="8">Cross-lingual visual understanding</text>
+  </g>
+
+  <!-- Contrastive learning diagram -->
+  <rect x="545" y="250" width="190" height="70" rx="8" fill="#1a1a28" stroke="#667eea44"/>
+  <text x="640" y="273" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">CogViT (image encoder)</text>
+  <text x="640" y="290" text-anchor="middle" fill="#8b8b9e" font-size="8">From Stage 1 checkpoint</text>
+  <text x="640" y="305" text-anchor="middle" fill="#8b8b9e" font-size="8">+ NaFlex resolution</text>
+
+  <rect x="760" y="250" width="190" height="70" rx="8" fill="#1a1a28" stroke="#f093fb44"/>
+  <text x="855" y="273" text-anchor="middle" fill="#f093fb" font-size="9" font-weight="bold">Text encoder</text>
+  <text x="855" y="290" text-anchor="middle" fill="#8b8b9e" font-size="8">Processes captions</text>
+  <text x="855" y="305" text-anchor="middle" fill="#8b8b9e" font-size="8">Paired with images</text>
+
+  <!-- SigLIP loss -->
+  <path d="M 640 325 L 640 350 L 750 350 L 750 340" stroke="#4facfe" stroke-width="1.5"/>
+  <path d="M 855 325 L 855 350 L 750 350 L 750 340" stroke="#4facfe" stroke-width="1.5"/>
+
+  <rect x="680" y="340" width="140" height="35" rx="6" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="750" y="356" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">SigLIP Loss</text>
+  <text x="750" y="370" text-anchor="middle" fill="#8b8b9e" font-size="7">(sigmoid, no softmax)</text>
+
+  <!-- Optimizer -->
+  <rect x="545" y="395" width="410" height="50" rx="8" fill="#1e1e2e"/>
+  <text x="750" y="415" text-anchor="middle" fill="#c4c4d8" font-size="9" font-weight="bold">Optimizer: Muon (enhanced)</text>
+  <text x="750" y="432" text-anchor="middle" fill="#666" font-size="8">Module-specific LR + decay schedules for vision, text, and projection components</text>
+
+  <!-- Stage transition arrow -->
+  <path d="M 500 270 L 520 270" stroke="#fff" stroke-width="2" marker-end="url(#arr3)"/>
+</svg>
+<p class="caption">Fig 3. CogViT 双教师蒸馏 — Stage1 在双特征空间做 MIM，Stage2 切换到 NaFlex + SigLIP 对比学习</p>
+</div>
+
+<h3>3.1 为什么要双教师？</h3>
+
+<div class="svg-block">
+<svg viewBox="0 0 900 280" xmlns="http://www.w3.org/2000/svg">
+  <!-- SigLIP2 specialization -->
+  <rect x="30" y="30" width="380" height="230" rx="10" fill="#1a1a28" stroke="#f093fb44"/>
+  <text x="220" y="55" text-anchor="middle" fill="#f093fb" font-size="12" font-weight="bold">SigLIP2 — Semantic Teacher</text>
+
+  <g transform="translate(50,75)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="10">擅长：</text>
+    <text x="0" y="20" fill="#8b8b9e" font-size="9">- 物体识别 (cat, dog, car...)</text>
+    <text x="0" y="38" fill="#8b8b9e" font-size="9">- 场景分类 (beach, office...)</text>
+    <text x="0" y="56" fill="#8b8b9e" font-size="9">- 图文对齐 (caption matching)</text>
+    <text x="0" y="74" fill="#8b8b9e" font-size="9">- 高层语义抽象</text>
+
+    <text x="0" y="105" fill="#c4c4d8" font-size="10">弱项：</text>
+    <text x="0" y="125" fill="#666" font-size="9">- 纹理/材质细节</text>
+    <text x="0" y="143" fill="#666" font-size="9">- 空间几何关系</text>
+    <text x="0" y="161" fill="#666" font-size="9">- 边缘/轮廓精度</text>
+  </g>
+
+  <!-- DINOv3 specialization -->
+  <rect x="440" y="30" width="380" height="230" rx="10" fill="#1a1a28" stroke="#00f2fe44"/>
+  <text x="630" y="55" text-anchor="middle" fill="#00f2fe" font-size="12" font-weight="bold">DINOv3 — Texture Teacher</text>
+
+  <g transform="translate(460,75)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="10">擅长：</text>
+    <text x="0" y="20" fill="#8b8b9e" font-size="9">- 纹理细节 (木纹, 织物...)</text>
+    <text x="0" y="38" fill="#8b8b9e" font-size="9">- 边缘和轮廓</text>
+    <text x="0" y="56" fill="#8b8b9e" font-size="9">- 空间结构和几何</text>
+    <text x="0" y="74" fill="#8b8b9e" font-size="9">- 低层视觉特征</text>
+
+    <text x="0" y="105" fill="#c4c4d8" font-size="10">弱项：</text>
+    <text x="0" y="125" fill="#666" font-size="9">- 跨模态语义对齐</text>
+    <text x="0" y="143" fill="#666" font-size="9">- 抽象概念理解</text>
+    <text x="0" y="161" fill="#666" font-size="9">- 图文配对能力</text>
+  </g>
+
+  <!-- Intersection -->
+  <text x="430" y="155" text-anchor="middle" fill="#fff" font-size="16">+</text>
+  <text x="430" y="175" text-anchor="middle" fill="#4facfe" font-size="9">互补</text>
+</svg>
+<p class="caption">Fig 4. 双教师互补性 — SigLIP2 提供"是什么"，DINOv3 提供"长什么样"</p>
+</div>
+
+<h3>3.2 QK-Norm：训练稳定性保障</h3>
+<p>CogViT 引入 <strong>QK-Norm</strong>：在计算 attention 前对 Query 和 Key 向量做归一化。</p>
+
+<div class="formula-box">
+<strong>Standard Attention:</strong><br>
+Attn = softmax(Q·K^T / √d)<br><br>
+
+<strong>With QK-Norm:</strong><br>
+Q' = LayerNorm(Q)  or  Q' = Q / ||Q||<br>
+K' = LayerNorm(K)  or  K' = K / ||K||<br>
+Attn = softmax(Q'·K'^T / √d)<br><br>
+
+<strong>Why needed:</strong><br>
+- 大规模训练中 Q/K 向量范数会逐渐增大（logit explosion）<br>
+- 导致 attention 权重过于尖锐（near one-hot），梯度消失<br>
+- QK-Norm 将内积约束在有界范围内，确保训练稳定
+</div>
+
+<div class="key-point">
+<strong>实验结果（GLM-5V-Turbo 论文 Figure 1）：</strong>CogViT-L (403M) 在 ImageNet-1K zero-shot 上达到 83.5%，超过参数更多的 SigLIP2-SO (427M, 83.3%)、DFN-H (632M, 83.4%) 和 MetaCLIP2-H (632M, 79.8%)。双教师蒸馏 + QK-Norm 的组合在更少参数下实现了更优性能。
+</div>
+
+<div class="divider"></div>
+
+<!-- ============================================ -->
+<!-- PART 4: NaFlex + SigLIP Loss -->
+<!-- ============================================ -->
+
+<h2><span class="num">04</span>NaFlex + SigLIP Loss</h2>
+<p class="section-desc">NaFlex 实现原生可变分辨率输入，SigLIP 提供高效的对比学习目标。两者结合是 CogViT Stage 2 和 Qwen2.5-VL 训练的关键。</p>
+
+<h3>4.1 NaFlex (Native Flexible Resolution)</h3>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">NaFlex vs Traditional Fixed Resolution vs Padding/Resize</text>
+
+  <!-- Approach 1: Fixed resize -->
+  <rect x="30" y="50" width="290" height="350" rx="10" fill="#1a1a28" stroke="#f5576c33"/>
+  <text x="175" y="75" text-anchor="middle" fill="#f5576c" font-size="11" font-weight="bold">Traditional: Forced Resize</text>
+
+  <!-- Wide image forced to square -->
+  <rect x="60" y="95" width="150" height="50" rx="4" fill="#f5576c11" stroke="#f5576c44"/>
+  <text x="135" y="125" text-anchor="middle" fill="#f5576c" font-size="8">Original: 1200×400</text>
+
+  <path d="M 135 150 L 135 170" stroke="#f5576c" stroke-width="1.5" stroke-dasharray="3"/>
+  <text x="175" y="165" fill="#f5576c" font-size="8">forced!</text>
+
+  <rect x="90" y="175" width="90" height="90" rx="4" fill="#f5576c11" stroke="#f5576c44"/>
+  <text x="135" y="225" text-anchor="middle" fill="#f5576c" font-size="8">224×224</text>
+
+  <text x="175" y="290" text-anchor="middle" fill="#888" font-size="9">Problems:</text>
+  <text x="175" y="308" text-anchor="middle" fill="#666" font-size="8">- Aspect ratio distorted</text>
+  <text x="175" y="324" text-anchor="middle" fill="#666" font-size="8">- Fine details lost</text>
+  <text x="175" y="340" text-anchor="middle" fill="#666" font-size="8">- Fixed token count always</text>
+  <text x="175" y="356" text-anchor="middle" fill="#666" font-size="8">- OCR/chart accuracy ↓↓</text>
+
+  <!-- Approach 2: Padding -->
+  <rect x="340" y="50" width="290" height="350" rx="10" fill="#1a1a28" stroke="#caca4a33"/>
+  <text x="485" y="75" text-anchor="middle" fill="#caca4a" font-size="11" font-weight="bold">Padding Approach</text>
+
+  <rect x="370" y="95" width="150" height="50" rx="4" fill="#caca4a11" stroke="#caca4a44"/>
+  <text x="445" y="125" text-anchor="middle" fill="#caca4a" font-size="8">Original: 1200×400</text>
+
+  <path d="M 445 150 L 445 170" stroke="#caca4a" stroke-width="1.5" stroke-dasharray="3"/>
+
+  <!-- Padded square -->
+  <rect x="370" y="175" width="150" height="150" rx="4" fill="#1e1e2e" stroke="#caca4a44"/>
+  <rect x="370" y="215" width="150" height="50" fill="#caca4a11"/>
+  <text x="445" y="200" text-anchor="middle" fill="#555" font-size="7">padding (wasted)</text>
+  <text x="445" y="245" text-anchor="middle" fill="#caca4a" font-size="8">actual content</text>
+  <text x="445" y="300" text-anchor="middle" fill="#555" font-size="7">padding (wasted)</text>
+
+  <text x="485" y="350" text-anchor="middle" fill="#888" font-size="9">Problems:</text>
+  <text x="485" y="368" text-anchor="middle" fill="#666" font-size="8">- Wasted compute on padding</text>
+  <text x="485" y="384" text-anchor="middle" fill="#666" font-size="8">- Attention diluted by padding tokens</text>
+
+  <!-- Approach 3: NaFlex -->
+  <rect x="650" y="50" width="320" height="350" rx="10" fill="#1a1a28" stroke="#667eea"/>
+  <text x="810" y="75" text-anchor="middle" fill="#667eea" font-size="11" font-weight="bold">NaFlex: Native Flexible</text>
+
+  <!-- Different images with different token counts -->
+  <g transform="translate(680,95)">
+    <!-- Wide image -->
+    <rect x="0" y="0" width="160" height="35" rx="4" fill="#667eea22" stroke="#667eea"/>
+    <text x="80" y="22" text-anchor="middle" fill="#667eea" font-size="8">1200×400 → 86×29 patches = 2494 tokens</text>
+
+    <!-- Tall image -->
+    <rect x="0" y="45" width="60" height="80" rx="4" fill="#764ba222" stroke="#764ba2"/>
+    <text x="30" y="85" text-anchor="middle" fill="#764ba2" font-size="7">400×</text>
+    <text x="30" y="96" text-anchor="middle" fill="#764ba2" font-size="7">1200</text>
+    <text x="100" y="85" fill="#764ba2" font-size="8">→ 29×86 = 2494 tokens</text>
+
+    <!-- Square image -->
+    <rect x="170" y="45" width="60" height="60" rx="4" fill="#f093fb22" stroke="#f093fb"/>
+    <text x="200" y="78" text-anchor="middle" fill="#f093fb" font-size="7">600²</text>
+    <text x="200" y="120" fill="#f093fb" font-size="8">→ 43×43 = 1849 tokens</text>
+
+    <!-- Small image -->
+    <rect x="0" y="140" width="30" height="30" rx="4" fill="#00f2fe22" stroke="#00f2fe"/>
+    <text x="15" y="160" text-anchor="middle" fill="#00f2fe" font-size="6">224²</text>
+    <text x="80" y="160" fill="#00f2fe" font-size="8">→ 16×16 = 256 tokens</text>
+  </g>
+
+  <text x="810" y="310" text-anchor="middle" fill="#fff" font-size="9" font-weight="bold">Benefits:</text>
+  <text x="810" y="328" text-anchor="middle" fill="#8b8b9e" font-size="8">- Zero distortion, preserves aspect ratio</text>
+  <text x="810" y="346" text-anchor="middle" fill="#8b8b9e" font-size="8">- Token count proportional to content</text>
+  <text x="810" y="364" text-anchor="middle" fill="#8b8b9e" font-size="8">- No wasted compute on padding</text>
+  <text x="810" y="382" text-anchor="middle" fill="#8b8b9e" font-size="8">- Batch via sequence packing (NaViT-style)</text>
+</svg>
+<p class="caption">Fig 5. 三种分辨率处理方案对比 — NaFlex 保持原始宽高比，token 数量与实际内容成正比</p>
+</div>
+
+<h3>4.2 NaFlex 的实现机制</h3>
+<p>NaFlex 的核心思想是让 ViT <strong>直接处理原始尺寸</strong>的图像（对齐到 patch size 的倍数），不同图像产生不同数量的 token：</p>
+
+<div class="formula-box">
+<strong>Token count calculation:</strong><br>
+For image of size H×W with patch_size=14:<br>
+  n_h = ceil(H / 14),  n_w = ceil(W / 14)<br>
+  num_tokens = n_h × n_w<br><br>
+
+<strong>Batch handling (sequence packing):</strong><br>
+Multiple images with different token counts are packed into a single sequence:<br>
+  [img1_tokens | img2_tokens | img3_tokens | ...]<br>
+  Attention masks ensure cross-image isolation<br><br>
+
+<strong>CogViT Stage 2 specific:</strong><br>
+- Stage 1 used fixed 224×224 → Stage 2 switches to NaFlex<br>
+- Preserves original aspect ratios<br>
+- Combined with SigLIP loss at batch_size = 64K
+</div>
+
+<h3>4.3 SigLIP Loss 详解</h3>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">CLIP Loss vs SigLIP Loss — Key Difference in Contrastive Formulation</text>
+
+  <!-- CLIP Loss -->
+  <rect x="30" y="50" width="440" height="310" rx="10" fill="#1a1a28" stroke="#f5576c33"/>
+  <text x="250" y="75" text-anchor="middle" fill="#f5576c" font-size="12" font-weight="bold">Standard CLIP Loss (Softmax-based)</text>
+
+  <!-- Matrix visualization -->
+  <g transform="translate(60,95)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="9">Similarity matrix S (batch N×N):</text>
+    <!-- Matrix -->
+    <rect x="0" y="15" width="150" height="150" fill="#1e1e2e" stroke="#3a3a4a"/>
+    <!-- Diagonal -->
+    <rect x="0" y="15" width="30" height="30" fill="#4facfe44"/>
+    <rect x="30" y="45" width="30" height="30" fill="#4facfe44"/>
+    <rect x="60" y="75" width="30" height="30" fill="#4facfe44"/>
+    <rect x="90" y="105" width="30" height="30" fill="#4facfe44"/>
+    <rect x="120" y="135" width="30" height="30" fill="#4facfe44"/>
+    <text x="75" y="95" text-anchor="middle" fill="#4facfe" font-size="8">positives</text>
+
+    <!-- Labels -->
+    <text x="75" y="180" text-anchor="middle" fill="#555" font-size="8">texts →</text>
+    <text x="-10" y="95" text-anchor="middle" fill="#555" font-size="8" transform="rotate(-90,-10,95)">images →</text>
+  </g>
+
+  <g transform="translate(240,95)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="9" font-weight="bold">Formula:</text>
+    <text x="0" y="20" fill="#a0a0b8" font-size="8">L = -1/N Σᵢ [log(exp(sᵢᵢ/τ) / Σⱼ exp(sᵢⱼ/τ))]</text>
+    <text x="0" y="45" fill="#c4c4d8" font-size="9" font-weight="bold">Requires:</text>
+    <text x="0" y="65" fill="#888" font-size="8">- Global softmax over ALL negatives</text>
+    <text x="0" y="82" fill="#888" font-size="8">- Need all-gather across GPUs</text>
+    <text x="0" y="99" fill="#888" font-size="8">- Communication bottleneck at scale</text>
+    <text x="0" y="125" fill="#f5576c" font-size="9" font-weight="bold">Scaling problem:</text>
+    <text x="0" y="145" fill="#666" font-size="8">Batch 64K → 64K×64K matrix on single GPU?</text>
+    <text x="0" y="162" fill="#666" font-size="8">All-reduce of huge logits = slow</text>
+  </g>
+
+  <!-- SigLIP Loss -->
+  <rect x="490" y="50" width="480" height="310" rx="10" fill="#1a1a28" stroke="#667eea"/>
+  <text x="730" y="75" text-anchor="middle" fill="#667eea" font-size="12" font-weight="bold">SigLIP Loss (Sigmoid-based)</text>
+
+  <!-- Pairwise visualization -->
+  <g transform="translate(520,95)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="9">Each pair independently evaluated:</text>
+    <!-- Individual pairs -->
+    <rect x="0" y="15" width="30" height="30" fill="#667eea44" stroke="#667eea"/>
+    <text x="15" y="34" text-anchor="middle" fill="#fff" font-size="7">+1</text>
+    <rect x="35" y="15" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="50" y="34" text-anchor="middle" fill="#f5576c" font-size="7">-1</text>
+    <rect x="70" y="15" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+    <text x="85" y="34" text-anchor="middle" fill="#f5576c" font-size="7">-1</text>
+    <rect x="105" y="15" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+
+    <rect x="0" y="50" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+    <rect x="35" y="50" width="30" height="30" fill="#667eea44" stroke="#667eea"/>
+    <text x="50" y="69" text-anchor="middle" fill="#fff" font-size="7">+1</text>
+    <rect x="70" y="50" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+    <rect x="105" y="50" width="30" height="30" fill="#f5576c22" stroke="#f5576c44"/>
+
+    <text x="75" y="105" text-anchor="middle" fill="#555" font-size="8">yᵢⱼ ∈ {-1, +1}</text>
+    <text x="75" y="120" text-anchor="middle" fill="#8b8b9e" font-size="8">Independent binary decisions</text>
+  </g>
+
+  <g transform="translate(700,95)">
+    <text x="0" y="0" fill="#c4c4d8" font-size="9" font-weight="bold">Formula:</text>
+    <text x="0" y="20" fill="#a0a0b8" font-size="8">L = -1/N² Σᵢⱼ log σ(yᵢⱼ · (sᵢⱼ - b))</text>
+    <text x="0" y="38" fill="#888" font-size="7">where yᵢⱼ=+1 if match, -1 otherwise</text>
+    <text x="0" y="53" fill="#888" font-size="7">b = learnable bias</text>
+
+    <text x="0" y="80" fill="#c4c4d8" font-size="9" font-weight="bold">Advantages:</text>
+    <text x="0" y="100" fill="#667eea" font-size="8">- No softmax → no all-gather needed</text>
+    <text x="0" y="117" fill="#667eea" font-size="8">- Each pair computed independently</text>
+    <text x="0" y="134" fill="#667eea" font-size="8">- Trivially parallelizable across GPUs</text>
+    <text x="0" y="151" fill="#667eea" font-size="8">- Scales to batch 64K+ efficiently</text>
+    <text x="0" y="168" fill="#667eea" font-size="8">- Bidirectional distributed impl.</text>
+  </g>
+
+  <!-- Bottom comparison -->
+  <rect x="520" y="280" width="420" height="55" rx="6" fill="#667eea0a" stroke="#667eea22"/>
+  <text x="730" y="300" text-anchor="middle" fill="#c4c4d8" font-size="9" font-weight="bold">CogViT Stage 2 uses SigLIP because:</text>
+  <text x="730" y="318" text-anchor="middle" fill="#8b8b9e" font-size="8">Batch 64K + 8B image-text pairs + bidirectional distributed = only feasible with sigmoid loss</text>
+</svg>
+<p class="caption">Fig 6. CLIP (softmax) vs SigLIP (sigmoid) loss — SigLIP 的逐对独立计算使超大 batch 成为可能</p>
+</div>
+
+<h3>4.4 SigLIP 在各模型中的应用</h3>
+
+<table>
+  <tr><th>模型</th><th>使用方式</th><th>具体配置</th></tr>
+  <tr>
+    <td><strong>CogViT</strong></td>
+    <td>Stage 2 contrastive</td>
+    <td>SigLIP loss, batch 64K, NaFlex variable resolution, bidirectional distributed</td>
+  </tr>
+  <tr>
+    <td><strong>Seed-ViT</strong></td>
+    <td>Stage 2 contrastive</td>
+    <td>SigLIP + SuperClass loss 联合，attention pooling 聚合 patch features 到 1280-d</td>
+  </tr>
+  <tr>
+    <td><strong>MoonViT</strong></td>
+    <td>CoCa-style joint</td>
+    <td>L = L_siglip + 2·L_caption，SigLIP 做对比 + cross-entropy 做 caption generation</td>
+  </tr>
+  <tr>
+    <td><strong>Qwen2.5-VL</strong></td>
+    <td>From-scratch CLIP</td>
+    <td>类似 SigLIP 的对比训练（具体 loss 未披露），Window Attention 降低计算</td>
+  </tr>
+</table>
+
+<h3>4.5 MoonViT 的 CoCa Loss 组合</h3>
+<p>MoonViT 使用 <strong>CoCa (Contrastive Captioners)</strong> 的联合训练目标：</p>
+
+<div class="formula-box">
+<strong>MoonViT Total Loss:</strong><br>
+L = L_siglip + λ · L_caption   (λ = 2)<br><br>
+
+<strong>L_siglip (contrastive branch):</strong><br>
+- Image encoder + text encoder compute embeddings<br>
+- Sigmoid-based pairwise contrastive loss<br>
+- Forces global alignment between image and text<br><br>
+
+<strong>L_caption (generative branch):</strong><br>
+- Text decoder performs NTP conditioned on image features<br>
+- Cross-entropy loss on next-token prediction<br>
+- Forces detailed understanding (not just matching)<br><br>
+
+<strong>Why λ=2 (caption weighted higher)?</strong><br>
+- Caption loss drives fine-grained understanding (OCR, counting, spatial relations)<br>
+- Contrastive loss alone only captures coarse semantics<br>
+- During training, OCR capability emerged when scaling up caption loss<br>
+- The text decoder is initialized from a tiny decoder-only LM
+</div>
+
+<div class="key-point">
+<strong>MoonViT 训练中的涌现现象：</strong>在 CoCa-style 训练中，随着 OCR 数据规模增大，caption loss 分支自发产生了 OCR 能力——文本解码器学会了从图像特征中"读出"文字内容。这种能力并非显式训练目标，而是 contrastive + generative 联合训练的涌现效应。
+</div>
+
+<div class="divider"></div>
+
+<!-- ============================================ -->
+<!-- Summary Comparison -->
+<!-- ============================================ -->
+
+<h2><span class="num">05</span>Cross-Technique Synergies</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 1000 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="500" y="25" text-anchor="middle" fill="#8b8b9e" font-size="13">How These 4 Techniques Work Together in Modern ViT Pre-training</text>
+
+  <!-- Timeline flow -->
+  <!-- Phase 1 -->
+  <rect x="30" y="60" width="220" height="100" rx="8" fill="#1a1a28" stroke="#667eea"/>
+  <text x="140" y="85" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">Phase 1: Foundation</text>
+  <text x="140" y="105" text-anchor="middle" fill="#8b8b9e" font-size="9">MIM / Dual-Teacher Distill</text>
+  <text x="140" y="120" text-anchor="middle" fill="#8b8b9e" font-size="8">Learn visual geometry, structure</text>
+  <text x="140" y="135" text-anchor="middle" fill="#8b8b9e" font-size="8">Both semantic + texture features</text>
+  <text x="140" y="150" text-anchor="middle" fill="#555" font-size="7">Seed: 2.2B unlabeled | CogViT: 224px fixed</text>
+
+  <path d="M 255 110 L 290 110" stroke="#667eea" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Phase 2 -->
+  <rect x="295" y="60" width="220" height="100" rx="8" fill="#1a1a28" stroke="#764ba2"/>
+  <text x="405" y="85" text-anchor="middle" fill="#764ba2" font-size="10" font-weight="bold">Phase 2: Alignment</text>
+  <text x="405" y="105" text-anchor="middle" fill="#8b8b9e" font-size="9">NaFlex + SigLIP Contrastive</text>
+  <text x="405" y="120" text-anchor="middle" fill="#8b8b9e" font-size="8">Image-text alignment at scale</text>
+  <text x="405" y="135" text-anchor="middle" fill="#8b8b9e" font-size="8">Native resolution activated</text>
+  <text x="405" y="150" text-anchor="middle" fill="#555" font-size="7">Seed: 4.8B pairs | CogViT: 8B bilingual</text>
+
+  <path d="M 520 110 L 555 110" stroke="#764ba2" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Phase 3 -->
+  <rect x="560" y="60" width="220" height="100" rx="8" fill="#1a1a28" stroke="#f093fb"/>
+  <text x="670" y="85" text-anchor="middle" fill="#f093fb" font-size="10" font-weight="bold">Phase 3: Multimodal</text>
+  <text x="670" y="105" text-anchor="middle" fill="#8b8b9e" font-size="9">Joint VLM Training with LLM</text>
+  <text x="670" y="120" text-anchor="middle" fill="#8b8b9e" font-size="8">2D RoPE / mRoPE position encoding</text>
+  <text x="670" y="135" text-anchor="middle" fill="#8b8b9e" font-size="8">Video + Image + Text unified</text>
+  <text x="670" y="150" text-anchor="middle" fill="#555" font-size="7">All models: unfrozen end-to-end</text>
+
+  <path d="M 785 110 L 820 110" stroke="#f093fb" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- Phase 4 -->
+  <rect x="825" y="60" width="150" height="100" rx="8" fill="#1a1a28" stroke="#00f2fe"/>
+  <text x="900" y="85" text-anchor="middle" fill="#00f2fe" font-size="10" font-weight="bold">Phase 4: RL</text>
+  <text x="900" y="105" text-anchor="middle" fill="#8b8b9e" font-size="9">RLVR + RLHF</text>
+  <text x="900" y="120" text-anchor="middle" fill="#8b8b9e" font-size="8">Reasoning emergence</text>
+  <text x="900" y="135" text-anchor="middle" fill="#8b8b9e" font-size="8">1000+ iterations</text>
+
+  <!-- Technique mapping -->
+  <rect x="30" y="190" width="940" height="110" rx="10" fill="#12121e" stroke="#2a2a3a"/>
+  <text x="500" y="215" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">Technique → Phase Mapping</text>
+
+  <g transform="translate(60,230)">
+    <rect x="0" y="0" width="12" height="12" fill="#667eea"/>
+    <text x="18" y="11" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">MIM + Dual-Teacher:</tspan> Phase 1 exclusive — builds low-level visual foundation before any text involvement</text>
+
+    <rect x="0" y="22" width="12" height="12" fill="#764ba2"/>
+    <text x="18" y="33" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">NaFlex + SigLIP:</tspan> Phase 2 core — enables scale (64K batch) and native resolution simultaneously</text>
+
+    <rect x="0" y="44" width="12" height="12" fill="#f093fb"/>
+    <text x="18" y="55" fill="#c4c4d8" font-size="9"><tspan font-weight="bold">2D RoPE / mRoPE:</tspan> Phase 1-3 persistent — position encoding works across all stages, enabling resolution generalization</text>
+  </g>
+</svg>
+<p class="caption">Fig 7. 四种技术在 ViT 训练流水线中的位置 — MIM 奠基、SigLIP 对齐、RoPE 贯穿、RL 升华</p>
+</div>
+
+<h3>核心要点总结</h3>
+
+<table>
+  <tr><th>技术</th><th>解决的问题</th><th>核心机制</th><th>关键洞察</th></tr>
+  <tr>
+    <td><strong>2D RoPE</strong></td>
+    <td>固定分辨率位置编码无法泛化</td>
+    <td>将 head dim 拆分为 H/W 两组独立旋转</td>
+    <td>整数坐标直接输入，无需插值，天然支持任意分辨率</td>
+  </tr>
+  <tr>
+    <td><strong>mRoPE</strong></td>
+    <td>文本/图像/视频的位置编码不统一</td>
+    <td>head dim 三分 [T,H,W]，不同模态激活不同维度</td>
+    <td>一套编码兼容 1D/2D/3D，时间 ID 对齐真实时间戳</td>
+  </tr>
+  <tr>
+    <td><strong>MIM</strong></td>
+    <td>ViT 缺乏视觉几何/结构感知</td>
+    <td>高比例遮蔽 + 在教师特征空间重建</td>
+    <td>重建语义特征（非像素）才能学到有用表征；与 RoPE 类型无关</td>
+  </tr>
+  <tr>
+    <td><strong>Dual-Teacher</strong></td>
+    <td>单教师只提供一种视角的表征</td>
+    <td>SigLIP2(语义) + DINOv3(纹理) 联合蒸馏</td>
+    <td>403M 超越 632M 模型，证明互补知识比参数量更重要</td>
+  </tr>
+  <tr>
+    <td><strong>NaFlex</strong></td>
+    <td>固定分辨率/padding 浪费计算且损失信息</td>
+    <td>直接处理原始尺寸，token 数随内容变化</td>
+    <td>配合 sequence packing 实现零浪费的 batch 训练</td>
+  </tr>
+  <tr>
+    <td><strong>SigLIP</strong></td>
+    <td>Softmax 对比 loss 在超大 batch 下通信瓶颈</td>
+    <td>Sigmoid 逐对独立评估，无需全局归一化</td>
+    <td>64K batch 可行，天然适配分布式训练</td>
+  </tr>
+</table>
+
+<footer>Generated 2026.06.02 | ViT 核心技术详解</footer>
+
+</div>
+</body>
+</html>

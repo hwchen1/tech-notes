@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kimi-K2.5-VL Architecture</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f5576c, #ff8a5c); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f5576c; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f5576c0a; border: 1px solid #f5576c22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f5576c; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #f5576c; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 24px; align-items: start; margin: 24px 0; }
+.three-col pre { margin: 0; font-size: 0.75rem; }
+.three-col .svg-block { margin: 0; padding: 20px; }
+.three-col .caption { text-align: left; margin-top: 0; font-style: normal; font-size: 0.85rem; color: #a8a8be; }
+.three-col .caption strong { color: #f5576c; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Kimi-K2.5-VL</h1>
+<p class="subtitle">61 Layers (1 Dense + 60 MoE) | MLA Attention | 384 Experts top-8 | YaRN RoPE | MoonViT3d Vision | INT4 Quantized</p>
+
+<!-- ===== 1. Layer Structure ===== -->
+<h2>1. Layer Structure: 1 Dense + 60 MoE</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">KimiK25VL</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.layers = nn.ModuleList()
+        <span class="cm"># Layer 0: Dense FFN</span>
+        self.layers.append(
+            TransformerLayer(ffn=DenseMLP())
+        )
+        <span class="cm"># Layers 1-60: MoE FFN</span>
+        <span class="kw">for</span> _ <span class="kw">in</span> range(<span class="num">60</span>):
+            self.layers.append(
+                TransformerLayer(ffn=MoELayer(
+                    num_experts=<span class="num">384</span>,
+                    top_k=<span class="num">8</span>
+                ))
+            )</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 320 300" xmlns="http://www.w3.org/2000/svg">
+  <rect x="90" y="10" width="140" height="35" rx="6" fill="#f5576c33" stroke="#f5576c"/>
+  <text x="160" y="32" text-anchor="middle" fill="#f5576c" font-size="10" font-weight="bold">Layer 0: Dense</text>
+  <path d="M 160 45 L 160 65" stroke="#555" stroke-width="1.5"/>
+  <rect x="90" y="65" width="140" height="30" rx="6" fill="#f5576c1a" stroke="#f5576c66"/>
+  <text x="160" y="84" text-anchor="middle" fill="#e0e0ea" font-size="9">Layer 1: MoE (384E)</text>
+  <path d="M 160 95 L 160 110" stroke="#555" stroke-width="1.5"/>
+  <rect x="90" y="110" width="140" height="30" rx="6" fill="#f5576c1a" stroke="#f5576c66"/>
+  <text x="160" y="129" text-anchor="middle" fill="#e0e0ea" font-size="9">Layer 2: MoE (384E)</text>
+  <path d="M 160 140 L 160 155" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <text x="160" y="170" text-anchor="middle" fill="#6b6b80" font-size="9">... × 60 MoE layers ...</text>
+  <path d="M 160 178 L 160 193" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <rect x="90" y="195" width="140" height="30" rx="6" fill="#f5576c1a" stroke="#f5576c66"/>
+  <text x="160" y="214" text-anchor="middle" fill="#e0e0ea" font-size="9">Layer 60: MoE (384E)</text>
+  <text x="160" y="260" text-anchor="middle" fill="#6b6b80" font-size="9">All layers use MLA attention</text>
+  <text x="160" y="280" text-anchor="middle" fill="#f5576c" font-size="9">Total: 61 layers</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>Hybrid Dense+MoE:</strong> The first layer uses a standard dense MLP, while the remaining 60 layers use Mixture-of-Experts with 384 experts and top-8 routing. All layers share the same MLA (Multi-Latent Attention) mechanism. This design gives the model a dense "warm-up" layer before routing to specialized experts.
+</div>
+</div>
+
+<!-- ===== 2. MLA ===== -->
+<h2>2. MLA (Multi-Latent Attention)</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">MLA</span>(nn.Module):
+    <span class="cm"># q_lora_rank=1536, kv_lora_rank=512</span>
+    <span class="cm"># qk_nope_head_dim=128, qk_rope_head_dim=64</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Query path</span>
+        q_latent = self.q_down(x)  <span class="cm"># → 1536</span>
+        q = self.q_up(q_latent)
+        q_nope, q_rope = q.split(
+            [<span class="num">128</span>, <span class="num">64</span>], dim=-<span class="num">1</span>)
+
+        <span class="cm"># KV path (compressed)</span>
+        kv_latent = self.kv_down(x) <span class="cm"># → 512</span>
+        kv = self.kv_up(kv_latent)
+        k_nope, k_rope, v = kv.split(
+            [<span class="num">128</span>, <span class="num">64</span>, v_dim], dim=-<span class="num">1</span>)
+
+        <span class="cm"># Only rope parts get RoPE</span>
+        q_rope = apply_rope(q_rope)
+        k_rope = apply_rope(k_rope)
+
+        q = cat([q_nope, q_rope])
+        k = cat([k_nope, k_rope])
+        <span class="kw">return</span> attention(q, k, v)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 340 360" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f5576c"/></marker></defs>
+  <text x="170" y="20" text-anchor="middle" fill="#6b6b80" font-size="9">Multi-Latent Attention</text>
+  <!-- Input -->
+  <rect x="130" y="30" width="80" height="25" rx="5" fill="#1e1e2e" stroke="#f5576c"/>
+  <text x="170" y="47" text-anchor="middle" fill="#e0e0ea" font-size="9">x (hidden)</text>
+  <!-- Q branch -->
+  <path d="M 140 55 L 80 80" stroke="#61afef" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="30" y="82" width="100" height="22" rx="4" fill="#61afef22" stroke="#61afef"/>
+  <text x="80" y="97" text-anchor="middle" fill="#61afef" font-size="8">q_down → 1536</text>
+  <path d="M 80 104 L 80 120" stroke="#61afef" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="30" y="122" width="100" height="22" rx="4" fill="#61afef22" stroke="#61afef"/>
+  <text x="80" y="137" text-anchor="middle" fill="#61afef" font-size="8">q_up → full</text>
+  <path d="M 55 144 L 55 165" stroke="#61afef" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 105 144 L 105 165" stroke="#c678dd" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="20" y="167" width="70" height="20" rx="4" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="55" y="181" text-anchor="middle" fill="#61afef" font-size="7">q_nope (128)</text>
+  <rect x="95" y="167" width="60" height="20" rx="4" fill="#1e1e2e" stroke="#c678dd"/>
+  <text x="125" y="181" text-anchor="middle" fill="#c678dd" font-size="7">q_rope (64)</text>
+  <!-- KV branch -->
+  <path d="M 200 55 L 260 80" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="210" y="82" width="100" height="22" rx="4" fill="#98c37922" stroke="#98c379"/>
+  <text x="260" y="97" text-anchor="middle" fill="#98c379" font-size="8">kv_down → 512</text>
+  <path d="M 260 104 L 260 120" stroke="#98c379" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="210" y="122" width="100" height="22" rx="4" fill="#98c37922" stroke="#98c379"/>
+  <text x="260" y="137" text-anchor="middle" fill="#98c379" font-size="8">kv_up → full</text>
+  <path d="M 230 144 L 220 165" stroke="#98c379" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 260 144 L 265 165" stroke="#c678dd" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 290 144 L 305 165" stroke="#d19a66" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="190" y="167" width="60" height="20" rx="4" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="220" y="181" text-anchor="middle" fill="#98c379" font-size="7">k_nope(128)</text>
+  <rect x="252" y="167" width="50" height="20" rx="4" fill="#1e1e2e" stroke="#c678dd"/>
+  <text x="277" y="181" text-anchor="middle" fill="#c678dd" font-size="7">k_rope(64)</text>
+  <rect x="305" y="167" width="30" height="20" rx="4" fill="#1e1e2e" stroke="#d19a66"/>
+  <text x="320" y="181" text-anchor="middle" fill="#d19a66" font-size="7">V</text>
+  <!-- RoPE -->
+  <rect x="85" y="205" width="80" height="22" rx="4" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="125" y="220" text-anchor="middle" fill="#c678dd" font-size="8">RoPE</text>
+  <path d="M 125 187 L 125 205" stroke="#c678dd" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="235" y="205" width="80" height="22" rx="4" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="275" y="220" text-anchor="middle" fill="#c678dd" font-size="8">RoPE</text>
+  <path d="M 277 187 L 277 205" stroke="#c678dd" stroke-width="1" marker-end="url(#ar)"/>
+  <!-- Concat + Attention -->
+  <rect x="100" y="250" width="140" height="25" rx="5" fill="#f5576c22" stroke="#f5576c"/>
+  <text x="170" y="267" text-anchor="middle" fill="#f5576c" font-size="9">Attention(Q, K, V)</text>
+  <path d="M 55 187 L 130 250" stroke="#61afef" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 125 227 L 145 250" stroke="#c678dd" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 220 187 L 180 250" stroke="#98c379" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 275 227 L 195 250" stroke="#c678dd" stroke-width="1" stroke-dasharray="3"/>
+  <path d="M 320 187 L 220 250" stroke="#d19a66" stroke-width="1" stroke-dasharray="3"/>
+  <!-- KV cache note -->
+  <rect x="60" y="300" width="220" height="40" rx="6" fill="#f5576c0a" stroke="#f5576c22"/>
+  <text x="170" y="318" text-anchor="middle" fill="#f5576c" font-size="8">KV Cache: only store kv_latent (512-d)</text>
+  <text x="170" y="332" text-anchor="middle" fill="#6b6b80" font-size="7">vs standard GQA: 128×num_kv_heads per layer</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>Multi-Latent Attention</strong> compresses KV into a 512-d latent vector, dramatically reducing KV cache size. The query is similarly compressed to 1536-d before expansion.<br><br>
+Key insight: heads are split into <strong>nope</strong> (position-independent, 128-d) and <strong>rope</strong> (position-encoded, 64-d) parts. Only rope parts receive rotary embeddings. This separation allows the model to learn both positional and content-based attention patterns independently.<br><br>
+<strong>Cache benefit:</strong> Instead of storing full K,V per head, only the 512-d latent is cached — a massive reduction for long sequences.
+</div>
+</div>
+
+<!-- ===== 3. MoE ===== -->
+<h2>3. MoE: 384 Experts, Top-8 Routing</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">MoELayer</span>(nn.Module):
+    num_experts = <span class="num">384</span>
+    top_k = <span class="num">8</span>
+    scaling_factor = <span class="num">2.827</span>
+    norm_topk_prob = True
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Sigmoid routing with bias</span>
+        logits = self.gate(x)  <span class="cm"># [B*S, 384]</span>
+        scores = torch.sigmoid(logits)
+        scores += self.expert_bias
+
+        <span class="cm"># Select top-8 experts</span>
+        topk_scores, topk_ids = \
+            scores.topk(<span class="num">8</span>, dim=-<span class="num">1</span>)
+
+        <span class="cm"># Normalize selected weights</span>
+        topk_scores = topk_scores / \
+            topk_scores.sum(dim=-<span class="num">1</span>, keepdim=True)
+
+        <span class="cm"># Scale by factor</span>
+        topk_scores *= <span class="num">2.827</span>
+
+        <span class="cm"># Dispatch to experts</span>
+        out = moe_dispatch(
+            x, topk_ids, topk_scores,
+            self.experts)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 320 300" xmlns="http://www.w3.org/2000/svg">
+  <text x="160" y="18" text-anchor="middle" fill="#6b6b80" font-size="9">MoE Routing (384 experts, top-8)</text>
+  <!-- Input -->
+  <rect x="110" y="28" width="100" height="24" rx="5" fill="#1e1e2e" stroke="#f5576c"/>
+  <text x="160" y="44" text-anchor="middle" fill="#e0e0ea" font-size="9">token x</text>
+  <!-- Gate -->
+  <path d="M 160 52 L 160 70" stroke="#f5576c" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="95" y="72" width="130" height="24" rx="5" fill="#f5576c22" stroke="#f5576c"/>
+  <text x="160" y="88" text-anchor="middle" fill="#f5576c" font-size="8">Gate: sigmoid + bias</text>
+  <!-- Scores -->
+  <path d="M 160 96 L 160 114" stroke="#f5576c" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="80" y="116" width="160" height="24" rx="5" fill="#1e1e2e" stroke="#d19a66"/>
+  <text x="160" y="132" text-anchor="middle" fill="#d19a66" font-size="8">Top-8 selection from 384</text>
+  <!-- Fan out -->
+  <path d="M 100 140 L 40 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 120 140 L 80 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 140 140 L 120 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 160 140 L 160 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 180 140 L 200 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 200 140 L 240 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 220 140 L 280 165" stroke="#61afef" stroke-width="1"/>
+  <path d="M 240 140 L 310 165" stroke="#61afef" stroke-width="1"/>
+  <!-- Expert boxes -->
+  <rect x="20" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="38" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_i</text>
+  <rect x="62" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="80" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_j</text>
+  <rect x="104" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="122" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_k</text>
+  <rect x="142" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="160" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_l</text>
+  <rect x="182" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="200" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_m</text>
+  <rect x="222" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="240" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_n</text>
+  <rect x="262" y="167" width="36" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="280" y="181" text-anchor="middle" fill="#61afef" font-size="7">E_o</text>
+  <rect x="300" y="167" width="18" height="20" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="309" y="181" text-anchor="middle" fill="#61afef" font-size="6">...</text>
+  <!-- Weighted sum -->
+  <path d="M 160 190 L 160 220" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="80" y="222" width="160" height="24" rx="5" fill="#98c37922" stroke="#98c379"/>
+  <text x="160" y="238" text-anchor="middle" fill="#98c379" font-size="8">Weighted Sum (×2.827)</text>
+  <!-- Output -->
+  <path d="M 160 246 L 160 264" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="110" y="266" width="100" height="24" rx="5" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="160" y="282" text-anchor="middle" fill="#e0e0ea" font-size="9">output</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>384 experts with top-8 routing</strong> provides extreme fine-grained specialization. Each token activates only 8/384 experts (~2%).<br><br>
+<strong>Sigmoid routing</strong> (not softmax): allows multiple experts to have high scores independently, unlike softmax which forces competition.<br><br>
+<strong>Expert bias:</strong> learnable per-expert bias added to routing scores for load balancing.<br><br>
+<strong>Scaling factor 2.827:</strong> compensates for the normalized top-k weights being smaller than 1, ensuring proper gradient magnitude.
+</div>
+</div>
+
+<!-- ===== 4. YaRN RoPE ===== -->
+<h2>4. YaRN RoPE (Extended Context)</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">YaRNRoPE</span>(nn.Module):
+    <span class="cm"># factor=32, base=50000</span>
+    <span class="cm"># "Yet another RoPE extensioN"</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, dim, max_pos=<span class="num">131072</span>):
+        self.base = <span class="num">50000</span>
+        self.factor = <span class="num">32</span>
+        self.dim = dim  <span class="cm"># qk_rope_head_dim=64</span>
+
+        <span class="cm"># Compute frequency bands</span>
+        freqs = <span class="num">1.0</span> / (self.base ** (
+            torch.arange(<span class="num">0</span>, dim, <span class="num">2</span>) / dim))
+
+        <span class="cm"># YaRN: interpolate + scale</span>
+        <span class="cm"># Low-freq: interpolate (÷factor)</span>
+        <span class="cm"># High-freq: keep original</span>
+        <span class="cm"># Mid-freq: smooth blend</span>
+        freqs = yarn_scale(freqs,
+            factor=<span class="num">32</span>,
+            beta_fast=<span class="num">32</span>,
+            beta_slow=<span class="num">1</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x, pos):
+        <span class="cm"># Apply scaled rotary embeddings</span>
+        cos, sin = self.get_cos_sin(pos)
+        <span class="kw">return</span> rotate_half(x, cos, sin)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="160" y="18" text-anchor="middle" fill="#6b6b80" font-size="9">YaRN Frequency Scaling</text>
+  <!-- Axes -->
+  <line x1="40" y1="230" x2="290" y2="230" stroke="#555" stroke-width="1"/>
+  <line x1="40" y1="230" x2="40" y2="40" stroke="#555" stroke-width="1"/>
+  <text x="165" y="255" text-anchor="middle" fill="#6b6b80" font-size="8">Frequency dimension index</text>
+  <text x="20" y="135" text-anchor="middle" fill="#6b6b80" font-size="8" transform="rotate(-90,20,135)">Scale</text>
+  <!-- Original line -->
+  <line x1="50" y1="80" x2="280" y2="80" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <text x="290" y="83" fill="#555" font-size="7">1.0</text>
+  <!-- Interpolated line -->
+  <line x1="50" y1="200" x2="280" y2="200" stroke="#555" stroke-width="1" stroke-dasharray="4"/>
+  <text x="290" y="203" fill="#555" font-size="7">1/32</text>
+  <!-- YaRN curve -->
+  <path d="M 50 200 C 80 200, 100 200, 130 195 C 160 185, 180 130, 200 85 C 220 80, 250 80, 280 80" stroke="#f5576c" stroke-width="2.5" fill="none"/>
+  <!-- Regions -->
+  <rect x="50" y="35" width="80" height="15" rx="3" fill="#98c37922"/>
+  <text x="90" y="46" text-anchor="middle" fill="#98c379" font-size="7">Low freq: ÷32</text>
+  <rect x="130" y="35" width="80" height="15" rx="3" fill="#d19a6622"/>
+  <text x="170" y="46" text-anchor="middle" fill="#d19a66" font-size="7">Mid: smooth blend</text>
+  <rect x="210" y="35" width="80" height="15" rx="3" fill="#61afef22"/>
+  <text x="250" y="46" text-anchor="middle" fill="#61afef" font-size="7">High freq: keep</text>
+  <!-- Vertical region separators -->
+  <line x1="130" y1="55" x2="130" y2="225" stroke="#d19a66" stroke-width="0.5" stroke-dasharray="3"/>
+  <line x1="210" y1="55" x2="210" y2="225" stroke="#61afef" stroke-width="0.5" stroke-dasharray="3"/>
+  <!-- Config box -->
+  <rect x="60" y="260" width="200" height="18" rx="4" fill="#f5576c0a" stroke="#f5576c22"/>
+  <text x="160" y="273" text-anchor="middle" fill="#f5576c" font-size="7">base=50000 | factor=32 | max_pos=131072</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>YaRN (Yet another RoPE extensioN)</strong> extends context length without retraining by frequency-dependent scaling.<br><br>
+<strong>Low frequencies</strong> (capture long-range): interpolated by dividing by factor=32, extending effective context 32x.<br><br>
+<strong>High frequencies</strong> (capture local patterns): kept unchanged to preserve short-range precision.<br><br>
+<strong>Mid frequencies:</strong> smoothly blended between the two regimes. With base=50000 and factor=32, the model handles sequences up to 131K tokens.
+</div>
+</div>
+
+<!-- ===== 5. MoonViT3d ===== -->
+<h2>5. Vision: MoonViT3d + PatchMergerMLP</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">MoonViT3d</span>(nn.Module):
+    hidden_size = <span class="num">1152</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, image):
+        <span class="cm"># Patch embedding</span>
+        patches = self.patch_embed(image)
+        <span class="cm"># [B, H*W, 1152]</span>
+
+        <span class="cm"># Vision transformer layers</span>
+        x = self.encoder(patches)
+
+        <span class="cm"># 2×2 spatial merge: 4 patches → 1</span>
+        x = self.patch_merger(x)
+        <span class="cm"># [B, H*W/4, hidden]</span>
+        <span class="kw">return</span> x
+
+<span class="kw">class</span> <span class="fn">PatchMergerMLP</span>(nn.Module):
+    <span class="cm">"""Merge 2×2 spatial patches into 1"""</span>
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        B, N, C = x.shape
+        H = W = int(N ** <span class="num">0.5</span>)
+        x = x.view(B, H, W, C)
+        <span class="cm"># Group 2×2 patches</span>
+        x = x.view(B, H//<span class="num">2</span>, <span class="num">2</span>, W//<span class="num">2</span>, <span class="num">2</span>, C)
+        x = x.permute(<span class="num">0</span>,<span class="num">1</span>,<span class="num">3</span>,<span class="num">2</span>,<span class="num">4</span>,<span class="num">5</span>)
+        <span class="cm"># Concat: [B, H/2, W/2, 4*C]</span>
+        x = x.reshape(B, -<span class="num">1</span>, <span class="num">4</span>*C)
+        <span class="cm"># Project back</span>
+        x = self.mlp(x)
+        <span class="kw">return</span> x</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="160" y="18" text-anchor="middle" fill="#6b6b80" font-size="9">MoonViT3d + PatchMerger</text>
+  <!-- Image -->
+  <rect x="110" y="28" width="100" height="30" rx="5" fill="#1e1e2e" stroke="#f5576c"/>
+  <text x="160" y="47" text-anchor="middle" fill="#e0e0ea" font-size="9">Image</text>
+  <path d="M 160 58 L 160 75" stroke="#f5576c" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Patch embed -->
+  <rect x="90" y="77" width="140" height="25" rx="5" fill="#61afef22" stroke="#61afef"/>
+  <text x="160" y="94" text-anchor="middle" fill="#61afef" font-size="8">Patch Embed → 1152-d</text>
+  <path d="M 160 102 L 160 118" stroke="#61afef" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- ViT encoder -->
+  <rect x="80" y="120" width="160" height="30" rx="5" fill="#98c37922" stroke="#98c379"/>
+  <text x="160" y="139" text-anchor="middle" fill="#98c379" font-size="8">ViT Encoder (hidden=1152)</text>
+  <path d="M 160 150 L 160 168" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <!-- Patch merger visualization -->
+  <rect x="55" y="170" width="210" height="80" rx="8" fill="#1e1e2e" stroke="#d19a66"/>
+  <text x="160" y="186" text-anchor="middle" fill="#d19a66" font-size="8" font-weight="bold">PatchMergerMLP (2×2 → 1)</text>
+  <!-- 2x2 grid before -->
+  <rect x="70" y="195" width="20" height="20" rx="2" fill="#f5576c44" stroke="#f5576c"/>
+  <rect x="92" y="195" width="20" height="20" rx="2" fill="#f5576c44" stroke="#f5576c"/>
+  <rect x="70" y="217" width="20" height="20" rx="2" fill="#f5576c44" stroke="#f5576c"/>
+  <rect x="92" y="217" width="20" height="20" rx="2" fill="#f5576c44" stroke="#f5576c"/>
+  <text x="91" y="245" text-anchor="middle" fill="#6b6b80" font-size="7">4 patches</text>
+  <!-- Arrow -->
+  <path d="M 125 216 L 165 216" stroke="#d19a66" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="145" y="210" text-anchor="middle" fill="#d19a66" font-size="7">concat+MLP</text>
+  <!-- 1 merged patch -->
+  <rect x="175" y="203" width="30" height="30" rx="3" fill="#98c37944" stroke="#98c379"/>
+  <text x="190" y="245" text-anchor="middle" fill="#6b6b80" font-size="7">1 token</text>
+  <!-- Reduction note -->
+  <text x="245" y="220" fill="#f5576c" font-size="7">4× reduction</text>
+  <!-- Output -->
+  <path d="M 160 250 L 160 268" stroke="#d19a66" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="80" y="270" width="160" height="25" rx="5" fill="#f5576c22" stroke="#f5576c"/>
+  <text x="160" y="287" text-anchor="middle" fill="#e0e0ea" font-size="8">Visual tokens → LLM</text>
+  <text x="160" y="310" text-anchor="middle" fill="#6b6b80" font-size="7">media_placeholder_token_id = 163605</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>MoonViT3d</strong> is Kimi's custom vision encoder with hidden_size=1152.<br><br>
+<strong>PatchMergerMLP:</strong> Groups 2x2 spatial patches, concatenates them (4*C channels), then projects back via MLP. This reduces visual token count by 4x, critical for efficiency with high-res images.<br><br>
+<strong>Media placeholder:</strong> Token ID 163605 marks where visual tokens are inserted into the text sequence for the LLM to attend to.
+</div>
+</div>
+
+<!-- ===== 6. INT4 Quantized Experts ===== -->
+<h2>6. INT4 Quantized Experts</h2>
+
+<div class="three-col">
+<pre><span class="kw">class</span> <span class="fn">QuantizedExpert</span>(nn.Module):
+    <span class="cm"># INT4 with group_size=32</span>
+    <span class="cm"># Offset binary format</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, in_feat, out_feat):
+        <span class="cm"># Packed INT4: 2 weights per byte</span>
+        self.weight = Parameter(
+            torch.zeros(out_feat, in_feat//<span class="num">2</span>,
+                        dtype=torch.uint8))
+        <span class="cm"># Per-group scale (group_size=32)</span>
+        n_groups = in_feat // <span class="num">32</span>
+        self.scale = Parameter(
+            torch.ones(out_feat, n_groups))
+        <span class="cm"># Per-group zero point</span>
+        self.zero_point = Parameter(
+            torch.zeros(out_feat, n_groups))
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Dequantize on-the-fly</span>
+        w = unpack_int4(self.weight)
+        <span class="cm"># offset binary: val = int4 - 8</span>
+        w = (w - <span class="num">8</span>) * self.scale + \
+            self.zero_point
+        <span class="kw">return</span> F.linear(x, w)
+
+<span class="cm"># Memory: 384 experts × INT4</span>
+<span class="cm"># vs FP16: ~48x reduction per expert</span></pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 320 280" xmlns="http://www.w3.org/2000/svg">
+  <text x="160" y="18" text-anchor="middle" fill="#6b6b80" font-size="9">INT4 Expert Weight Layout</text>
+  <!-- FP16 comparison -->
+  <rect x="30" y="35" width="120" height="50" rx="6" fill="#f5576c11" stroke="#f5576c44"/>
+  <text x="90" y="55" text-anchor="middle" fill="#f5576c" font-size="8">FP16 Expert</text>
+  <text x="90" y="72" text-anchor="middle" fill="#6b6b80" font-size="7">16 bits/weight</text>
+  <!-- Arrow -->
+  <path d="M 155 60 L 175 60" stroke="#98c379" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="165" y="52" text-anchor="middle" fill="#98c379" font-size="7">4x</text>
+  <!-- INT4 -->
+  <rect x="180" y="35" width="120" height="50" rx="6" fill="#98c37922" stroke="#98c379"/>
+  <text x="240" y="55" text-anchor="middle" fill="#98c379" font-size="8">INT4 Expert</text>
+  <text x="240" y="72" text-anchor="middle" fill="#6b6b80" font-size="7">4 bits/weight</text>
+  <!-- Memory layout -->
+  <rect x="30" y="100" width="270" height="90" rx="8" fill="#1e1e2e" stroke="#d19a66"/>
+  <text x="165" y="118" text-anchor="middle" fill="#d19a66" font-size="8" font-weight="bold">Group Quantization (group_size=32)</text>
+  <!-- Groups -->
+  <rect x="45" y="130" width="60" height="18" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="75" y="143" text-anchor="middle" fill="#61afef" font-size="6">32 weights (INT4)</text>
+  <rect x="110" y="130" width="25" height="18" rx="3" fill="#d19a6622" stroke="#d19a66"/>
+  <text x="122" y="143" text-anchor="middle" fill="#d19a66" font-size="6">scale</text>
+  <rect x="138" y="130" width="25" height="18" rx="3" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="150" y="143" text-anchor="middle" fill="#c678dd" font-size="6">zero</text>
+  <text x="175" y="143" fill="#6b6b80" font-size="8">|</text>
+  <rect x="185" y="130" width="60" height="18" rx="3" fill="#61afef22" stroke="#61afef"/>
+  <text x="215" y="143" text-anchor="middle" fill="#61afef" font-size="6">32 weights (INT4)</text>
+  <rect x="250" y="130" width="20" height="18" rx="3" fill="#d19a6622" stroke="#d19a66"/>
+  <text x="260" y="143" text-anchor="middle" fill="#d19a66" font-size="6">s</text>
+  <rect x="273" y="130" width="20" height="18" rx="3" fill="#c678dd22" stroke="#c678dd"/>
+  <text x="283" y="143" text-anchor="middle" fill="#c678dd" font-size="6">z</text>
+  <!-- Formula -->
+  <text x="165" y="172" text-anchor="middle" fill="#e0e0ea" font-size="8" font-family="monospace">w_fp = (int4_val - 8) × scale + zero_point</text>
+  <!-- Total memory -->
+  <rect x="50" y="210" width="220" height="55" rx="8" fill="#f5576c0a" stroke="#f5576c22"/>
+  <text x="160" y="230" text-anchor="middle" fill="#f5576c" font-size="9">384 experts × INT4</text>
+  <text x="160" y="248" text-anchor="middle" fill="#6b6b80" font-size="8">Fits in GPU memory despite massive expert count</text>
+  <text x="160" y="262" text-anchor="middle" fill="#98c379" font-size="7">~4x memory reduction vs FP16</text>
+</svg>
+</div>
+
+<div class="caption">
+<strong>INT4 quantization</strong> makes 384 experts feasible in memory. Each weight is stored as 4 bits with group-wise dequantization.<br><br>
+<strong>Group size 32:</strong> Every 32 consecutive weights share one scale and one zero-point value, balancing accuracy vs overhead.<br><br>
+<strong>Offset binary:</strong> INT4 values [0,15] are mapped to [-8,7] by subtracting 8, then scaled and shifted per group.<br><br>
+<strong>Impact:</strong> Without INT4, 384 experts in FP16 would require prohibitive memory. Quantization enables the massive expert count that gives K2.5-VL its fine-grained specialization.
+</div>
+</div>
+
+<!-- ===== 7. Summary Table ===== -->
+<h2>7. Architecture Summary</h2>
+
+<table>
+<tr><th>Component</th><th>Configuration</th><th>Key Insight</th></tr>
+<tr><td>Layers</td><td>61 (1 Dense + 60 MoE)</td><td>Dense warm-up before expert routing</td></tr>
+<tr><td>Attention</td><td>MLA: q_lora=1536, kv_lora=512</td><td>Compressed KV cache via low-rank latents</td></tr>
+<tr><td>Head dims</td><td>nope=128, rope=64</td><td>Separate positional and content attention</td></tr>
+<tr><td>MoE</td><td>384 experts, top-8, sigmoid routing</td><td>Fine-grained specialization, 2% activation</td></tr>
+<tr><td>Routing</td><td>scaling_factor=2.827, expert bias</td><td>Gradient-stable normalized routing</td></tr>
+<tr><td>Position</td><td>YaRN RoPE, factor=32, base=50000</td><td>Extended context without retraining</td></tr>
+<tr><td>Vision</td><td>MoonViT3d, hidden=1152</td><td>Custom encoder for multimodal input</td></tr>
+<tr><td>Patch Merge</td><td>2×2 spatial merge (4→1)</td><td>4x visual token reduction</td></tr>
+<tr><td>Quantization</td><td>INT4, group_size=32, offset binary</td><td>384 experts fit in memory</td></tr>
+<tr><td>Media token</td><td>ID=163605</td><td>Placeholder for visual token insertion</td></tr>
+</table>
+
+<footer>Generated 2026.06.02 | Kimi-K2.5-VL Architecture Analysis</footer>
+
+</div>
+</body>
+</html>

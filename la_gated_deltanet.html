@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gated DeltaNet — GLA + Delta Rule 融合</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #38d9a9, #20c997); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #38d9a9; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #38d9a90a; border: 1px solid #38d9a922; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #38d9a9; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #38d9a9; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #38d9a9; line-height: 2.2; }
+.related-notes { background: #11111a; border: 1px solid #1e1e30; border-radius: 12px; padding: 20px 24px; margin: 40px 0 0; }
+.related-notes h3 { color: #38d9a9; margin: 0 0 12px; font-size: 1rem; }
+.related-notes a { display: inline-block; background: #38d9a911; border: 1px solid #38d9a933; border-radius: 6px; padding: 6px 12px; margin: 4px 6px 4px 0; color: #38d9a9; text-decoration: none; font-size: 0.82rem; transition: all 0.2s; }
+.related-notes a:hover { background: #38d9a922; border-color: #38d9a9; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Gated DeltaNet</h1>
+<p class="subtitle">2025 | Together AI / MIT | GLA 门控 + Delta Rule 擦写 — 目前单体 Linear Attention 最强</p>
+
+<!-- ===== 1. Core Idea ===== -->
+<h2>1. 核心理念：三合一更新</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Gated DeltaNet 融合三种机制:</span>
+<span class="cm"># 1. Gate (from GLA) — 选择性遗忘</span>
+<span class="cm"># 2. Delta (from DeltaNet) — 精确覆盖</span>
+<span class="cm"># 3. Write (standard) — 新信息写入</span>
+
+<span class="kw">def</span> <span class="fn">gated_deltanet_recurrent</span>(q, k, v, alpha, beta):
+    <span class="cm">"""
+    alpha: forget gate ∈ (0,1) — 全局遗忘
+    beta:  erase strength ∈ [0,1] — 精确擦除
+    """</span>
+    B, H, N, d = q.shape
+    S = torch.zeros(B, H, d, d)
+    outputs = []
+
+    <span class="kw">for</span> t <span class="kw">in</span> range(N):
+        k_t = k[:,:,t]
+        v_t = v[:,:,t]
+        q_t = q[:,:,t]
+        a_t = alpha[:,:,t]  <span class="cm"># gate</span>
+        b_t = beta[:,:,t]   <span class="cm"># erase</span>
+
+        <span class="cm"># 三步更新:</span>
+        <span class="cm"># 1. 全局衰减 (forget)</span>
+        S = a_t.unsqueeze(-<span class="num">1</span>) * S
+
+        <span class="cm"># 2. 精确擦除 (erase old value)</span>
+        old_v = (S @ k_t.unsqueeze(-<span class="num">1</span>)).squeeze(-<span class="num">1</span>)
+        S = S - b_t.unsqueeze(-<span class="num">1</span>) \
+            * k_t.unsqueeze(-<span class="num">1</span>) * old_v.unsqueeze(-<span class="num">2</span>)
+
+        <span class="cm"># 3. 写入新值</span>
+        S = S + k_t.unsqueeze(-<span class="num">1</span>) * v_t.unsqueeze(-<span class="num">2</span>)
+
+        <span class="cm"># 读取</span>
+        o_t = (q_t.unsqueeze(-<span class="num">2</span>) @ S).squeeze(-<span class="num">2</span>)
+        outputs.append(o_t)
+
+    <span class="kw">return</span> torch.stack(outputs, dim=<span class="num">2</span>)</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar6" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#38d9a9"/></marker></defs>
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Gated DeltaNet: 三合一状态更新</text>
+
+  <!-- Input state -->
+  <rect x="130" y="35" width="140" height="30" rx="4" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="200" y="55" text-anchor="middle" fill="#38d9a9" font-size="9">S_{t-1} (历史状态)</text>
+
+  <!-- Step 1: Forget -->
+  <path d="M 200 65 L 200 85" stroke="#38d9a9" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <rect x="60" y="90" width="280" height="55" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="80" y="110" fill="#e599f7" font-size="10" font-weight="bold">① Forget (全局衰减)</text>
+  <text x="80" y="128" fill="#c4c4e0" font-size="9">S = α_t · S_{t-1}</text>
+  <text x="80" y="140" fill="#a8a8be" font-size="8">α ∈ (0,1): 数据依赖，让不重要的信息整体衰减</text>
+
+  <!-- Step 2: Erase -->
+  <path d="M 200 145 L 200 165" stroke="#38d9a9" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <rect x="60" y="170" width="280" height="55" rx="6" fill="#1e1e2e" stroke="#ff6b6b"/>
+  <text x="80" y="190" fill="#ff6b6b" font-size="10" font-weight="bold">② Erase (精确擦除)</text>
+  <text x="80" y="208" fill="#c4c4e0" font-size="9">S = S - β · k_t ⊗ (S · k_t)</text>
+  <text x="80" y="220" fill="#a8a8be" font-size="8">β ∈ [0,1]: 移除 k_t 位置的旧 value</text>
+
+  <!-- Step 3: Write -->
+  <path d="M 200 225 L 200 245" stroke="#38d9a9" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <rect x="60" y="250" width="280" height="55" rx="6" fill="#1e1e2e" stroke="#38d9a9"/>
+  <text x="80" y="270" fill="#38d9a9" font-size="10" font-weight="bold">③ Write (写入新值)</text>
+  <text x="80" y="288" fill="#c4c4e0" font-size="9">S = S + k_t ⊗ v_t</text>
+  <text x="80" y="300" fill="#a8a8be" font-size="8">写入当前 token 的 key-value 对</text>
+
+  <!-- Output state -->
+  <path d="M 200 305 L 200 325" stroke="#38d9a9" stroke-width="1.5" marker-end="url(#ar6)"/>
+  <rect x="130" y="328" width="140" height="30" rx="4" fill="#38d9a933" stroke="#38d9a9"/>
+  <text x="200" y="348" text-anchor="middle" fill="#38d9a9" font-size="9">S_t (更新后状态)</text>
+
+  <!-- Why three steps -->
+  <rect x="40" y="370" width="320" height="25" rx="4" fill="#38d9a908" stroke="#38d9a922"/>
+  <text x="200" y="387" text-anchor="middle" fill="#38d9a9" font-size="9">Forget 处理全局噪声 | Erase 精确删除 | Write 添加新知</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>为什么需要两种遗忘？</h3>
+<p>GLA 的 gate 和 DeltaNet 的 erase 解决不同问题：</p>
+<table>
+<tr><th>机制</th><th>作用</th><th>粒度</th></tr>
+<tr><td>α (gate)</td><td>全局衰减噪声</td><td>整个状态矩阵</td></tr>
+<tr><td>β (erase)</td><td>精确删除旧值</td><td>特定 key 位置</td></tr>
+</table>
+<div class="formula">
+$S_t = \underbrace{\alpha_t \cdot S_{t-1}}_{\text{全局衰减}} - \underbrace{\beta_t \cdot k_t (S \cdot k_t)^\top}_{\text{精确擦除}} + \underbrace{k_t v_t^\top}_{\text{写入}}$
+</div>
+<div class="key-point"><strong>互补性：</strong>Gate 处理"缓慢累积的噪声"（没有明确 key 的垃圾信息），Erase 处理"过时但有明确 key 的旧信息"。两者结合 = 最完善的记忆管理。</div>
+</div>
+</div>
+
+<!-- ===== 2. Update Rule ===== -->
+<h2>2. 统一公式与训练</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># 紧凑形式</span>
+<span class="cm"># S_t = α·S - β·k(S·k)^T + kv^T</span>
+<span class="cm"># = α·S - β·(k⊗(S^T·k)) + k⊗v</span>
+<span class="cm"># = α·(I - β/α · kk^T)·S + kv^T</span>
+
+<span class="cm"># Chunk-wise training (同 DeltaNet 策略)</span>
+<span class="cm"># 使用 WY decomposition:</span>
+<span class="cm"># Π (α_i·I - β_i·k_i·k_i^T) = Λ - W·Y^T</span>
+
+<span class="cm"># 超参数配置 (1.3B 模型)</span>
+config = {
+    <span class="st">'n_layers'</span>: <span class="num">24</span>,
+    <span class="st">'d_model'</span>: <span class="num">2048</span>,
+    <span class="st">'n_heads'</span>: <span class="num">16</span>,
+    <span class="st">'head_dim'</span>: <span class="num">128</span>,  <span class="cm"># d</span>
+    <span class="st">'expand'</span>: <span class="num">2</span>,       <span class="cm"># value dim</span>
+    <span class="st">'chunk_size'</span>: <span class="num">64</span>,
+    <span class="cm"># alpha, beta 由输入线性投影得到</span>
+    <span class="st">'alpha'</span>: <span class="st">'sigmoid(Linear(x))'</span>,
+    <span class="st">'beta'</span>: <span class="st">'sigmoid(Linear(x))'</span>,
+}
+
+<span class="cm"># 训练框架: flash-linear-attention</span>
+<span class="cm"># (Triton kernel, 支持所有 LA 变体)</span>
+<span class="cm"># pip install flash-linear-attention</span>
+
+<span class="kw">from</span> fla.models <span class="kw">import</span> GatedDeltaNetConfig
+<span class="kw">from</span> fla.models <span class="kw">import</span> GatedDeltaNetForCausalLM</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Linear Attention 家族统一视角</text>
+
+  <!-- Unified framework -->
+  <rect x="20" y="35" width="360" height="50" rx="8" fill="#38d9a911" stroke="#38d9a9"/>
+  <text x="200" y="55" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">统一框架: S_t = A_t · S_{t-1} + B_t</text>
+  <text x="200" y="75" text-anchor="middle" fill="#a8a8be" font-size="9">所有 Linear Attention 变体都是这个框架的实例化</text>
+
+  <!-- Instances -->
+  <rect x="20" y="100" width="360" height="25" rx="0" fill="#16162a"/>
+  <text x="100" y="117" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">模型</text>
+  <text x="240" y="117" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">A_t (衰减/擦除)</text>
+  <text x="350" y="117" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">B_t</text>
+
+  <rect x="20" y="125" width="360" height="20" fill="#1e1e2e"/>
+  <text x="100" y="139" text-anchor="middle" fill="#a8a8be" font-size="8">Vanilla LinAttn</text>
+  <text x="240" y="139" text-anchor="middle" fill="#a8a8be" font-size="8">I</text>
+  <text x="350" y="139" text-anchor="middle" fill="#a8a8be" font-size="8">k⊗v</text>
+
+  <rect x="20" y="145" width="360" height="20" fill="#12121c"/>
+  <text x="100" y="159" text-anchor="middle" fill="#a8a8be" font-size="8">RetNet</text>
+  <text x="240" y="159" text-anchor="middle" fill="#a8a8be" font-size="8">γ·I (固定标量)</text>
+  <text x="350" y="159" text-anchor="middle" fill="#a8a8be" font-size="8">k⊗v</text>
+
+  <rect x="20" y="165" width="360" height="20" fill="#1e1e2e"/>
+  <text x="100" y="179" text-anchor="middle" fill="#a8a8be" font-size="8">GLA</text>
+  <text x="240" y="179" text-anchor="middle" fill="#a8a8be" font-size="8">diag(G_t) (数据依赖)</text>
+  <text x="350" y="179" text-anchor="middle" fill="#a8a8be" font-size="8">k⊗v</text>
+
+  <rect x="20" y="185" width="360" height="20" fill="#12121c"/>
+  <text x="100" y="199" text-anchor="middle" fill="#a8a8be" font-size="8">DeltaNet</text>
+  <text x="240" y="199" text-anchor="middle" fill="#a8a8be" font-size="8">I - β·kk^T (精确擦除)</text>
+  <text x="350" y="199" text-anchor="middle" fill="#a8a8be" font-size="8">k⊗v</text>
+
+  <rect x="20" y="205" width="360" height="20" fill="#38d9a911"/>
+  <text x="100" y="219" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Gated DeltaNet</text>
+  <text x="240" y="219" text-anchor="middle" fill="#38d9a9" font-size="8">α·I - β·kk^T (两者结合)</text>
+  <text x="350" y="219" text-anchor="middle" fill="#38d9a9" font-size="8">k⊗v</text>
+
+  <!-- Why strongest -->
+  <rect x="20" y="245" width="360" height="120" rx="8" fill="#1e1e2e" stroke="#38d9a933"/>
+  <text x="200" y="268" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">为什么 Gated DeltaNet 最强？</text>
+  <text x="40" y="292" fill="#c4c4e0" font-size="9">• 包含 GLA 和 DeltaNet 为特例</text>
+  <text x="40" y="312" fill="#c4c4e0" font-size="9">• α=1, β=0 → 退化为 Vanilla Linear Attention</text>
+  <text x="40" y="332" fill="#c4c4e0" font-size="9">• α\lt1, β=0 → 退化为 GLA</text>
+  <text x="40" y="352" fill="#c4c4e0" font-size="9">• α=1, β>0 → 退化为 DeltaNet</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>表达力最强的 A_t</h3>
+<p>Gated DeltaNet 的 A_t = α·I - β·kk^T 是当前所有 linear attention 中<strong>表达力最强的状态转移矩阵</strong>：</p>
+<div class="formula">
+$A_t = \alpha_t I - \beta_t k_t k_t^\top$
+$\text{包含 GLA 和 DeltaNet 为特例}$
+</div>
+<p>它可以通过不同的 α, β 值自动退化为任何前序方法。模型学到的 α, β 分布显示两种机制都被积极使用。</p>
+<div class="key-point"><strong>flash-linear-attention：</strong>Together AI 开源的训练框架，Triton kernel 实现了 GLA、DeltaNet、Gated DeltaNet 的 chunk-wise 训练。一行代码切换不同变体。</div>
+</div>
+</div>
+
+<!-- ===== 3. Performance ===== -->
+<h2>3. 性能：接近 Transformer++ 质量</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Benchmark: 语言建模 + Recall 任务</span>
+<span class="cm"># 训练设置: 1.3B params, 100B tokens</span>
+
+<span class="cm"># Perplexity (The Pile, lower is better):</span>
+<span class="cm"># Transformer++      : 8.52</span>
+<span class="cm"># Mamba              : 8.85</span>
+<span class="cm"># GLA                : 8.78</span>
+<span class="cm"># DeltaNet           : 8.71</span>
+<span class="cm"># Gated DeltaNet     : 8.58  ← 最接近!</span>
+
+<span class="cm"># MQAR (Multi-Query Associative Recall):</span>
+<span class="cm"># 需要精确记住 kv pair 并检索</span>
+<span class="cm"># Transformer++      : 99.8%</span>
+<span class="cm"># Mamba              : 78.2%</span>
+<span class="cm"># GLA                : 82.4%</span>
+<span class="cm"># DeltaNet           : 96.1%</span>
+<span class="cm"># Gated DeltaNet     : 97.8%  ← 接近 Attn!</span>
+
+<span class="cm"># 训练效率 (相对 FlashAttn-2):</span>
+<span class="cm"># GLA chunk-wise     : ~85%</span>
+<span class="cm"># DeltaNet WY        : ~70%</span>
+<span class="cm"># Gated DeltaNet     : ~68%</span>
+<span class="cm"># (WY 开销 + gate 计算)</span>
+
+<span class="cm"># 推理: O(d²) per token (恒定!)</span>
+<span class="cm"># 无 KV cache, 适合长序列部署</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Gated DeltaNet: 质量-效率 Pareto 前沿</text>
+
+  <!-- Quality axis -->
+  <text x="20" y="60" fill="#38d9a9" font-size="9">质量 (PPL↓)</text>
+  <line x1="30" y1="70" x2="30" y2="250" stroke="#2a2a3e" stroke-width="1"/>
+
+  <!-- Efficiency axis -->
+  <text x="200" y="275" text-anchor="middle" fill="#38d9a9" font-size="9">训练效率 (relative to FlashAttn)</text>
+  <line x1="30" y1="250" x2="380" y2="250" stroke="#2a2a3e" stroke-width="1"/>
+
+  <!-- Data points -->
+  <!-- Transformer++ -->
+  <circle cx="350" cy="80" r="8" fill="#4facfe33" stroke="#4facfe"/>
+  <text x="350" y="72" text-anchor="middle" fill="#4facfe" font-size="8">Transformer++</text>
+
+  <!-- Gated DeltaNet -->
+  <circle cx="230" cy="95" r="10" fill="#38d9a933" stroke="#38d9a9" stroke-width="2"/>
+  <text x="230" y="85" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Gated DeltaNet</text>
+
+  <!-- DeltaNet -->
+  <circle cx="240" cy="120" r="7" fill="#ff6b6b33" stroke="#ff6b6b"/>
+  <text x="260" y="118" fill="#ff6b6b" font-size="8">DeltaNet</text>
+
+  <!-- GLA -->
+  <circle cx="295" cy="130" r="7" fill="#e599f733" stroke="#e599f7"/>
+  <text x="315" y="128" fill="#e599f7" font-size="8">GLA</text>
+
+  <!-- Mamba -->
+  <circle cx="280" cy="145" r="7" fill="#f7971e33" stroke="#f7971e"/>
+  <text x="300" y="143" fill="#f7971e" font-size="8">Mamba</text>
+
+  <!-- RetNet -->
+  <circle cx="270" cy="180" r="6" fill="#a8a8be33" stroke="#a8a8be"/>
+  <text x="290" y="178" fill="#a8a8be" font-size="8">RetNet</text>
+
+  <!-- Pareto frontier annotation -->
+  <path d="M 350 88 Q 290 90 230 103 Q 200 115 170 200" stroke="#38d9a9" stroke-width="1" stroke-dasharray="4" fill="none"/>
+  <text x="140" y="200" fill="#38d9a9" font-size="8">Pareto 前沿</text>
+
+  <!-- Summary box -->
+  <rect x="30" y="295" width="350" height="70" rx="6" fill="#38d9a908" stroke="#38d9a922"/>
+  <text x="205" y="315" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">Gated DeltaNet 的位置</text>
+  <text x="205" y="335" text-anchor="middle" fill="#c4c4e0" font-size="9">质量: PPL 差距 Transformer++ 仅 0.06 (~0.7%)</text>
+  <text x="205" y="355" text-anchor="middle" fill="#c4c4e0" font-size="9">Recall: MQAR 97.8% (Transformer 99.8%, GLA 82.4%)</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>核心结论</h3>
+<p>Gated DeltaNet 在<strong>质量-效率 trade-off</strong>上处于当前 Linear Attention 的 Pareto 最优：</p>
+<table>
+<tr><th>指标</th><th>Gated DeltaNet</th><th>vs Transformer++</th></tr>
+<tr><td>PPL</td><td>8.58</td><td>-0.7% (接近)</td></tr>
+<tr><td>MQAR</td><td>97.8%</td><td>-2% (几乎平)</td></tr>
+<tr><td>训练速度</td><td>68% FA2</td><td>慢 32%</td></tr>
+<tr><td>推理显存</td><td>O(d²) 恒定</td><td>∞ 优势</td></tr>
+</table>
+<div class="key-point"><strong>2025 状态：</strong>Gated DeltaNet 是第一个在 recall 任务上真正接近 softmax attention 的纯 linear attention 方法。剩余 2% 的 recall gap 主要来自状态 d×d 的容量限制（当 key 数量远超 d² 时）。</div>
+<p><strong>下一步方向：</strong>扩大 d (head_dim) 或引入混合架构（少量 softmax attention 层补上最后的 recall gap）。</p>
+</div>
+</div>
+
+<div class="related-notes">
+<h3>📎 后续研究 (子笔记)</h3>
+<a href="la_kimi_linear.html" onclick="if(parent.loadPage)parent.loadPage('la_kimi_linear.html');return false;">Kimi Linear (KDA) — 首次超越 Full Attention</a>
+<a href="la_gated_deltanet2.html" onclick="if(parent.loadPage)parent.loadPage('la_gated_deltanet2.html');return false;">Gated DeltaNet-2 — 解耦 Erase/Write</a>
+<a href="la_mdn.html" onclick="if(parent.loadPage)parent.loadPage('la_mdn.html');return false;">MDN — Momentum 加速 Delta Rule</a>
+<a href="la_m2rnn.html" onclick="if(parent.loadPage)parent.loadPage('la_m2rnn.html');return false;">M²RNN — 非线性矩阵值 RNN</a>
+<a href="la_deltanet.html" onclick="if(parent.loadPage)parent.loadPage('la_deltanet.html');return false;">↑ DeltaNet (前置)</a>
+<a href="la_gla.html" onclick="if(parent.loadPage)parent.loadPage('la_gla.html');return false;">↑ GLA (前置)</a>
+</div>
+
+<footer>Generated 2026.06.02 | Gated DeltaNet — GLA + Delta Rule</footer>
+</div>
+</body>
+</html>

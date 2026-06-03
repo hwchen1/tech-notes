@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATLAS — Titans v2</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #845ef7, #be4bdb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #845ef7; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #845ef70a; border: 1px solid #845ef722; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #845ef7; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #845ef7; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #845ef7; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+.related-notes { background: #11111a; border: 1px solid #1e1e30; border-radius: 12px; padding: 20px 24px; margin: 40px 0 0; }
+.related-notes h3 { color: #845ef7; margin: 0 0 12px; font-size: 1rem; }
+.related-notes a { display: inline-block; background: #845ef711; border: 1px solid #845ef733; border-radius: 6px; padding: 6px 12px; margin: 4px 6px 4px 0; color: #845ef7; text-decoration: none; font-size: 0.82rem; transition: all 0.2s; }
+.related-notes a:hover { background: #845ef722; border-color: #845ef7; }
+.related-notes .parent { color: #845ef7; border-color: #845ef755; background: #845ef718; font-weight: 600; }
+.related-notes .parent:hover { background: #845ef733; border-color: #845ef7; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ATLAS</h1>
+<p class="subtitle">Titans v2 — 10M Context + DeepTransformers + 最优记忆管理 | Behrouz, Li et al. | 2025.05 (arxiv 2505.23735)</p>
+
+<!-- ===== 1. 核心问题 ===== -->
+<h2>1. 核心问题 — Titans 的三个局限</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Titans 的三个局限:</span>
+<span class="cm"># 1. 有限容量: 固定大小 memory 无法随序列增长</span>
+<span class="cm"># 2. 在线更新: 只能向前看，不能回顾优化</span>
+<span class="cm"># 3. 记忆管理: 无法主动选择记忆/遗忘什么</span>
+
+<span class="cm"># ATLAS 的三个解法:</span>
+<span class="cm"># 1. DeepTransformers — 多层记忆网络</span>
+<span class="cm"># 2. 两阶段更新 — 先全局扫描,再精细优化</span>
+<span class="cm"># 3. 主动记忆管理 — 学习何时读/写/忘</span>
+
+<span class="cm"># DeepTransformers 架构:</span>
+<span class="cm"># 标准 Transformer: 每层独立计算</span>
+<span class="cm"># DeepTransformer: 层间共享压缩记忆</span>
+<span class="cm">#   Memory_l = f(Memory_{l-1}, context_l)</span>
+<span class="cm"># → 记忆容量随深度增长!</span>
+
+<span class="cm"># 核心公式:</span>
+<span class="cm"># 记忆更新 (surprise-based, 同 Titans):</span>
+<span class="cm"># θ -= η · ∇L(θ; x_t)  if surprise > threshold</span>
+<span class="cm">#</span>
+<span class="cm"># ATLAS 新增:</span>
+<span class="cm"># 两阶段:</span>
+<span class="cm">#   Stage 1: 粗粒度全局扫描 (大 chunk)</span>
+<span class="cm">#   Stage 2: 细粒度局部优化 (小 chunk)</span>
+<span class="cm"># → 类比人类: 先浏览全文,再精读重点</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#845ef7"/></marker></defs>
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Titans vs ATLAS (DeepTransformer)</text>
+
+  <!-- Titans: single layer -->
+  <rect x="20" y="35" width="380" height="100" rx="8" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="210" y="55" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">Titans — 单层记忆</text>
+  <rect x="50" y="68" width="80" height="30" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="90" y="87" text-anchor="middle" fill="#667eea" font-size="8">Memory M(θ)</text>
+  <text x="160" y="87" fill="#a8a8be" font-size="8">←</text>
+  <text x="175" y="87" fill="#a8a8be" font-size="8">固定容量, 单层网络</text>
+  <text x="50" y="118" fill="#ff6b6b" font-size="8">局限: 容量有限 | 只能前向扫描 | 无主动管理</text>
+
+  <!-- Arrow -->
+  <line x1="210" y1="140" x2="210" y2="158" stroke="#845ef7" stroke-width="2" marker-end="url(#ar1)"/>
+  <text x="230" y="152" fill="#845ef7" font-size="8">升级</text>
+
+  <!-- ATLAS: deep layers -->
+  <rect x="20" y="165" width="380" height="140" rx="8" fill="#1e1e2e" stroke="#845ef7"/>
+  <text x="210" y="185" text-anchor="middle" fill="#845ef7" font-size="10" font-weight="bold">ATLAS — DeepTransformer 多层记忆</text>
+
+  <rect x="50" y="198" width="70" height="24" rx="4" fill="#845ef722" stroke="#845ef7"/>
+  <text x="85" y="214" text-anchor="middle" fill="#845ef7" font-size="7">Memory L1</text>
+  <rect x="140" y="198" width="70" height="24" rx="4" fill="#845ef733" stroke="#845ef7"/>
+  <text x="175" y="214" text-anchor="middle" fill="#845ef7" font-size="7">Memory L2</text>
+  <rect x="230" y="198" width="70" height="24" rx="4" fill="#845ef744" stroke="#845ef7"/>
+  <text x="265" y="214" text-anchor="middle" fill="#845ef7" font-size="7">Memory L3</text>
+  <rect x="320" y="198" width="60" height="24" rx="4" fill="#845ef755" stroke="#845ef7"/>
+  <text x="350" y="214" text-anchor="middle" fill="#845ef7" font-size="7">... LN</text>
+
+  <line x1="120" y1="210" x2="138" y2="210" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <line x1="210" y1="210" x2="228" y2="210" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <line x1="300" y1="210" x2="318" y2="210" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+  <!-- Two-stage update -->
+  <text x="60" y="248" fill="#38d9a9" font-size="8" font-weight="bold">两阶段更新:</text>
+  <rect x="50" y="255" width="150" height="20" rx="4" fill="#38d9a911" stroke="#38d9a944"/>
+  <text x="125" y="269" text-anchor="middle" fill="#38d9a9" font-size="7">Stage 1: 粗粒度全局扫描 ━━━━━━</text>
+  <rect x="50" y="280" width="150" height="20" rx="4" fill="#f7971e11" stroke="#f7971e44"/>
+  <text x="125" y="294" text-anchor="middle" fill="#f7971e" font-size="7">Stage 2: 细粒度局部优化 ──────</text>
+
+  <!-- Result -->
+  <rect x="230" y="252" width="150" height="48" rx="6" fill="#845ef711" stroke="#845ef744"/>
+  <text x="305" y="270" text-anchor="middle" fill="#845ef7" font-size="8" font-weight="bold">容量随深度增长</text>
+  <text x="305" y="288" text-anchor="middle" fill="#c4c4e0" font-size="7">Memory_l = f(M_{l-1}, ctx_l)</text>
+
+  <!-- Result callout -->
+  <rect x="80" y="320" width="260" height="40" rx="8" fill="#845ef718" stroke="#845ef7"/>
+  <text x="210" y="338" text-anchor="middle" fill="#845ef7" font-size="10" font-weight="bold">BABILong 10M context: 80%+ accuracy</text>
+  <text x="210" y="354" text-anchor="middle" fill="#c4c4e0" font-size="8">第一个在 10M token 上有实质性能力的模型</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>从 2M 到 10M Context</h3>
+<p>Titans 在 2M context 上展示了可能性，ATLAS 通过 DeepTransformer 架构将这推到 10M。核心洞察：memory 应该像 Transformer 本身一样是多层的，每层提取不同粒度的信息。</p>
+<p>DeepTransformer 的核心思想：传统 Transformer 每层独立计算，层间不共享状态；DeepTransformer 让相邻层共享压缩记忆，使记忆容量随网络深度线性增长。</p>
+<p>两阶段更新模拟人类阅读策略：</p>
+<table>
+<tr><th>阶段</th><th>策略</th><th>类比</th></tr>
+<tr><td>Stage 1</td><td>大 chunk, 粗粒度</td><td>浏览全文</td></tr>
+<tr><td>Stage 2</td><td>小 chunk, 细粒度</td><td>精读重点</td></tr>
+</table>
+<div class="key-point"><strong>ATLAS = Titans + 深层记忆 + 两阶段更新 + 主动管理。</strong>在 BABILong 10M context 上达到 80%+ accuracy，是第一个在这种极长上下文上有实质性能力的模型。</div>
+</div>
+</div>
+
+<!-- ===== 2. 统一理论框架 Miras ===== -->
+<h2>2. 统一理论框架 Miras</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Miras 框架 (2504.13173):</span>
+<span class="cm"># 统一视角 — 所有序列模型都是 associative memory</span>
+<span class="cm">#</span>
+<span class="cm"># 四个设计轴:</span>
+<span class="cm"># 1. Memory Architecture: 矩阵/向量/网络</span>
+<span class="cm"># 2. Bias Objective: 什么样的 loss 驱动记忆</span>
+<span class="cm"># 3. Retention Gate: 如何遗忘</span>
+<span class="cm"># 4. Learning Algorithm: SGD/momentum/Adam...</span>
+<span class="cm">#</span>
+<span class="cm"># 实例化:</span>
+<span class="cm"># Transformer = {矩阵 KV, softmax bias, 无gate, 无学习}</span>
+<span class="cm"># GDN = {矩阵 S, L2 loss, α gate, SGD}</span>
+<span class="cm"># Titans = {网络 θ, surprise loss, η gate, gradient}</span>
+<span class="cm"># ATLAS = {深层网络, multi-obj, adaptive gate, 2-stage}</span>
+<span class="cm">#</span>
+<span class="cm"># 新架构 (从 Miras 推导):</span>
+<span class="cm"># Moneta: memory + attention bias → 最优解析解</span>
+<span class="cm"># Yaad: multi-resolution memory bank</span>
+<span class="cm"># Memora: continual learning 式记忆</span>
+
+<span class="cm"># TNT 训练加速 (2511.07343):</span>
+<span class="cm"># Titans/ATLAS 的训练瓶颈: BPTT through memory</span>
+<span class="cm"># TNT 解法: hierarchical chunking</span>
+<span class="cm">#   大 chunk → 全局 context (memory 层)</span>
+<span class="cm">#   小 chunk → 局部 detail (并行计算)</span>
+<span class="cm"># → 17x speedup, 同时提升 accuracy!</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Miras 统一框架 — 四个设计轴</text>
+
+  <!-- 2x2 Grid -->
+  <!-- Top-left: Memory Architecture -->
+  <rect x="15" y="30" width="190" height="130" rx="8" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="110" y="50" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Memory Architecture</text>
+  <text x="30" y="70" fill="#a8a8be" font-size="8">矩阵 S ∈ R^{d×d}</text>
+  <text x="30" y="86" fill="#a8a8be" font-size="8">  → GLA, DeltaNet</text>
+  <text x="30" y="106" fill="#c4c4e0" font-size="8">网络 M(θ) (多层)</text>
+  <text x="30" y="122" fill="#845ef7" font-size="8">  → Titans, ATLAS</text>
+  <text x="30" y="142" fill="#845ef7" font-size="8" font-weight="bold">  → ATLAS: 深层网络!</text>
+
+  <!-- Top-right: Bias Objective -->
+  <rect x="215" y="30" width="190" height="130" rx="8" fill="#1e1e2e" stroke="#f7971e44"/>
+  <text x="310" y="50" text-anchor="middle" fill="#f7971e" font-size="9" font-weight="bold">Bias Objective</text>
+  <text x="230" y="70" fill="#a8a8be" font-size="8">L2 reconstruction</text>
+  <text x="230" y="86" fill="#a8a8be" font-size="8">  → GDN, DeltaNet</text>
+  <text x="230" y="106" fill="#c4c4e0" font-size="8">Surprise (预测误差)</text>
+  <text x="230" y="122" fill="#845ef7" font-size="8">  → Titans, ATLAS</text>
+  <text x="230" y="142" fill="#845ef7" font-size="8" font-weight="bold">  → ATLAS: multi-objective</text>
+
+  <!-- Bottom-left: Retention Gate -->
+  <rect x="15" y="170" width="190" height="130" rx="8" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="110" y="190" text-anchor="middle" fill="#38d9a9" font-size="9" font-weight="bold">Retention Gate</text>
+  <text x="30" y="210" fill="#a8a8be" font-size="8">固定衰减 α</text>
+  <text x="30" y="226" fill="#a8a8be" font-size="8">  → GLA, Mamba</text>
+  <text x="30" y="246" fill="#c4c4e0" font-size="8">学习型门控 g(x)</text>
+  <text x="30" y="262" fill="#845ef7" font-size="8">  → Gated DeltaNet</text>
+  <text x="30" y="282" fill="#845ef7" font-size="8" font-weight="bold">  → ATLAS: adaptive gate</text>
+
+  <!-- Bottom-right: Learning Algorithm -->
+  <rect x="215" y="170" width="190" height="130" rx="8" fill="#1e1e2e" stroke="#e599f744"/>
+  <text x="310" y="190" text-anchor="middle" fill="#e599f7" font-size="9" font-weight="bold">Learning Algorithm</text>
+  <text x="230" y="210" fill="#a8a8be" font-size="8">无学习 (直接写入)</text>
+  <text x="230" y="226" fill="#a8a8be" font-size="8">  → Transformer (KV)</text>
+  <text x="230" y="246" fill="#c4c4e0" font-size="8">SGD / gradient</text>
+  <text x="230" y="262" fill="#845ef7" font-size="8">  → Titans (单阶段)</text>
+  <text x="230" y="282" fill="#845ef7" font-size="8" font-weight="bold">  → ATLAS: 2-stage GD</text>
+
+  <!-- ATLAS highlight -->
+  <rect x="100" y="310" width="220" height="24" rx="6" fill="#845ef718" stroke="#845ef7"/>
+  <text x="210" y="326" text-anchor="middle" fill="#845ef7" font-size="9" font-weight="bold">ATLAS = 四轴最优组合 (深层 + multi-obj + adaptive + 2-stage)</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>所有模型都是 Associative Memory</h3>
+<p>Miras 的核心洞察：Transformer 的 attention 本质是一种"无学习"的 memory lookup，而 Titans/ATLAS 的 memory 是"有学习"的 memory write+read。统一后可以系统性地设计新架构。</p>
+<p>每个序列模型都可以定位到四个轴的某个组合：Memory Architecture 决定容量上限，Bias Objective 决定写入策略，Retention Gate 决定遗忘方式，Learning Algorithm 决定优化质量。</p>
+<table>
+<tr><th>论文</th><th>时间</th><th>贡献</th></tr>
+<tr><td>Titans</td><td>2024.12</td><td>Surprise memory 基础框架</td></tr>
+<tr><td>Miras</td><td>2025.04</td><td>统一理论框架</td></tr>
+<tr><td>ATLAS</td><td>2025.05</td><td>10M context, DeepTransformer</td></tr>
+<tr><td>TNT</td><td>2025.11</td><td>17x 训练加速</td></tr>
+<tr><td>Memory Caching</td><td>2026.02</td><td>弹性记忆管理</td></tr>
+</table>
+<div class="key-point"><strong>Miras 框架的价值:</strong> 不是又一个 benchmark paper，而是提供了设计新架构的 principled recipe。任何新模型都可以定位到这四个轴的某个组合。</div>
+</div>
+</div>
+
+<!-- ===== 3. Titans 生态系统总览 ===== -->
+<h2>3. Titans 生态系统总览</h2>
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Titans 系列论文总览:</span>
+<span class="cm">#</span>
+<span class="cm"># 核心:</span>
+<span class="cm"># Titans (2501.00663) — 基础: surprise memory</span>
+<span class="cm"># ATLAS (2505.23735) — 扩展: 10M context</span>
+<span class="cm"># Miras (2504.13173) — 理论: 统一框架</span>
+<span class="cm">#</span>
+<span class="cm"># 训练优化:</span>
+<span class="cm"># TNT (2511.07343) — 17x 训练加速</span>
+<span class="cm">#</span>
+<span class="cm"># 工程应用:</span>
+<span class="cm"># Memory Caching (2602.24281) — 弹性记忆</span>
+<span class="cm"># Trellis (2512.23852) — KV cache 压缩</span>
+<span class="cm"># MS-SSM (2512.23824) — 多尺度 SSM</span>
+<span class="cm"># Hydra (2511.00989) — 时间序列</span>
+<span class="cm">#</span>
+<span class="cm"># 相关但独立:</span>
+<span class="cm"># TTT=Linear Attention (2602.21204, NVIDIA)</span>
+<span class="cm">#   证明 Titans 式 TTT ≡ 学习型 linear attention</span>
+<span class="cm"># GradMem (2603.13875) — 梯度写入记忆</span>
+<span class="cm"># SR-TTT (2603.06642) — surprise 路由</span>
+
+<span class="cm"># 核心观点演进:</span>
+<span class="cm"># 2024: "memory 可以用梯度更新" (Titans)</span>
+<span class="cm"># 2025: "所有模型本质都是 memory" (Miras)</span>
+<span class="cm"># 2025: "TTT = Linear Attention" (NVIDIA)</span>
+<span class="cm"># 2026: "memory 需要多层+两阶段" (ATLAS)</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar2" markerWidth="5" markerHeight="4" refX="5" refY="2" orient="auto"><path d="M0,0 L5,2 L0,4" fill="#845ef7"/></marker>
+    <marker id="ar3" markerWidth="5" markerHeight="4" refX="5" refY="2" orient="auto"><path d="M0,0 L5,2 L0,4" fill="#6b6b80"/></marker>
+  </defs>
+  <text x="210" y="16" text-anchor="middle" fill="#6b6b80" font-size="10">Titans 生态系统 — 时间线与谱系</text>
+
+  <!-- Root: Titans -->
+  <rect x="140" y="28" width="140" height="30" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="210" y="47" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">Titans (2024.12)</text>
+  <text x="210" y="72" text-anchor="middle" fill="#6b6b80" font-size="7">surprise-based memory</text>
+
+  <!-- Core branches -->
+  <line x1="160" y1="58" x2="70" y2="100" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <line x1="210" y1="58" x2="210" y2="100" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <line x1="260" y1="58" x2="350" y2="100" stroke="#845ef7" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+  <!-- Miras -->
+  <rect x="15" y="100" width="110" height="28" rx="5" fill="#4facfe22" stroke="#4facfe"/>
+  <text x="70" y="118" text-anchor="middle" fill="#4facfe" font-size="8">Miras (2025.04)</text>
+  <text x="70" y="140" text-anchor="middle" fill="#6b6b80" font-size="7">统一理论框架</text>
+
+  <!-- ATLAS -->
+  <rect x="150" y="100" width="120" height="28" rx="5" fill="#845ef733" stroke="#845ef7"/>
+  <text x="210" y="118" text-anchor="middle" fill="#845ef7" font-size="8" font-weight="bold">ATLAS (2025.05)</text>
+  <text x="210" y="140" text-anchor="middle" fill="#6b6b80" font-size="7">10M context</text>
+
+  <!-- TNT -->
+  <rect x="295" y="100" width="110" height="28" rx="5" fill="#38d9a922" stroke="#38d9a9"/>
+  <text x="350" y="118" text-anchor="middle" fill="#38d9a9" font-size="8">TNT (2025.11)</text>
+  <text x="350" y="140" text-anchor="middle" fill="#6b6b80" font-size="7">17x 训练加速</text>
+
+  <!-- Second tier -->
+  <line x1="210" y1="128" x2="80" y2="165" stroke="#845ef744" stroke-width="1" marker-end="url(#ar2)"/>
+  <line x1="210" y1="128" x2="210" y2="165" stroke="#845ef744" stroke-width="1" marker-end="url(#ar2)"/>
+  <line x1="210" y1="128" x2="340" y2="165" stroke="#845ef744" stroke-width="1" marker-end="url(#ar2)"/>
+
+  <!-- Engineering applications -->
+  <rect x="20" y="165" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#a8a8be33"/>
+  <text x="80" y="181" text-anchor="middle" fill="#a8a8be" font-size="7">Trellis (2025.12)</text>
+  <text x="80" y="198" text-anchor="middle" fill="#6b6b80" font-size="6">KV cache 压缩</text>
+
+  <rect x="150" y="165" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#a8a8be33"/>
+  <text x="210" y="181" text-anchor="middle" fill="#a8a8be" font-size="7">MS-SSM (2025.12)</text>
+  <text x="210" y="198" text-anchor="middle" fill="#6b6b80" font-size="6">多尺度 SSM</text>
+
+  <rect x="280" y="165" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#a8a8be33"/>
+  <text x="340" y="181" text-anchor="middle" fill="#a8a8be" font-size="7">Hydra (2025.11)</text>
+  <text x="340" y="198" text-anchor="middle" fill="#6b6b80" font-size="6">时间序列</text>
+
+  <!-- Memory Caching -->
+  <line x1="210" y1="189" x2="210" y2="215" stroke="#845ef744" stroke-width="1" marker-end="url(#ar2)"/>
+  <rect x="135" y="215" width="150" height="24" rx="4" fill="#f7971e11" stroke="#f7971e44"/>
+  <text x="210" y="231" text-anchor="middle" fill="#f7971e" font-size="7">Memory Caching (2026.02)</text>
+  <text x="210" y="248" text-anchor="middle" fill="#6b6b80" font-size="6">弹性记忆管理</text>
+
+  <!-- Side connections: independent work -->
+  <rect x="15" y="260" width="390" height="105" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="278" text-anchor="middle" fill="#6b6b80" font-size="8" font-weight="bold">相关独立工作</text>
+
+  <line x1="50" y1="288" x2="50" y2="350" stroke="#6b6b8044" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <rect x="65" y="285" width="155" height="22" rx="4" fill="#e599f711" stroke="#e599f733"/>
+  <text x="142" y="300" text-anchor="middle" fill="#e599f7" font-size="7">TTT ≡ LinAttn (2026.02, NVIDIA)</text>
+
+  <rect x="230" y="285" width="155" height="22" rx="4" fill="#e599f711" stroke="#e599f733"/>
+  <text x="307" y="300" text-anchor="middle" fill="#e599f7" font-size="7">GradMem (2026.03)</text>
+
+  <rect x="65" y="315" width="155" height="22" rx="4" fill="#e599f711" stroke="#e599f733"/>
+  <text x="142" y="330" text-anchor="middle" fill="#e599f7" font-size="7">SR-TTT (2026.03)</text>
+
+  <rect x="230" y="315" width="155" height="22" rx="4" fill="#e599f711" stroke="#e599f733"/>
+  <text x="307" y="330" text-anchor="middle" fill="#e599f7" font-size="7">surprise 路由 + 梯度记忆</text>
+
+  <text x="210" y="358" text-anchor="middle" fill="#845ef7" font-size="8">核心范式: "memory 应该用梯度学习"</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Titans 的影响力</h3>
+<p>Titans 在 18 个月内产生了 100+ 引用和 8+ 直系后续论文，形成了一个完整的研究生态。核心贡献不是某个具体模型，而是<strong>"memory 应该用梯度学习"</strong>这个范式转换。</p>
+<p>NVIDIA 证明 TTT (Test-Time Training) ≡ Linear Attention。这意味着 Titans 和 GDN 实际上是同一事物的不同视角——一个从"记忆学习"出发，一个从"线性注意力"出发，殊途同归。</p>
+<table>
+<tr><th>方向</th><th>代表</th><th>意义</th></tr>
+<tr><td>极长上下文</td><td>ATLAS</td><td>10M tokens, 80%+ acc</td></tr>
+<tr><td>训练加速</td><td>TNT</td><td>17x speedup (实用性)</td></tr>
+<tr><td>理论统一</td><td>Miras</td><td>架构设计 recipe</td></tr>
+<tr><td>等价证明</td><td>TTT=LinAttn</td><td>殊途同归</td></tr>
+</table>
+<div class="key-point"><strong>最重要的后续方向:</strong> (1) ATLAS 的 10M 极长上下文, (2) TNT 的 17x 训练加速 (解决实用性), (3) Miras 的统一理论 (指导架构设计)。</div>
+<div class="key-point"><strong>核心观点演进:</strong> 2024 — "memory 可以用梯度更新"; 2025 — "所有模型本质都是 memory" + "TTT = Linear Attention"; 2026 — "memory 需要多层+两阶段"。这条线从 Titans 到 ATLAS，构建了一个完整的 gradient-based memory 理论体系。</div>
+</div>
+</div>
+
+<div class="related-notes">
+<h3>&#x1F4CE; 相关笔记</h3>
+<a class="parent" href="la_titans.html" onclick="if(parent.loadPage)parent.loadPage('la_titans.html');return false;">&#x2191; Titans (父笔记)</a>
+<a href="la_miras.html" onclick="if(parent.loadPage)parent.loadPage('la_miras.html');return false;">Miras (统一框架)</a>
+<a href="la_tnt.html" onclick="if(parent.loadPage)parent.loadPage('la_tnt.html');return false;">TNT (17x 训练加速)</a>
+<a href="la_trellis.html" onclick="if(parent.loadPage)parent.loadPage('la_trellis.html');return false;">Trellis (KV Cache 压缩)</a>
+<a href="la_memory_caching.html" onclick="if(parent.loadPage)parent.loadPage('la_memory_caching.html');return false;">Memory Caching (Growing Memory)</a>
+<a href="la_gated_deltanet.html" onclick="if(parent.loadPage)parent.loadPage('la_gated_deltanet.html');return false;">Gated DeltaNet</a>
+<a href="la_m2rnn.html" onclick="if(parent.loadPage)parent.loadPage('la_m2rnn.html');return false;">M&#xB2;RNN</a>
+<a href="linear_attention.html" onclick="if(parent.loadPage)parent.loadPage('linear_attention.html');return false;">Linear Attention 综述</a>
+</div>
+
+<footer>Generated 2026.06.03 | ATLAS: Learning to Optimally Memorize (arxiv 2505.23735)</footer>
+</div>
+</body>
+</html>

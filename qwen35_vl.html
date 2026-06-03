@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3.5-VL Architecture</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #4facfe, #00f2fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #4facfe; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #4facfe0a; border: 1px solid #4facfe22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #4facfe; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: stretch; }
+.three-col .col-code { min-width: 0; }
+.three-col .col-svg { min-width: 0; }
+.three-col .col-caption { display: flex; flex-direction: column; justify-content: center; padding: 16px; background: #0f0f18; border: 1px solid #1e1e30; border-radius: 12px; }
+.three-col .col-caption h3 { margin-top: 0; color: #4facfe; font-size: 1rem; }
+.three-col .col-caption p { font-size: 0.84rem; color: #9898b0; margin-bottom: 8px; }
+.three-col .col-caption .formula { color: #00f2fe; font-size: 0.88rem; background: #11111a; padding: 8px 12px; border-radius: 6px; margin: 6px 0; line-height: 2; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Qwen3.5-VL Architecture</h1>
+<p class="subtitle">Hybrid GDN+Attention, MoE 512 experts, mRoPE multimodal positional encoding, Deepstack visual injection</p>
+
+<!-- ===== 1. Hybrid GDN + Gated Attention ===== -->
+<h2>1. Hybrid GDN + Gated Attention</h2>
+<p>64 layers total: repeating pattern of 3x GDN (Gated DeltaNet) + 1x Gated Attention per group of 4 layers. GDN provides linear-complexity recurrence; gated attention provides full expressiveness at regular intervals.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">GatedDeltaNet</span>(nn.Module):
+    <span class="cm">"""Gated DeltaNet: linear attention with delta rule"""</span>
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        q, k, v = self.qkv(x).chunk(<span class="num">3</span>, dim=-<span class="num">1</span>)
+        beta = self.beta_proj(x).sigmoid()
+        phi_k = self.feature_map(k)  <span class="cm"># φ(k)</span>
+
+        <span class="cm"># Delta rule update: erase then write</span>
+        <span class="cm"># S_t = S_{t-1} - β·(S·φ(k))⊗φ(k) + φ(k)⊗v</span>
+        erase = beta * (S @ phi_k.unsqueeze(-<span class="num">1</span>))
+        S = S - erase @ phi_k.unsqueeze(-<span class="num">2</span>) \
+            + phi_k.unsqueeze(-<span class="num">1</span>) @ v.unsqueeze(-<span class="num">2</span>)
+
+        o = (phi_q.unsqueeze(-<span class="num">2</span>) @ S).squeeze(-<span class="num">2</span>)
+        <span class="kw">return</span> self.gate(x) * self.out_proj(o)
+
+<span class="kw">class</span> <span class="fn">GatedAttention</span>(nn.Module):
+    <span class="cm">"""Standard softmax attention with output gating"""</span>
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        q, k, v = self.qkv(x).chunk(<span class="num">3</span>, dim=-<span class="num">1</span>)
+        attn = softmax(q @ k.T / sqrt(d)) @ v
+        <span class="kw">return</span> self.gate(x) * self.out_proj(attn)</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 360" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#4facfe"/></marker></defs>
+  <text x="200" y="20" text-anchor="middle" fill="#6b6b80" font-size="10">Layer Group Pattern (x16 groups = 64 layers)</text>
+
+  <!-- GDN blocks -->
+  <rect x="130" y="35" width="140" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="58" text-anchor="middle" fill="#667eea" font-size="10">GDN Layer (linear)</text>
+  <path d="M200 75 L200 90" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="130" y="95" width="140" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="118" text-anchor="middle" fill="#667eea" font-size="10">GDN Layer (linear)</text>
+  <path d="M200 135 L200 150" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="130" y="155" width="140" height="40" rx="6" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="178" text-anchor="middle" fill="#667eea" font-size="10">GDN Layer (linear)</text>
+  <path d="M200 195 L200 210" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Attention block -->
+  <rect x="130" y="215" width="140" height="40" rx="6" fill="#f5576c22" stroke="#f5576c"/>
+  <text x="200" y="238" text-anchor="middle" fill="#f5576c" font-size="10">Gated Attention (quadratic)</text>
+
+  <!-- Bracket -->
+  <path d="M290 40 L310 40 L310 250 L290 250" stroke="#4facfe44" stroke-width="1.5" fill="none"/>
+  <text x="330" y="150" fill="#4facfe" font-size="9">x16</text>
+
+  <!-- Delta rule detail -->
+  <rect x="60" y="280" width="280" height="60" rx="8" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="200" y="300" text-anchor="middle" fill="#667eea" font-size="9" font-weight="bold">Delta Rule Update</text>
+  <text x="200" y="318" text-anchor="middle" fill="#c4c4d4" font-size="8" font-family="monospace">S_t = S_{t-1} - beta*(S*phi(k))x phi(k) + phi(k) x v</text>
+  <text x="200" y="333" text-anchor="middle" fill="#555" font-size="8">erase old association, write new one</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Why Hybrid?</h3>
+<p>GDN layers run in O(N) via recurrent state updates - ideal for long sequences. But pure linear attention loses expressiveness.</p>
+<p>Every 4th layer uses full softmax attention to "correct" accumulated approximation errors and capture global dependencies.</p>
+<div class="formula">$3 \times \text{GDN} + 1 \times \text{Attn} = 1 \text{ group}$ $16 \text{ groups} = 64 \text{ layers}$</div>
+<p>The <strong style="color:#667eea">delta rule</strong> improves over vanilla linear attention: it can selectively erase outdated key-value associations via the learned beta gate.</p>
+<p>Output gating on both GDN and Attention layers provides adaptive information flow control.</p>
+</div>
+</div>
+
+<!-- ===== 2. Vision Encoder ===== -->
+<h2>2. Vision Encoder</h2>
+<p>Conv3d patch embedding handles video (temporal_patch_size=2) and images. Learnable 2D positional embedding on a 48x48 grid with bicubic interpolation for arbitrary resolutions. 2D RoPE inside ViT blocks.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">VisionEncoder</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        <span class="cm"># Conv3d: handles temporal dim for video</span>
+        self.patch_embed = nn.Conv3d(
+            in_channels=<span class="num">3</span>,
+            out_channels=hidden_dim,
+            kernel_size=(<span class="num">2</span>, <span class="num">16</span>, <span class="num">16</span>),  <span class="cm"># t=2, h=16, w=16</span>
+            stride=(<span class="num">2</span>, <span class="num">16</span>, <span class="num">16</span>)
+        )
+        <span class="cm"># Learnable 2D pos embed (48x48 grid)</span>
+        self.pos_embed = nn.Parameter(
+            torch.randn(<span class="num">1</span>, <span class="num">48</span>*<span class="num">48</span>, hidden_dim))
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, pixels):
+        <span class="cm"># pixels: [B, C, T, H, W]</span>
+        x = self.patch_embed(pixels)  <span class="cm"># [B, D, T/2, H/16, W/16]</span>
+        x = x.flatten(<span class="num">2</span>).transpose(<span class="num">1</span>,<span class="num">2</span>)  <span class="cm"># [B, N, D]</span>
+
+        <span class="cm"># Interpolate pos embed to actual grid size</span>
+        pos = interpolate_2d(
+            self.pos_embed, target_h, target_w)
+        x = x + pos
+
+        <span class="cm"># ViT blocks with 2D RoPE</span>
+        <span class="kw">for</span> blk <span class="kw">in</span> self.blocks:
+            x = blk(x, rope_2d=self.rope_2d)
+        <span class="kw">return</span> x</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Vision Encoder Pipeline</text>
+
+  <!-- Input -->
+  <rect x="120" y="30" width="160" height="35" rx="6" fill="#1e1e2e" stroke="#f5576c44"/>
+  <text x="200" y="52" text-anchor="middle" fill="#f5576c" font-size="9">Input: [B, 3, T, H, W]</text>
+  <path d="M200 65 L200 80" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Conv3d -->
+  <rect x="100" y="85" width="200" height="45" rx="8" fill="#4facfe15" stroke="#4facfe"/>
+  <text x="200" y="105" text-anchor="middle" fill="#4facfe" font-size="10" font-weight="bold">Conv3d Patch Embed</text>
+  <text x="200" y="122" text-anchor="middle" fill="#555" font-size="8">kernel=(2,16,16) stride=(2,16,16)</text>
+  <path d="M200 130 L200 145" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Pos embed -->
+  <rect x="100" y="150" width="200" height="45" rx="8" fill="#667eea15" stroke="#667eea"/>
+  <text x="200" y="170" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">+ 2D Pos Embed (48x48)</text>
+  <text x="200" y="187" text-anchor="middle" fill="#555" font-size="8">bicubic interpolation to actual size</text>
+  <path d="M200 195 L200 210" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- ViT blocks -->
+  <rect x="100" y="215" width="200" height="55" rx="8" fill="#00f2fe15" stroke="#00f2fe"/>
+  <text x="200" y="237" text-anchor="middle" fill="#00f2fe" font-size="10" font-weight="bold">ViT Blocks + 2D RoPE</text>
+  <text x="200" y="255" text-anchor="middle" fill="#555" font-size="8">rotary position on (h, w) axes</text>
+  <path d="M200 270 L200 285" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Output -->
+  <rect x="120" y="290" width="160" height="35" rx="6" fill="#1e1e2e" stroke="#00f2fe44"/>
+  <text x="200" y="312" text-anchor="middle" fill="#00f2fe" font-size="9">Visual Tokens: [B, N_vis, D]</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Patch Embedding</h3>
+<p><strong style="color:#4facfe">Conv3d</strong> with temporal kernel=2 merges 2 consecutive frames into one temporal token, reducing video sequence length by 2x.</p>
+<p>Spatial patch size 16x16 means a 224x224 image becomes 14x14 = 196 tokens.</p>
+<h3>Positional Encoding</h3>
+<p>Learnable 2D grid (48x48 = 2304 positions) supports up to 768x768 natively. Larger resolutions use bicubic interpolation.</p>
+<p><strong style="color:#00f2fe">2D RoPE</strong> inside ViT blocks encodes relative spatial position, enabling better generalization to unseen resolutions.</p>
+</div>
+</div>
+
+<!-- ===== 3. mRoPE ===== -->
+<h2>3. mRoPE (Multimodal RoPE)</h2>
+<p>Head dimension split into 3 parts for temporal/height/width positional encoding. Language tokens share the same temporal ID; vision tokens use spatial coordinates.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">MultimodalRoPE</span>(nn.Module):
+    <span class="cm">"""mRoPE: split head_dim into 3 parts for 3 axes"""</span>
+    <span class="cm"># head_dim = 32 → [11, 11, 10] for t, h, w</span>
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, q, k, pos_ids):
+        <span class="cm"># pos_ids: [B, N, 3] → (t_id, h_id, w_id)</span>
+        <span class="cm"># Split q,k along head_dim</span>
+        q_t, q_h, q_w = q.split([<span class="num">11</span>,<span class="num">11</span>,<span class="num">10</span>], dim=-<span class="num">1</span>)
+        k_t, k_h, k_w = k.split([<span class="num">11</span>,<span class="num">11</span>,<span class="num">10</span>], dim=-<span class="num">1</span>)
+
+        <span class="cm"># Apply RoPE per axis</span>
+        q_t = apply_rope(q_t, pos_ids[...,<span class="num">0</span>])
+        q_h = apply_rope(q_h, pos_ids[...,<span class="num">1</span>])
+        q_w = apply_rope(q_w, pos_ids[...,<span class="num">2</span>])
+
+        k_t = apply_rope(k_t, pos_ids[...,<span class="num">0</span>])
+        k_h = apply_rope(k_h, pos_ids[...,<span class="num">1</span>])
+        k_w = apply_rope(k_w, pos_ids[...,<span class="num">2</span>])
+
+        <span class="kw">return</span> cat([q_t,q_h,q_w]), cat([k_t,k_h,k_w])
+
+    <span class="cm"># Language tokens: t=position, h=0, w=0</span>
+    <span class="cm"># Vision tokens:  t=frame_id, h=row, w=col</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">mRoPE: Head Dimension Split</text>
+
+  <!-- Head dim bar -->
+  <rect x="50" y="40" width="300" height="30" rx="4" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="200" y="35" text-anchor="middle" fill="#888" font-size="8">head_dim = 32</text>
+
+  <!-- Temporal -->
+  <rect x="50" y="40" width="103" height="30" rx="4" fill="#f5576c33" stroke="#f5576c"/>
+  <text x="101" y="59" text-anchor="middle" fill="#f5576c" font-size="9">temporal (11)</text>
+
+  <!-- Height -->
+  <rect x="153" y="40" width="103" height="30" rx="4" fill="#667eea33" stroke="#667eea"/>
+  <text x="204" y="59" text-anchor="middle" fill="#667eea" font-size="9">height (11)</text>
+
+  <!-- Width -->
+  <rect x="256" y="40" width="94" height="30" rx="4" fill="#00f2fe33" stroke="#00f2fe"/>
+  <text x="303" y="59" text-anchor="middle" fill="#00f2fe" font-size="9">width (10)</text>
+
+  <!-- Language example -->
+  <text x="50" y="105" fill="#4facfe" font-size="10" font-weight="bold">Language tokens:</text>
+  <rect x="50" y="115" width="300" height="50" rx="6" fill="#1e1e2e" stroke="#4facfe22"/>
+  <text x="70" y="135" fill="#c4c4d4" font-size="8" font-family="monospace">token_0: t=0, h=0, w=0</text>
+  <text x="70" y="150" fill="#c4c4d4" font-size="8" font-family="monospace">token_1: t=1, h=0, w=0  (sequential t)</text>
+
+  <!-- Vision example -->
+  <text x="50" y="195" fill="#667eea" font-size="10" font-weight="bold">Vision tokens (image patch grid):</text>
+  <rect x="50" y="205" width="300" height="70" rx="6" fill="#1e1e2e" stroke="#667eea22"/>
+  <text x="70" y="225" fill="#c4c4d4" font-size="8" font-family="monospace">patch(0,0): t=T, h=0, w=0</text>
+  <text x="70" y="240" fill="#c4c4d4" font-size="8" font-family="monospace">patch(0,1): t=T, h=0, w=1</text>
+  <text x="70" y="255" fill="#c4c4d4" font-size="8" font-family="monospace">patch(1,0): t=T, h=1, w=0</text>
+  <text x="70" y="270" fill="#555" font-size="8">same t for all patches in one image</text>
+
+  <!-- Video example -->
+  <text x="50" y="300" fill="#00f2fe" font-size="10" font-weight="bold">Video: t increments per frame group</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Multimodal Position Encoding</h3>
+<p>Standard RoPE uses a single position ID per token. mRoPE splits the head dimension into <strong style="color:#f5576c">3 axes</strong> and applies independent rotary embeddings to each.</p>
+<div class="formula">$\text{head\_dim} = 32 \rightarrow [11, 11, 10]$ $\text{axes: temporal, height, width}$</div>
+<p><strong>Language:</strong> Only temporal axis increments (h=0, w=0 always). This degenerates to standard 1D RoPE.</p>
+<p><strong>Vision:</strong> Temporal axis is the frame ID (same for all patches in one image). Height and width encode spatial grid position.</p>
+<p>This unified scheme lets attention naturally compute spatial proximity for vision tokens and sequential proximity for language tokens.</p>
+</div>
+</div>
+
+<!-- ===== 4. MoE ===== -->
+<h2>4. MoE (Mixture of Experts)</h2>
+<p>512 experts with top-10 routing. Sigmoid gating with learned expert bias. Shared expert with gate for baseline capacity. First layer is dense, remaining layers are MoE.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">MoELayer</span>(nn.Module):
+    <span class="cm">"""512 experts, top-10 sigmoid routing"""</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, hidden, expert_dim, n_experts=<span class="num">512</span>):
+        self.gate = nn.Linear(hidden, n_experts)
+        self.expert_bias = nn.Parameter(
+            torch.zeros(n_experts))
+        self.experts = nn.ModuleList([
+            FFN(hidden, expert_dim)
+            <span class="kw">for</span> _ <span class="kw">in</span> range(n_experts)])
+        self.shared_expert = FFN(hidden, expert_dim)
+        self.shared_gate = nn.Linear(hidden, <span class="num">1</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        <span class="cm"># Sigmoid routing with bias</span>
+        logits = self.gate(x) + self.expert_bias
+        scores = logits.sigmoid()  <span class="cm"># not softmax!</span>
+
+        <span class="cm"># Top-10 selection</span>
+        topk_scores, topk_idx = scores.topk(<span class="num">10</span>)
+        topk_scores = topk_scores / topk_scores.sum(-<span class="num">1</span>, keepdim=<span class="kw">True</span>)
+
+        <span class="cm"># Dispatch and combine</span>
+        out = dispatch_combine(x, topk_idx, topk_scores)
+
+        <span class="cm"># Shared expert (always active)</span>
+        shared = self.shared_expert(x)
+        shared = shared * self.shared_gate(x).sigmoid()
+        <span class="kw">return</span> out + shared</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 360" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">MoE Routing: 512 Experts, Top-10</text>
+
+  <!-- Input -->
+  <rect x="150" y="30" width="100" height="28" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="200" y="48" text-anchor="middle" fill="#4facfe" font-size="9">hidden x</text>
+  <path d="M200 58 L200 75" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Router -->
+  <rect x="120" y="80" width="160" height="35" rx="6" fill="#f5576c22" stroke="#f5576c"/>
+  <text x="200" y="100" text-anchor="middle" fill="#f5576c" font-size="9">Router: sigmoid(Wx + bias)</text>
+  <path d="M200 115 L200 130" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Top-K -->
+  <rect x="130" y="135" width="140" height="28" rx="5" fill="#667eea22" stroke="#667eea"/>
+  <text x="200" y="153" text-anchor="middle" fill="#667eea" font-size="9">Top-10 Selection</text>
+
+  <!-- Expert fan-out -->
+  <path d="M150 163 L80 190" stroke="#667eea55" stroke-width="1"/>
+  <path d="M170 163 L130 190" stroke="#667eea55" stroke-width="1"/>
+  <path d="M200 163 L200 190" stroke="#667eea" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M230 163 L270 190" stroke="#667eea55" stroke-width="1"/>
+  <path d="M250 163 L320 190" stroke="#667eea55" stroke-width="1"/>
+
+  <!-- Experts -->
+  <rect x="60" y="192" width="35" height="25" rx="4" fill="#667eea22" stroke="#667eea44"/>
+  <text x="77" y="208" text-anchor="middle" fill="#667eea" font-size="7">E_i</text>
+  <rect x="110" y="192" width="35" height="25" rx="4" fill="#667eea22" stroke="#667eea44"/>
+  <text x="127" y="208" text-anchor="middle" fill="#667eea" font-size="7">E_j</text>
+  <rect x="182" y="192" width="35" height="25" rx="4" fill="#667eea33" stroke="#667eea"/>
+  <text x="199" y="208" text-anchor="middle" fill="#667eea" font-size="7">...</text>
+  <rect x="255" y="192" width="35" height="25" rx="4" fill="#667eea22" stroke="#667eea44"/>
+  <text x="272" y="208" text-anchor="middle" fill="#667eea" font-size="7">E_m</text>
+  <rect x="305" y="192" width="35" height="25" rx="4" fill="#667eea22" stroke="#667eea44"/>
+  <text x="322" y="208" text-anchor="middle" fill="#667eea" font-size="7">E_n</text>
+  <text x="200" y="235" text-anchor="middle" fill="#555" font-size="8">512 experts total, 10 active per token</text>
+
+  <!-- Combine -->
+  <path d="M200 240 L200 255" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="130" y="260" width="140" height="28" rx="5" fill="#4facfe15" stroke="#4facfe"/>
+  <text x="200" y="278" text-anchor="middle" fill="#4facfe" font-size="9">Weighted Combine</text>
+
+  <!-- Shared expert -->
+  <rect x="130" y="300" width="140" height="35" rx="6" fill="#00f2fe15" stroke="#00f2fe"/>
+  <text x="200" y="315" text-anchor="middle" fill="#00f2fe" font-size="9">+ Shared Expert (gated)</text>
+  <text x="200" y="330" text-anchor="middle" fill="#555" font-size="7">always active, provides baseline</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Sigmoid Routing</h3>
+<p>Unlike softmax routing (which forces competition), <strong style="color:#f5576c">sigmoid gating</strong> allows independent expert activation scores. This avoids the "winner-take-all" problem.</p>
+<div class="formula">$\text{score}_i = \sigma(W \cdot x + \text{bias}_i)$ $\text{top-10 selected, renormalized}$</div>
+<h3>Expert Bias</h3>
+<p>Learned per-expert bias helps balance load without auxiliary loss. Experts with low utilization get higher bias, encouraging routing diversity.</p>
+<h3>Shared Expert</h3>
+<p>A dedicated shared expert processes every token (gated by sigmoid). This ensures baseline capacity even when routed experts are suboptimal for a given input.</p>
+<p><strong style="color:#00f2fe">Layer 0 is dense</strong> (no routing) to establish stable representations before sparse routing begins.</p>
+</div>
+</div>
+
+<!-- ===== 5. Deepstack Visual Injection ===== -->
+<h2>5. Deepstack Visual Injection</h2>
+<p>Visual tokens are injected at intermediate layers rather than only prepended at the input. This enables deeper cross-modal fusion throughout the network.</p>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="kw">class</span> <span class="fn">DeepstackVLM</span>(nn.Module):
+    <span class="cm">"""Inject visual tokens at multiple depths"""</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, n_layers=<span class="num">64</span>, inject_layers=None):
+        <span class="cm"># inject_layers: e.g. [0, 8, 16, 24, 32]</span>
+        self.inject_layers = inject_layers or [
+            <span class="num">0</span>, <span class="num">8</span>, <span class="num">16</span>, <span class="num">24</span>, <span class="num">32</span>]
+        self.vis_projectors = nn.ModuleDict({
+            str(l): nn.Linear(vis_dim, hidden_dim)
+            <span class="kw">for</span> l <span class="kw">in</span> self.inject_layers
+        })
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, text_tokens, vis_tokens):
+        h = self.embed(text_tokens)
+
+        <span class="kw">for</span> i, layer <span class="kw">in</span> enumerate(self.layers):
+            <span class="kw">if</span> i <span class="kw">in</span> self.inject_layers:
+                <span class="cm"># Project and inject visual tokens</span>
+                v = self.vis_projectors[str(i)](vis_tokens)
+                h = self.fuse(h, v)  <span class="cm"># concat or cross-attn</span>
+
+            h = layer(h)
+
+        <span class="kw">return</span> h</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Deepstack: Multi-layer Visual Injection</text>
+
+  <!-- Vision encoder on left -->
+  <rect x="30" y="60" width="90" height="280" rx="8" fill="#667eea11" stroke="#667eea44"/>
+  <text x="75" y="80" text-anchor="middle" fill="#667eea" font-size="8">Vision</text>
+  <text x="75" y="93" text-anchor="middle" fill="#667eea" font-size="8">Encoder</text>
+  <rect x="45" y="110" width="60" height="20" rx="3" fill="#667eea22" stroke="#667eea"/>
+  <text x="75" y="124" text-anchor="middle" fill="#667eea" font-size="7">vis tokens</text>
+
+  <!-- LLM layers on right -->
+  <rect x="180" y="50" width="180" height="30" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="270" y="69" text-anchor="middle" fill="#4facfe" font-size="9">Layer 0 (inject)</text>
+  <path d="M120 120 L180 65" stroke="#667eea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ar)"/>
+
+  <rect x="180" y="95" width="180" height="25" rx="5" fill="#1e1e2e" stroke="#2a2a3a"/>
+  <text x="270" y="112" text-anchor="middle" fill="#888" font-size="8">Layers 1-7</text>
+
+  <rect x="180" y="135" width="180" height="30" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="270" y="154" text-anchor="middle" fill="#4facfe" font-size="9">Layer 8 (inject)</text>
+  <path d="M120 120 L180 150" stroke="#667eea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ar)"/>
+
+  <rect x="180" y="180" width="180" height="25" rx="5" fill="#1e1e2e" stroke="#2a2a3a"/>
+  <text x="270" y="197" text-anchor="middle" fill="#888" font-size="8">Layers 9-15</text>
+
+  <rect x="180" y="220" width="180" height="30" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="270" y="239" text-anchor="middle" fill="#4facfe" font-size="9">Layer 16 (inject)</text>
+  <path d="M120 120 L180 235" stroke="#667eea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ar)"/>
+
+  <rect x="180" y="265" width="180" height="25" rx="5" fill="#1e1e2e" stroke="#2a2a3a"/>
+  <text x="270" y="282" text-anchor="middle" fill="#888" font-size="8">Layers 17-23</text>
+
+  <rect x="180" y="305" width="180" height="30" rx="5" fill="#1e1e2e" stroke="#4facfe44"/>
+  <text x="270" y="324" text-anchor="middle" fill="#4facfe" font-size="9">Layer 24 (inject)</text>
+  <path d="M120 120 L180 320" stroke="#667eea" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#ar)"/>
+
+  <!-- Flow arrows -->
+  <path d="M270 80 L270 95" stroke="#4facfe55" stroke-width="1"/>
+  <path d="M270 120 L270 135" stroke="#4facfe55" stroke-width="1"/>
+  <path d="M270 165 L270 180" stroke="#4facfe55" stroke-width="1"/>
+  <path d="M270 205 L270 220" stroke="#4facfe55" stroke-width="1"/>
+  <path d="M270 250 L270 265" stroke="#4facfe55" stroke-width="1"/>
+  <path d="M270 290 L270 305" stroke="#4facfe55" stroke-width="1"/>
+
+  <text x="270" y="360" text-anchor="middle" fill="#555" font-size="8">... continues to layer 63</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>Why Deepstack?</h3>
+<p>Traditional VLMs prepend visual tokens only at layer 0. By the time information reaches deeper layers, visual signal is diluted.</p>
+<p><strong style="color:#4facfe">Deepstack</strong> re-injects visual features at multiple intermediate layers, giving the LLM fresh visual context at different abstraction levels.</p>
+<h3>Benefits</h3>
+<p>- Lower layers get raw visual features for grounding</p>
+<p>- Middle layers get refined features for reasoning</p>
+<p>- Reduces the "forgetting" problem in deep networks</p>
+<p>- Each injection point has its own projector, allowing layer-specific adaptation of visual representations.</p>
+<div class="formula">$\text{Inject at layers: } [0,\, 8,\, 16,\, 24,\, 32]$ $\text{Each with independent Linear projector}$</div>
+</div>
+</div>
+
+<div class="key-point"><strong>Architecture Summary:</strong> Qwen3.5-VL combines linear-complexity GDN layers (75% of layers) with periodic full attention (25%), 512-expert MoE with sigmoid routing, multimodal 3-axis positional encoding, and multi-depth visual injection — achieving both efficiency and strong cross-modal understanding.</div>
+
+<footer>Generated 2026.06.02 | Qwen3.5-VL Architecture Analysis</footer>
+</div>
+</body>
+</html>

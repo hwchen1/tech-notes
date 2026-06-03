@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MQT — Matryoshka Query Transformer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #a855f7, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #a855f7; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #a855f70a; border: 1px solid #a855f722; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #a855f7; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #a855f7; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #a855f7; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>MQT — Matryoshka Query Transformer</h1>
+<p class="subtitle">可变长 Query 压缩视觉 Token | Matryoshka 式嵌套训练 | 2→256 tokens 按需截断 | LLaVA-OneVision</p>
+
+<!-- ===== 1. Core Idea ===== -->
+<h2>1. 核心理念：可变长视觉 Token 压缩</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MQT 核心思路:</span>
+<span class="cm"># ViT 输出 576 visual tokens 太多</span>
+<span class="cm"># 用 M 个 learnable queries 压缩</span>
+<span class="cm"># 训练时随机截断 → 推理时按需选择</span>
+
+<span class="cm"># 标准 VLM 流程:</span>
+<span class="cm"># ViT: image → 576 tokens</span>
+<span class="cm"># MLP: 576 tokens → LLM (太长!)</span>
+
+<span class="cm"># MQT 流程:</span>
+<span class="cm"># ViT: image → 576 tokens</span>
+<span class="cm"># MQT: 576 → M tokens (M=2~256)</span>
+<span class="cm"># LLM: 只处理 M 个压缩 token</span>
+
+visual_tokens = vit(image)  <span class="cm"># [576, d]</span>
+queries = learnable(<span class="num">256</span>, d)  <span class="cm"># [256, d]</span>
+
+<span class="cm"># Cross-attention 压缩</span>
+compressed = cross_attn(
+    Q=queries,        <span class="cm"># [256, d]</span>
+    K=visual_tokens,  <span class="cm"># [576, d]</span>
+    V=visual_tokens   <span class="cm"># [576, d]</span>
+)  <span class="cm"># → [256, d]</span>
+
+<span class="cm"># 推理时截断前 m 个 (m ≤ 256)</span>
+output = compressed[:m]  <span class="cm"># [m, d]</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr-mqt1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#a855f7" stroke-width="1"/></marker>
+  </defs>
+  <!-- Image -->
+  <rect x="150" y="10" width="100" height="40" rx="6" fill="#1a1a2e" stroke="#555" stroke-width="1"/>
+  <text x="200" y="35" text-anchor="middle" fill="#ccc" font-size="12">Image</text>
+  <!-- ViT -->
+  <rect x="130" y="75" width="140" height="36" rx="6" fill="#1a1a2e" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="200" y="97" text-anchor="middle" fill="#6366f1" font-size="11">ViT Encoder</text>
+  <line x1="200" y1="50" x2="200" y2="75" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+  <!-- 576 tokens -->
+  <rect x="130" y="135" width="140" height="30" rx="6" fill="#2a1a3e" stroke="#a855f7" stroke-width="1"/>
+  <text x="200" y="154" text-anchor="middle" fill="#a855f7" font-size="11">576 Visual Tokens</text>
+  <line x1="200" y1="111" x2="200" y2="135" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+  <!-- MQT block -->
+  <rect x="100" y="190" width="200" height="60" rx="8" fill="#1a1a2e" stroke="#a855f7" stroke-width="2"/>
+  <text x="200" y="213" text-anchor="middle" fill="#a855f7" font-size="12" font-weight="bold">MQT</text>
+  <text x="200" y="232" text-anchor="middle" fill="#888" font-size="10">Cross-Attn + Matryoshka</text>
+  <!-- Queries input -->
+  <rect x="10" y="200" width="70" height="30" rx="6" fill="#1a1a2e" stroke="#38d9a9" stroke-width="1"/>
+  <text x="45" y="219" text-anchor="middle" fill="#38d9a9" font-size="10">256 Queries</text>
+  <line x1="80" y1="215" x2="100" y2="215" stroke="#38d9a9" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+  <!-- Arrow from 576 to MQT -->
+  <line x1="200" y1="165" x2="200" y2="190" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+  <!-- Output: variable tokens -->
+  <rect x="115" y="280" width="170" height="36" rx="6" fill="#1a2e1a" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="200" y="302" text-anchor="middle" fill="#38d9a9" font-size="11">m tokens (m = 2~256)</text>
+  <line x1="200" y1="250" x2="200" y2="280" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+  <!-- LLM -->
+  <rect x="140" y="340" width="120" height="30" rx="6" fill="#1a1a2e" stroke="#ffa94d" stroke-width="1.5"/>
+  <text x="200" y="359" text-anchor="middle" fill="#ffa94d" font-size="11">LLM</text>
+  <line x1="200" y1="316" x2="200" y2="340" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt1)"/>
+</svg>
+<p class="caption">MQT 架构：ViT → 576 tokens → MQT 压缩 → m 个 token 送入 LLM</p>
+</div>
+
+<div class="col-caption">
+<h3>为什么需要 MQT？</h3>
+<p>标准 VLM 中 ViT 输出 576 个 visual tokens，占据 LLM 输入的大量位置。对于简单图像（如单个物体），576 tokens 是浪费；对于复杂文档，可能还不够。</p>
+<p><strong>MQT 实现"按需分配"：</strong>简单图像用 16 tokens，复杂图像用 256 tokens，计算量与图像复杂度成正比。</p>
+<div class="key-point">
+<strong>与 Q-Former 的区别：</strong>Q-Former 固定 32 个 query，不可变。MQT 训练时用 Matryoshka 策略让前 m 个 query 也能独立工作。
+</div>
+</div>
+</div>
+
+<!-- ===== 2. Matryoshka Training ===== -->
+<h2>2. Matryoshka 训练策略</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Matryoshka Representation Learning</span>
+<span class="cm"># 灵感来源: 俄罗斯套娃</span>
+<span class="cm"># 外层包含内层的所有信息</span>
+
+<span class="cm"># 训练时: 随机采样 m ∈ {2,4,8,...,256}</span>
+<span class="cm"># 只用前 m 个 query 的输出训练</span>
+<span class="cm"># → 前 m 个 query 学会独立工作!</span>
+
+<span class="kw">class</span> <span class="fn">MQT</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, M=<span class="num">256</span>, d=<span class="num">1024</span>):
+        self.queries = nn.Parameter(
+            torch.randn(M, d))
+        self.cross_attn = CrossAttention(d)
+        self.mlp = MLP(d, d_llm)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, visual_tokens, m=<span class="kw">None</span>):
+        <span class="cm"># visual_tokens: [B, 576, d]</span>
+        compressed = self.cross_attn(
+            Q=self.queries,  <span class="cm"># [256, d]</span>
+            KV=visual_tokens <span class="cm"># [576, d]</span>
+        )  <span class="cm"># → [B, 256, d]</span>
+
+        <span class="cm"># 训练: 随机截断</span>
+        <span class="kw">if</span> self.training:
+            m = random.choice(
+                [<span class="num">2</span>,<span class="num">4</span>,<span class="num">8</span>,<span class="num">16</span>,<span class="num">32</span>,<span class="num">64</span>,<span class="num">128</span>,<span class="num">256</span>])
+        <span class="cm"># 推理: 用户指定 m</span>
+        <span class="kw">else</span>:
+            m = m <span class="kw">or</span> <span class="num">256</span>
+
+        <span class="kw">return</span> self.mlp(compressed[:, :m])
+</pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+  <!-- Matryoshka nesting visualization -->
+  <!-- Outermost: 256 -->
+  <rect x="30" y="30" width="340" height="320" rx="12" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="4"/>
+  <text x="55" y="55" fill="#a855f7" font-size="11">m = 256</text>
+  <!-- 128 -->
+  <rect x="55" y="65" width="290" height="270" rx="10" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4"/>
+  <text x="75" y="85" fill="#8b5cf6" font-size="10">m = 128</text>
+  <!-- 64 -->
+  <rect x="80" y="100" width="240" height="220" rx="8" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="4"/>
+  <text x="95" y="118" fill="#7c3aed" font-size="10">m = 64</text>
+  <!-- 16 -->
+  <rect x="105" y="132" width="190" height="175" rx="8" fill="none" stroke="#6d28d9" stroke-width="1.5" stroke-dasharray="4"/>
+  <text x="118" y="150" fill="#6d28d9" font-size="10">m = 16</text>
+  <!-- Core: m=2 -->
+  <rect x="140" y="170" width="120" height="100" rx="8" fill="#a855f715" stroke="#a855f7" stroke-width="2"/>
+  <text x="200" y="200" text-anchor="middle" fill="#a855f7" font-size="13" font-weight="bold">m = 2</text>
+  <text x="200" y="222" text-anchor="middle" fill="#888" font-size="10">最核心信息</text>
+  <text x="200" y="242" text-anchor="middle" fill="#888" font-size="10">类别 + 主体</text>
+  <!-- Right side labels -->
+  <text x="200" y="345" text-anchor="middle" fill="#666" font-size="10">前 m 个 query 包含越来越完整的信息</text>
+  <text x="200" y="362" text-anchor="middle" fill="#a855f7" font-size="10">嵌套结构：inner ⊂ outer</text>
+</svg>
+<p class="caption">Matryoshka 套娃结构：前 m 个 query 自包含</p>
+</div>
+
+<div class="col-caption">
+<h3>为什么这样训练有效？</h3>
+<p>随机截断迫使模型将最重要的信息编码到前几个 query 中。前 2 个 query 捕捉类别和主体；前 16 个捕捉空间关系；前 256 个保留完整细节。</p>
+
+<div class="formula">
+$\mathcal{L}_{\text{MQT}} = \mathbb{E}_{m \sim \mathcal{M}} \left[ \mathcal{L}_{\text{LLM}}(y \mid x_{\text{text}}, z_{1:m}) \right]$
+</div>
+<p>其中 \(\mathcal{M} = \{2, 4, 8, 16, 32, 64, 128, 256\}\)，\(z_{1:m}\) 是前 m 个压缩 token。</p>
+
+<div class="key-point">
+<strong>信息密度递减：</strong>Query 1-2 携带 ~70% 的分类信息，Query 3-16 补充空间细节，Query 17-256 增加纹理/边缘等冗余信息。
+</div>
+</div>
+</div>
+
+<!-- ===== 3. Architecture Details ===== -->
+<h2>3. 架构细节与设计选择</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MQT 的 Cross-Attention 结构</span>
+<span class="cm"># 2层 transformer + cross-attn</span>
+
+<span class="kw">class</span> <span class="fn">MQTLayer</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d, n_heads):
+        <span class="cm"># Self-attention among queries</span>
+        self.self_attn = MultiHeadAttn(d, n_heads)
+        <span class="cm"># Cross-attention: queries → visual</span>
+        self.cross_attn = MultiHeadAttn(d, n_heads)
+        self.ffn = FFN(d, d * <span class="num">4</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, queries, visual):
+        <span class="cm"># Step 1: queries 互相交流</span>
+        q = self.self_attn(queries, queries)
+        <span class="cm"># Step 2: queries 从 visual 提取信息</span>
+        q = self.cross_attn(q, visual)
+        <span class="cm"># Step 3: FFN 非线性变换</span>
+        <span class="kw">return</span> self.ffn(q)
+
+<span class="cm"># 完整 MQT: 2层堆叠</span>
+<span class="cm"># 参数量极小: ~50M</span>
+<span class="cm"># (对比 ViT-L: 307M)</span>
+
+<span class="cm"># 位置编码: 2D sinusoidal</span>
+<span class="cm"># queries 本身有 learned pos</span>
+<span class="cm"># visual tokens 继承 ViT 的 pos</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr-mqt2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#a855f7" stroke-width="1"/></marker>
+  </defs>
+  <!-- Visual tokens (left) -->
+  <rect x="20" y="50" width="100" height="300" rx="8" fill="#1a1a2e" stroke="#6366f1" stroke-width="1"/>
+  <text x="70" y="35" text-anchor="middle" fill="#6366f1" font-size="10">Visual (576×d)</text>
+  <g fill="#6366f140" stroke="#6366f1" stroke-width="0.5">
+    <rect x="30" y="60" width="80" height="8" rx="2"/>
+    <rect x="30" y="72" width="80" height="8" rx="2"/>
+    <rect x="30" y="84" width="80" height="8" rx="2"/>
+    <rect x="30" y="96" width="80" height="8" rx="2"/>
+    <text x="70" y="120" text-anchor="middle" fill="#6366f180" font-size="9">...</text>
+    <rect x="30" y="130" width="80" height="8" rx="2"/>
+    <rect x="30" y="142" width="80" height="8" rx="2"/>
+  </g>
+  <!-- Queries (right) -->
+  <rect x="280" y="120" width="100" height="180" rx="8" fill="#1a1a2e" stroke="#a855f7" stroke-width="1"/>
+  <text x="330" y="110" text-anchor="middle" fill="#a855f7" font-size="10">Queries (256×d)</text>
+  <g fill="#a855f730" stroke="#a855f7" stroke-width="0.5">
+    <rect x="290" y="135" width="80" height="8" rx="2"/>
+    <rect x="290" y="147" width="80" height="8" rx="2"/>
+    <rect x="290" y="159" width="80" height="8" rx="2"/>
+    <rect x="290" y="171" width="80" height="8" rx="2"/>
+    <text x="330" y="192" text-anchor="middle" fill="#a855f780" font-size="9">...</text>
+    <rect x="290" y="200" width="80" height="8" rx="2"/>
+  </g>
+  <!-- MQT Layer block -->
+  <rect x="145" y="140" width="120" height="130" rx="8" fill="#1a1a2e" stroke="#a855f7" stroke-width="2"/>
+  <text x="205" y="165" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">MQT Layer</text>
+  <text x="205" y="190" text-anchor="middle" fill="#a855f7" font-size="9">Self-Attn (Q↔Q)</text>
+  <text x="205" y="210" text-anchor="middle" fill="#38d9a9" font-size="9">Cross-Attn (Q←V)</text>
+  <text x="205" y="230" text-anchor="middle" fill="#ffa94d" font-size="9">FFN</text>
+  <text x="205" y="258" text-anchor="middle" fill="#666" font-size="9">× 2 layers</text>
+  <!-- Arrows -->
+  <line x1="120" y1="200" x2="145" y2="200" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr-mqt2)"/>
+  <text x="133" y="193" fill="#6366f1" font-size="8">KV</text>
+  <line x1="280" y1="200" x2="265" y2="200" stroke="#a855f7" stroke-width="1.5" marker-end="url(#arr-mqt2)"/>
+  <text x="272" y="193" fill="#a855f7" font-size="8">Q</text>
+  <!-- Output -->
+  <rect x="155" y="310" width="100" height="30" rx="6" fill="#1a2e1a" stroke="#38d9a9" stroke-width="1"/>
+  <text x="205" y="329" text-anchor="middle" fill="#38d9a9" font-size="10">m tokens → LLM</text>
+  <line x1="205" y1="270" x2="205" y2="310" stroke="#555" stroke-width="1" marker-end="url(#arr-mqt2)"/>
+  <!-- Truncation indicator -->
+  <text x="205" y="365" text-anchor="middle" fill="#a855f7" font-size="10">截取前 m 个 (Matryoshka)</text>
+  <text x="205" y="385" text-anchor="middle" fill="#666" font-size="9">m ∈ {2, 4, 8, 16, 32, 64, 128, 256}</text>
+</svg>
+<p class="caption">MQT Layer: Self-Attn (query间) + Cross-Attn (query←visual) + FFN</p>
+</div>
+
+<div class="col-caption">
+<h3>设计选择</h3>
+<table>
+<tr><th>组件</th><th>选择</th></tr>
+<tr><td>Vision Encoder</td><td>CLIP ViT-L/14 (冻结)</td></tr>
+<tr><td>MQT Layers</td><td>2 层 (轻量)</td></tr>
+<tr><td>Max Queries</td><td>M = 256</td></tr>
+<tr><td>截断集合</td><td>{2,4,8,16,32,64,128,256}</td></tr>
+<tr><td>LLM</td><td>Vicuna-7B / 13B</td></tr>
+<tr><td>MQT 参数</td><td>~50M</td></tr>
+</table>
+
+<div class="key-point">
+<strong>为什么只需 2 层？</strong>MQT 不需要"理解"图像（ViT 已经做了），只需要"压缩"——将 576 维的冗余信息聚合到 M 个 query 中。压缩是比理解简单得多的任务。
+</div>
+</div>
+</div>
+
+<!-- ===== 4. Comparison with Omni-Encoder ===== -->
+<h2>4. 与 Omni-Encoder 的对比</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ========== MQT 方案 ==========</span>
+<span class="cm"># 保留 ViT，加一个轻量压缩层</span>
+image → ViT(307M) → 576 tokens
+     → MQT(50M) → m tokens
+     → LLM(7B) → answer
+
+<span class="cm"># 总视觉参数: 307M + 50M = 357M</span>
+<span class="cm"># 压缩比: 576/m (最高 288x)</span>
+<span class="cm"># 优点: 轻量, 即插即用</span>
+<span class="cm"># 缺点: 仍需 ViT 前置推理</span>
+
+
+<span class="cm"># ========== Omni-Encoder 方案 ==========</span>
+<span class="cm"># 完全替代 ViT，LLM 自身压缩</span>
+image → PatchEmbed → raw tokens
+     → MoE-LLM(3B/500M)
+     → queries 位置输出 = 压缩
+
+<span class="cm"># 总视觉参数: 3B (激活 500M)</span>
+<span class="cm"># 压缩比: 2704/256 = 10x (Q1)</span>
+<span class="cm">#    or 2704/8192 → 进一步 LLM</span>
+<span class="cm"># 优点: 无 ViT, 一体化</span>
+<span class="cm"># 缺点: 训练成本高 (1000×H200)</span>
+
+
+<span class="cm"># ========== Q-Former 方案 ==========</span>
+<span class="cm"># 固定 32 queries, 不可变</span>
+image → ViT → 257 tokens
+     → Q-Former(32 queries)
+     → 32 tokens → LLM
+
+<span class="cm"># 总: ViT + Q-Former (~130M)</span>
+<span class="cm"># 压缩比: 固定 257/32 = 8x</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
+  <!-- Table comparison -->
+  <!-- Header -->
+  <rect x="10" y="10" width="400" height="30" rx="4" fill="#16162a"/>
+  <text x="70" y="30" text-anchor="middle" fill="#a855f7" font-size="10" font-weight="bold">特性</text>
+  <text x="165" y="30" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">MQT</text>
+  <text x="270" y="30" text-anchor="middle" fill="#667eea" font-size="10" font-weight="bold">Omni-Encoder</text>
+  <text x="370" y="30" text-anchor="middle" fill="#f7971e" font-size="10" font-weight="bold">Q-Former</text>
+  <!-- Rows -->
+  <line x1="10" y1="44" x2="410" y2="44" stroke="#2a2a3e" stroke-width="0.5"/>
+  <!-- Row 1 -->
+  <text x="70" y="65" text-anchor="middle" fill="#888" font-size="9">ViT 依赖</text>
+  <text x="165" y="65" text-anchor="middle" fill="#ff6b6b" font-size="9">需要 ViT</text>
+  <text x="270" y="65" text-anchor="middle" fill="#38d9a9" font-size="9">不需要</text>
+  <text x="370" y="65" text-anchor="middle" fill="#ff6b6b" font-size="9">需要 ViT</text>
+  <line x1="10" y1="78" x2="410" y2="78" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 2 -->
+  <text x="70" y="99" text-anchor="middle" fill="#888" font-size="9">压缩比</text>
+  <text x="165" y="99" text-anchor="middle" fill="#38d9a9" font-size="9">2x ~ 288x</text>
+  <text x="270" y="99" text-anchor="middle" fill="#38d9a9" font-size="9">10x ~ 80x</text>
+  <text x="370" y="99" text-anchor="middle" fill="#888" font-size="9">固定 8x</text>
+  <line x1="10" y1="112" x2="410" y2="112" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 3 -->
+  <text x="70" y="133" text-anchor="middle" fill="#888" font-size="9">可变长</text>
+  <text x="165" y="133" text-anchor="middle" fill="#38d9a9" font-size="9">✓ Matryoshka</text>
+  <text x="270" y="133" text-anchor="middle" fill="#38d9a9" font-size="9">✓ Q1/Q2</text>
+  <text x="370" y="133" text-anchor="middle" fill="#ff6b6b" font-size="9">✗ 固定 32</text>
+  <line x1="10" y1="146" x2="410" y2="146" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 4 -->
+  <text x="70" y="167" text-anchor="middle" fill="#888" font-size="9">压缩机制</text>
+  <text x="165" y="167" text-anchor="middle" fill="#a855f7" font-size="9">Cross-Attn</text>
+  <text x="270" y="167" text-anchor="middle" fill="#667eea" font-size="9">Causal Self-Attn</text>
+  <text x="370" y="167" text-anchor="middle" fill="#f7971e" font-size="9">Cross-Attn</text>
+  <line x1="10" y1="180" x2="410" y2="180" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 5 -->
+  <text x="70" y="201" text-anchor="middle" fill="#888" font-size="9">额外参数</text>
+  <text x="165" y="201" text-anchor="middle" fill="#38d9a9" font-size="9">~50M</text>
+  <text x="270" y="201" text-anchor="middle" fill="#888" font-size="9">3B (act 500M)</text>
+  <text x="370" y="201" text-anchor="middle" fill="#38d9a9" font-size="9">~130M</text>
+  <line x1="10" y1="214" x2="410" y2="214" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 6 -->
+  <text x="70" y="235" text-anchor="middle" fill="#888" font-size="9">训练成本</text>
+  <text x="165" y="235" text-anchor="middle" fill="#38d9a9" font-size="9">低 (冻结ViT)</text>
+  <text x="270" y="235" text-anchor="middle" fill="#ff6b6b" font-size="9">极高 (1000×H200)</text>
+  <text x="370" y="235" text-anchor="middle" fill="#38d9a9" font-size="9">中等</text>
+  <line x1="10" y1="248" x2="410" y2="248" stroke="#1a1a28" stroke-width="0.5"/>
+  <!-- Row 7 -->
+  <text x="70" y="269" text-anchor="middle" fill="#888" font-size="9">多模态</text>
+  <text x="165" y="269" text-anchor="middle" fill="#ff6b6b" font-size="9">仅视觉</text>
+  <text x="270" y="269" text-anchor="middle" fill="#38d9a9" font-size="9">全模态</text>
+  <text x="370" y="269" text-anchor="middle" fill="#ff6b6b" font-size="9">仅视觉</text>
+  <!-- Summary -->
+  <rect x="30" y="300" width="360" height="60" rx="8" fill="#a855f708" stroke="#a855f733" stroke-width="1"/>
+  <text x="210" y="322" text-anchor="middle" fill="#a855f7" font-size="10" font-weight="bold">核心区别</text>
+  <text x="210" y="342" text-anchor="middle" fill="#888" font-size="9">MQT = ViT 不变 + 加一个轻量压缩层 (即插即用)</text>
+  <text x="210" y="357" text-anchor="middle" fill="#888" font-size="9">Omni-Encoder = 干掉 ViT + LLM 自身就是编码器+压缩器</text>
+</svg>
+<p class="caption">MQT vs Omni-Encoder vs Q-Former 三种视觉 Token 压缩范式对比</p>
+</div>
+
+<div class="col-caption">
+<h3>哲学差异</h3>
+<p><strong>MQT 的哲学：</strong>"ViT 已经很好了，问题只是 token 太多。加一个轻量层压缩一下就行。"</p>
+<p><strong>Omni-Encoder 的哲学：</strong>"为什么要两个模型？一个 LLM 能同时做编码和压缩，还能处理所有模态。"</p>
+
+<div class="key-point">
+<strong>MQT 的优势：</strong>极低成本实现可变压缩。只需训练 50M 参数的 MQT 模块，就能把任意 VLM 的 visual tokens 从 576 压缩到 2-256 个。
+</div>
+<div class="key-point">
+<strong>Omni-Encoder 的优势：</strong>架构更统一、更简洁。不需要维护 ViT + MQT + LLM 三个组件，一个 MoE-LLM 搞定一切。
+</div>
+</div>
+</div>
+
+<!-- ===== 5. Performance ===== -->
+<h2>5. 性能：Token 数 vs 精度权衡</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># MQT 在不同 token 数下的表现</span>
+<span class="cm"># (LLaVA-1.5-7B + MQT)</span>
+<span class="cm">#</span>
+<span class="cm"># Tokens  VQAv2   GQA    TextVQA</span>
+<span class="cm"># ------  -----   ---    -------</span>
+<span class="cm"># 576     78.5    62.0   58.2   (baseline)</span>
+<span class="cm"># 256     78.3    61.8   57.9   (-0.2%)</span>
+<span class="cm"># 144     77.9    61.5   57.1   (-0.6%)</span>
+<span class="cm"># 64      77.1    60.8   55.6   (-1.5%)</span>
+<span class="cm"># 16      74.8    58.9   51.2   (-4.7%)</span>
+<span class="cm"># 4       70.2    55.1   43.8   (-10.5%)</span>
+<span class="cm"># 2       65.1    51.3   38.4   (-17.2%)</span>
+
+<span class="cm"># 关键发现:</span>
+<span class="cm"># 64 tokens (压缩 9x) 只掉 1.5%</span>
+<span class="cm"># 16 tokens (压缩 36x) 只掉 4.7%</span>
+<span class="cm"># Sweet spot: 64~144 tokens</span>
+
+<span class="cm"># 推理加速:</span>
+<span class="cm"># 576 tokens: prefill 12.3ms</span>
+<span class="cm"># 64 tokens:  prefill 4.1ms (3x↑)</span>
+<span class="cm"># 16 tokens:  prefill 2.8ms (4.4x↑)</span>
+
+<span class="cm"># 因为 LLM self-attn 是 O(N²)</span>
+<span class="cm"># token 减少 9x → 计算减少 ~81x</span>
+<span class="cm"># (但还有 text tokens, 所以实际 3x)</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg">
+  <!-- Accuracy vs Tokens chart -->
+  <!-- Axes -->
+  <line x1="60" y1="290" x2="380" y2="290" stroke="#444" stroke-width="1"/>
+  <line x1="60" y1="290" x2="60" y2="40" stroke="#444" stroke-width="1"/>
+  <!-- Y axis labels -->
+  <text x="50" y="295" text-anchor="end" fill="#666" font-size="9">60%</text>
+  <text x="50" y="235" text-anchor="end" fill="#666" font-size="9">65%</text>
+  <text x="50" y="175" text-anchor="end" fill="#666" font-size="9">70%</text>
+  <text x="50" y="115" text-anchor="end" fill="#666" font-size="9">75%</text>
+  <text x="50" y="55" text-anchor="end" fill="#666" font-size="9">80%</text>
+  <text x="25" y="170" text-anchor="middle" fill="#888" font-size="9" transform="rotate(-90,25,170)">VQAv2 Acc</text>
+  <!-- X axis labels -->
+  <text x="80" y="308" text-anchor="middle" fill="#666" font-size="8">2</text>
+  <text x="130" y="308" text-anchor="middle" fill="#666" font-size="8">4</text>
+  <text x="180" y="308" text-anchor="middle" fill="#666" font-size="8">16</text>
+  <text x="230" y="308" text-anchor="middle" fill="#666" font-size="8">64</text>
+  <text x="280" y="308" text-anchor="middle" fill="#666" font-size="8">144</text>
+  <text x="330" y="308" text-anchor="middle" fill="#666" font-size="8">256</text>
+  <text x="365" y="308" text-anchor="middle" fill="#666" font-size="8">576</text>
+  <text x="220" y="330" text-anchor="middle" fill="#888" font-size="9">Visual Tokens</text>
+  <!-- Grid lines -->
+  <line x1="60" y1="235" x2="380" y2="235" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <line x1="60" y1="175" x2="380" y2="175" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <line x1="60" y1="115" x2="380" y2="115" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <line x1="60" y1="55" x2="380" y2="55" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+  <!-- Data points and line (VQAv2) -->
+  <!-- 2:65.1  4:70.2  16:74.8  64:77.1  144:77.9  256:78.3  576:78.5 -->
+  <!-- Y scale: 60=290, 80=50 → 1% = 12px -->
+  <polyline points="80,229 130,168 180,112 230,85 280,67 330,56 365,53" fill="none" stroke="#a855f7" stroke-width="2"/>
+  <circle cx="80" cy="229" r="4" fill="#a855f7"/>
+  <circle cx="130" cy="168" r="4" fill="#a855f7"/>
+  <circle cx="180" cy="112" r="4" fill="#a855f7"/>
+  <circle cx="230" cy="85" r="4" fill="#a855f7"/>
+  <circle cx="280" cy="67" r="4" fill="#a855f7"/>
+  <circle cx="330" cy="56" r="4" fill="#a855f7"/>
+  <circle cx="365" cy="53" r="4" fill="#a855f7"/>
+  <!-- Sweet spot highlight -->
+  <rect x="165" y="42" width="130" height="265" rx="4" fill="#38d9a908" stroke="#38d9a933" stroke-width="1" stroke-dasharray="4"/>
+  <text x="230" y="38" text-anchor="middle" fill="#38d9a9" font-size="9">Sweet Spot</text>
+  <!-- Baseline -->
+  <line x1="60" y1="53" x2="380" y2="53" stroke="#ff6b6b33" stroke-width="1" stroke-dasharray="3"/>
+  <text x="385" y="56" fill="#ff6b6b" font-size="8">baseline</text>
+</svg>
+<p class="caption">Token 数 vs 精度：16~144 tokens 是 sweet spot (精度损失 &lt;5%)</p>
+</div>
+
+<div class="col-caption">
+<h3>核心发现</h3>
+<div class="key-point">
+<strong>256 tokens 几乎无损：</strong>从 576 压缩到 256 (2.25x)，VQAv2 只掉 0.2%。大量视觉 token 是冗余的。
+</div>
+<div class="key-point">
+<strong>64 tokens 是最佳性价比：</strong>9x 压缩只掉 1.5% 精度，但推理速度提升 3x。对于大部分实际应用足够。
+</div>
+<div class="key-point">
+<strong>极端压缩（2 tokens）仍可用：</strong>只用 2 个 token 时 VQAv2 仍有 65%——对分类、物体识别等粗粒度任务足够。
+</div>
+<p><strong>应用场景匹配：</strong></p>
+<p>• 分类/检测 → 2-16 tokens</p>
+<p>• VQA/对话 → 64-144 tokens</p>
+<p>• OCR/文档 → 256 tokens</p>
+</div>
+</div>
+
+<footer>
+Generated 2026.06.01 | MQT: Matryoshka Query Transformer for Large Vision-Language Models (Cai et al.)
+</footer>
+
+</div>
+</body>
+</html>

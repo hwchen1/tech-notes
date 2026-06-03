@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 3.7 Flash</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #38bdf8; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #38bdf80a; border: 1px solid #38bdf822; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #38bdf8; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #38bdf8; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+td.highlight { color: #38bdf8; font-weight: bold; }
+td.best { color: #4ade80; font-weight: bold; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: stretch; }
+.three-col .col-code { min-width: 0; }
+.three-col .col-svg { min-width: 0; }
+.three-col .col-caption { display: flex; flex-direction: column; justify-content: center; padding: 16px; background: #0f0f18; border: 1px solid #1e1e30; border-radius: 12px; }
+.three-col .col-caption h3 { margin-top: 0; color: #38bdf8; font-size: 1rem; }
+.three-col .col-caption p { font-size: 0.84rem; color: #9898b0; margin-bottom: 8px; }
+.three-col .col-caption .formula { color: #818cf8; font-size: 0.88rem; background: #11111a; padding: 8px 12px; border-radius: 6px; margin: 6px 0; line-height: 2; }
+.tag { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.8rem; margin-right: 6px; }
+.tag-known { background: #064e3b; color: #6ee7b7; }
+.tag-unknown { background: #4c1d2a; color: #fca5a5; }
+.tag-inferred { background: #1e3a5f; color: #93c5fd; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Step 3.7 Flash</h1>
+<p class="subtitle">StepFun 196B — 高效 Flash 模型，强调 Agent/Tool-use/多模态实用能力</p>
+
+<!-- ===== 1. 已知信息 ===== -->
+<h2>1. 模型概况</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Step 3.7 Flash — 已知信息</span>
+<span class="cm"># 来源: https://static.stepfun.com/blog/step-3.7-flash/</span>
+<span class="cm"># 注意: Step 未公开详细架构</span>
+
+<span class="cm"># 确认信息:</span>
+model_name = <span class="st">"Step 3.7 Flash"</span>
+total_params = <span class="num">196</span>B  <span class="cm"># 从 benchmark tooltip</span>
+model_type = <span class="st">"Flash"</span>  <span class="cm"># 高效推理模型</span>
+multimodal = <span class="kw">True</span>    <span class="cm"># 原生多模态</span>
+
+<span class="cm"># 前代: Step 3.5 Flash (也是 196B)</span>
+<span class="cm"># → 同参数量，能力提升明显</span>
+
+<span class="cm"># 关键能力:</span>
+capabilities = [
+    <span class="st">"Native Multimodal Understanding"</span>,
+    <span class="st">"Web & Visual Search"</span>,
+    <span class="st">"Reliable Tool Use"</span>,
+    <span class="st">"Agent Ecosystem Compatibility"</span>,
+    <span class="st">"Agentic Coding"</span>,
+]
+
+<span class="cm"># 兼容的 Agent 框架:</span>
+agent_frameworks = [
+    <span class="st">"Claude Code"</span>,
+    <span class="st">"KiloCode"</span>,
+    <span class="st">"Hermes Agent"</span>,
+    <span class="st">"OpenClaw"</span>,
+]
+
+<span class="cm"># 架构细节: 未公开</span>
+<span class="cm"># attention_type = ?  (GQA? MLA?)</span>
+<span class="cm"># moe = ?  (大概率是 MoE)</span>
+<span class="cm"># hidden_size = ?</span>
+<span class="cm"># num_layers = ?</span>
+<span class="cm"># vocab_size = ?</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block" style="margin:0;">
+<svg viewBox="0 0 460 420" xmlns="http://www.w3.org/2000/svg">
+  <!-- Model card -->
+  <rect x="30" y="10" width="400" height="400" rx="16" fill="#1e1e2e" stroke="#38bdf844"/>
+
+  <!-- Header -->
+  <rect x="30" y="10" width="400" height="60" rx="16" fill="#38bdf815"/>
+  <text x="230" y="35" text-anchor="middle" fill="#38bdf8" font-size="16" font-weight="bold">Step 3.7 Flash</text>
+  <text x="230" y="55" text-anchor="middle" fill="#6b6b80" font-size="11">StepFun | 196B params | Flash-tier | 2026.05</text>
+
+  <!-- Key metrics -->
+  <text x="60" y="95" fill="#fff" font-size="12" font-weight="bold">已知参数</text>
+
+  <rect x="60" y="108" width="160" height="40" rx="6" fill="#064e3b33" stroke="#4ade8055"/>
+  <text x="140" y="125" text-anchor="middle" fill="#4ade80" font-size="10">Total Parameters</text>
+  <text x="140" y="142" text-anchor="middle" fill="#4ade80" font-size="14" font-weight="bold">196B</text>
+
+  <rect x="240" y="108" width="160" height="40" rx="6" fill="#4c1d2a33" stroke="#f8717155"/>
+  <text x="320" y="125" text-anchor="middle" fill="#f87171" font-size="10">Activated Params</text>
+  <text x="320" y="142" text-anchor="middle" fill="#f87171" font-size="14" font-weight="bold">未公开</text>
+
+  <!-- Capabilities -->
+  <text x="60" y="175" fill="#fff" font-size="12" font-weight="bold">核心能力</text>
+
+  <rect x="60" y="188" width="350" height="28" rx="6" fill="#38bdf811" stroke="#38bdf833"/>
+  <text x="75" y="206" fill="#38bdf8" font-size="10">🔍 多模态理解 — 图像、文档、UI、图表、自然场景</text>
+
+  <rect x="60" y="222" width="350" height="28" rx="6" fill="#818cf811" stroke="#818cf833"/>
+  <text x="75" y="240" fill="#818cf8" font-size="10">🌐 Web + Visual Search — 深度跟进、长尾实体识别</text>
+
+  <rect x="60" y="256" width="350" height="28" rx="6" fill="#4ade8011" stroke="#4ade8033"/>
+  <text x="75" y="274" fill="#4ade80" font-size="10">🔧 Tool Use — 终端、浏览器、Office、搜索，长程不漂移</text>
+
+  <rect x="60" y="290" width="350" height="28" rx="6" fill="#fbbf2411" stroke="#fbbf2433"/>
+  <text x="75" y="308" fill="#fbbf24" font-size="10">🤖 Agent 生态 — Claude Code, KiloCode, Hermes, OpenClaw</text>
+
+  <rect x="60" y="324" width="350" height="28" rx="6" fill="#f093fb11" stroke="#f093fb33"/>
+  <text x="75" y="342" fill="#f093fb" font-size="10">💻 Agentic Coding — SWE-Bench Pro 56.3 (开源最强之一)</text>
+
+  <!-- Architecture unknown -->
+  <rect x="60" y="365" width="350" height="35" rx="6" fill="#f8717111" stroke="#f8717133"/>
+  <text x="235" y="380" text-anchor="middle" fill="#f87171" font-size="10">⚠️ 架构细节未公开（不开源）</text>
+  <text x="235" y="395" text-anchor="middle" fill="#6b6b80" font-size="9">推测: MoE (196B 太大不可能全激活) + 多模态视觉编码器</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>信息透明度</h3>
+<p><span class="tag tag-known">已知</span> 参数量 196B</p>
+<p><span class="tag tag-known">已知</span> 多模态 (图像+文本)</p>
+<p><span class="tag tag-known">已知</span> Agent/Tool-use 能力</p>
+<p><span class="tag tag-known">已知</span> Benchmark 分数</p>
+<p><span class="tag tag-unknown">未知</span> 架构细节 (attention, MoE, etc.)</p>
+<p><span class="tag tag-unknown">未知</span> 激活参数量</p>
+<p><span class="tag tag-unknown">未知</span> 训练数据量</p>
+<p><span class="tag tag-unknown">未知</span> 上下文长度</p>
+<p><span class="tag tag-inferred">推测</span> MoE 架构 (196B 全激活不现实)</p>
+<p><span class="tag tag-inferred">推测</span> 和 Step 3.5 Flash 同架构，数据/训练升级</p>
+<div class="formula">$\text{Step 3.5} \rightarrow \text{3.7: 同 196B}$ $\text{纯能力提升，非参数扩展}$</div>
+</div>
+</div>
+
+<!-- ===== 2. Benchmarks ===== -->
+<h2>2. Benchmark 对比</h2>
+
+<h3>Agentic Coding</h3>
+<table>
+<tr><th>Benchmark</th><th>Step 3.7 Flash (196B)</th><th>Step 3.5 Flash (196B)</th><th>DeepSeek V4 Flash (284B)</th><th>GPT 5.5</th><th>Claude Opus 4.7</th></tr>
+<tr><td>SWE-Bench Pro</td><td class="highlight">56.3</td><td>51.3</td><td>55.6</td><td>58.6</td><td class="best">64.3</td></tr>
+<tr><td>Terminal-Bench 2.1</td><td class="highlight">59.5</td><td>53.4</td><td>62.0</td><td>82.7</td><td>69.4</td></tr>
+</table>
+
+<h3>Multimodal</h3>
+<table>
+<tr><th>Benchmark</th><th>Step 3.7 Flash</th><th>GLM 5V Turbo</th><th>Kimi K2.6</th><th>GPT 5.5</th><th>Gemini 3 Flash</th></tr>
+<tr><td>SimpleVQA (with Tool)</td><td class="highlight">79.2</td><td>78.2</td><td>78.2</td><td>79.1</td><td>—</td></tr>
+<tr><td>V* (with Python)</td><td class="highlight">95.3</td><td>89.0</td><td class="best">96.9</td><td>—</td><td>96.3</td></tr>
+</table>
+
+<h3>General Agent</h3>
+<table>
+<tr><th>Benchmark</th><th>Step 3.7 Flash (196B)</th><th>Step 3.5 Flash (196B)</th><th>DeepSeek V4 Flash (284B)</th><th>Gemini 3.5 Flash</th><th>GPT 5.5</th><th>Claude Opus 4.7</th></tr>
+<tr><td>GDPval</td><td class="highlight">45.8</td><td>28.0</td><td>44.0</td><td>57.8</td><td>63.0</td><td>63.0</td></tr>
+<tr><td>Toolathlon</td><td class="highlight">49.5</td><td>33.3</td><td>52.8</td><td>56.5</td><td>60.2</td><td class="best">65.4</td></tr>
+<tr><td>ClawEval-1.1</td><td class="highlight">67.1</td><td>43.6</td><td>57.8</td><td>—</td><td>—</td><td>70.8</td></tr>
+<tr><td>HLE (with Tool)</td><td class="highlight">47.2</td><td>35.7</td><td>45.1</td><td>—</td><td>—</td><td>—</td></tr>
+</table>
+
+<div class="key-point">
+<strong>定位分析：</strong>Step 3.7 Flash 在开源/开放权重模型中属于第一梯队，多项 Agent 指标超过 DeepSeek V4 Flash (284B)。但与闭源顶级模型 (Claude Opus 4.7, GPT 5.5) 仍有 10-20% 差距。核心卖点是 196B 参数量下的性价比 — 比 284B 的 DeepSeek V4 Flash 更小但多数指标接近。
+</div>
+
+<!-- ===== 3. 能力特点 ===== -->
+<h2>3. 能力特点分析</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Step 3.7 Flash 的独特定位:</span>
+<span class="cm"># "Agent-first" 模型</span>
+
+<span class="cm"># 1. 原生多模态 + Agent</span>
+<span class="cm"># 不是后接视觉模块，而是原生融合</span>
+<span class="cm"># → 能看图 → 写代码 → 调工具</span>
+
+<span class="cm"># 2. 强调"不漂移"</span>
+<span class="cm"># "staying coherent however long</span>
+<span class="cm">#  the run gets"</span>
+<span class="cm"># → 长程 Agent 任务的稳定性</span>
+
+<span class="cm"># 3. 框架兼容</span>
+<span class="cm"># 直接兼容主流 Agent 框架</span>
+<span class="cm"># Claude Code, KiloCode 等</span>
+<span class="cm"># → 低接入成本</span>
+
+<span class="cm"># 4. Search 增强</span>
+<span class="cm"># Web search: 更多来源、更深跟进</span>
+<span class="cm"># Visual search: 长尾实体识别</span>
+<span class="cm"># → 不只是 RAG，而是主动搜索</span>
+
+<span class="cm"># 与 Step 3.5 Flash 对比:</span>
+<span class="cm"># GDPval: 28.0 → 45.8 (+64%)</span>
+<span class="cm"># Toolathlon: 33.3 → 49.5 (+49%)</span>
+<span class="cm"># ClawEval: 43.6 → 67.1 (+54%)</span>
+<span class="cm"># → Agent 能力暴涨，同参数量!</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block" style="margin:0;">
+<svg viewBox="0 0 460 360" xmlns="http://www.w3.org/2000/svg">
+  <!-- Radar-style comparison -->
+  <text x="230" y="20" text-anchor="middle" fill="#fff" font-size="13" font-weight="bold">Step 3.5 → 3.7 提升幅度</text>
+
+  <!-- Bars showing improvement -->
+  <g transform="translate(60, 40)">
+    <!-- GDPval -->
+    <text x="0" y="15" fill="#a8a8be" font-size="10">GDPval</text>
+    <rect x="100" y="5" width="96" height="18" rx="3" fill="#38bdf822" stroke="#38bdf8"/>
+    <rect x="100" y="5" width="59" height="18" rx="3" fill="#6b6b8044"/>
+    <text x="200" y="18" fill="#38bdf8" font-size="9">45.8</text>
+    <text x="162" y="18" fill="#6b6b80" font-size="9">28.0</text>
+    <text x="280" y="18" fill="#4ade80" font-size="10" font-weight="bold">+64%</text>
+
+    <!-- Toolathlon -->
+    <text x="0" y="50" fill="#a8a8be" font-size="10">Toolathlon</text>
+    <rect x="100" y="40" width="104" height="18" rx="3" fill="#818cf822" stroke="#818cf8"/>
+    <rect x="100" y="40" width="70" height="18" rx="3" fill="#6b6b8044"/>
+    <text x="208" y="53" fill="#818cf8" font-size="9">49.5</text>
+    <text x="172" y="53" fill="#6b6b80" font-size="9">33.3</text>
+    <text x="280" y="53" fill="#4ade80" font-size="10" font-weight="bold">+49%</text>
+
+    <!-- ClawEval -->
+    <text x="0" y="85" fill="#a8a8be" font-size="10">ClawEval-1.1</text>
+    <rect x="100" y="75" width="140" height="18" rx="3" fill="#4ade8022" stroke="#4ade80"/>
+    <rect x="100" y="75" width="91" height="18" rx="3" fill="#6b6b8044"/>
+    <text x="244" y="88" fill="#4ade80" font-size="9">67.1</text>
+    <text x="194" y="88" fill="#6b6b80" font-size="9">43.6</text>
+    <text x="280" y="88" fill="#4ade80" font-size="10" font-weight="bold">+54%</text>
+
+    <!-- SWE-Bench Pro -->
+    <text x="0" y="120" fill="#a8a8be" font-size="10">SWE-Bench Pro</text>
+    <rect x="100" y="110" width="118" height="18" rx="3" fill="#fbbf2422" stroke="#fbbf24"/>
+    <rect x="100" y="110" width="108" height="18" rx="3" fill="#6b6b8044"/>
+    <text x="222" y="123" fill="#fbbf24" font-size="9">56.3</text>
+    <text x="212" y="123" fill="#6b6b80" font-size="9">51.3</text>
+    <text x="280" y="123" fill="#4ade80" font-size="10" font-weight="bold">+10%</text>
+
+    <!-- HLE -->
+    <text x="0" y="155" fill="#a8a8be" font-size="10">HLE (w/ Tool)</text>
+    <rect x="100" y="145" width="99" height="18" rx="3" fill="#f093fb22" stroke="#f093fb"/>
+    <rect x="100" y="145" width="75" height="18" rx="3" fill="#6b6b8044"/>
+    <text x="203" y="158" fill="#f093fb" font-size="9">47.2</text>
+    <text x="178" y="158" fill="#6b6b80" font-size="9">35.7</text>
+    <text x="280" y="158" fill="#4ade80" font-size="10" font-weight="bold">+32%</text>
+  </g>
+
+  <!-- Summary -->
+  <rect x="60" y="220" width="340" height="50" rx="8" fill="#4ade8011" stroke="#4ade8033"/>
+  <text x="230" y="242" text-anchor="middle" fill="#4ade80" font-size="11" font-weight="bold">Agent 相关指标平均提升 ~42%</text>
+  <text x="230" y="260" text-anchor="middle" fill="#6b6b80" font-size="9">同 196B 参数量，纯能力提升（数据 + 训练策略 + RL）</text>
+
+  <!-- vs DeepSeek V4 -->
+  <rect x="60" y="285" width="340" height="60" rx="8" fill="#11111a" stroke="#333"/>
+  <text x="230" y="305" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">vs DeepSeek V4 Flash (284B)</text>
+  <text x="230" y="325" text-anchor="middle" fill="#38bdf8" font-size="9">Step 3.7 (196B) 在 GDPval, SWE-Pro, ClawEval 胜出</text>
+  <text x="230" y="340" text-anchor="middle" fill="#f87171" font-size="9">DeepSeek V4 (284B) 在 Terminal-Bench, Toolathlon 胜出</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>3.5 → 3.7 核心提升</h3>
+<p>参数量不变 (都是 196B)，但 Agent 能力暴涨：</p>
+<div class="formula">$\text{GDPval: } +64\%$ $\text{ClawEval: } +54\%$ $\text{Toolathlon: } +49\%$ $\text{HLE: } +32\%$ $\text{SWE-Pro: } +10\%$</div>
+<p><strong>推测提升来源：</strong></p>
+<p>1. 大量 Agent/Tool-use 数据</p>
+<p>2. RL from Agent feedback</p>
+<p>3. 长程任务的对齐优化</p>
+<p>4. 搜索和工具调用的稳定性训练</p>
+<p><strong>不是架构变化</strong>（同 196B），而是 post-training 阶段的大幅投入。</p>
+</div>
+</div>
+
+<!-- ===== 4. 架构推测 ===== -->
+<h2>4. 架构推测（未经确认）</h2>
+
+<div class="key-point">
+<strong>⚠️ 以下为推测，Step 未公开技术细节。</strong>
+</div>
+
+<table>
+<tr><th>维度</th><th>推测</th><th>依据</th></tr>
+<tr><td>MoE</td><td>大概率是 MoE</td><td>196B 全激活推理成本不可接受；"Flash" 定位意味着高效推理</td></tr>
+<tr><td>激活参数</td><td>~20-40B (推测)</td><td>Flash 级要做到低延迟，激活比应类似 Qwen3/DeepSeek</td></tr>
+<tr><td>多模态</td><td>原生融合式</td><td>官方强调 "Native" multimodal，非后接 adapter</td></tr>
+<tr><td>视觉编码器</td><td>类 ViT + projector</td><td>支持图像/文档/UI/图表，需要高分辨率视觉理解</td></tr>
+<tr><td>上下文</td><td>128K+ (推测)</td><td>支持长程 Agent 任务不漂移，ClawEval 高分需要长上下文</td></tr>
+<tr><td>训练</td><td>多阶段 (pretrain → SFT → RL)</td><td>3.5→3.7 同参数量大幅提升，post-training 是主要差异</td></tr>
+</table>
+
+<!-- ===== 5. 竞品定位 ===== -->
+<h2>5. 竞品生态定位</h2>
+
+<div class="svg-block">
+<svg viewBox="0 0 800 280" xmlns="http://www.w3.org/2000/svg">
+  <!-- Axes -->
+  <line x1="80" y1="240" x2="750" y2="240" stroke="#333" stroke-width="1.5"/>
+  <line x1="80" y1="30" x2="80" y2="240" stroke="#333" stroke-width="1.5"/>
+  <text x="415" y="270" text-anchor="middle" fill="#6b6b80" font-size="11">参数量 (总)</text>
+  <text x="40" y="135" text-anchor="middle" fill="#6b6b80" font-size="11" transform="rotate(-90, 40, 135)">Agent 综合能力</text>
+
+  <!-- Grid -->
+  <line x1="80" y1="135" x2="750" y2="135" stroke="#1a1a28" stroke-width="0.5" stroke-dasharray="3"/>
+
+  <!-- Models -->
+  <!-- Step 3.7 Flash -->
+  <circle cx="280" cy="100" r="18" fill="#38bdf833" stroke="#38bdf8" stroke-width="2"/>
+  <text x="280" y="105" text-anchor="middle" fill="#38bdf8" font-size="9" font-weight="bold">3.7F</text>
+  <text x="280" y="80" text-anchor="middle" fill="#38bdf8" font-size="8">Step 3.7 Flash</text>
+  <text x="280" y="125" text-anchor="middle" fill="#6b6b80" font-size="8">196B</text>
+
+  <!-- Step 3.5 Flash -->
+  <circle cx="280" cy="170" r="14" fill="#38bdf811" stroke="#38bdf855" stroke-width="1.5"/>
+  <text x="280" y="174" text-anchor="middle" fill="#38bdf8" font-size="8">3.5F</text>
+  <text x="280" y="192" text-anchor="middle" fill="#6b6b80" font-size="8">196B</text>
+
+  <!-- DeepSeek V4 Flash -->
+  <circle cx="380" cy="108" r="16" fill="#a78bfa33" stroke="#a78bfa" stroke-width="2"/>
+  <text x="380" y="112" text-anchor="middle" fill="#a78bfa" font-size="8">DS V4F</text>
+  <text x="380" y="92" text-anchor="middle" fill="#a78bfa" font-size="8">DeepSeek V4</text>
+  <text x="380" y="130" text-anchor="middle" fill="#6b6b80" font-size="8">284B</text>
+
+  <!-- GPT 5.5 -->
+  <circle cx="580" cy="55" r="16" fill="#4ade8033" stroke="#4ade80" stroke-width="2"/>
+  <text x="580" y="59" text-anchor="middle" fill="#4ade80" font-size="8">5.5</text>
+  <text x="580" y="40" text-anchor="middle" fill="#4ade80" font-size="8">GPT 5.5</text>
+  <text x="580" y="78" text-anchor="middle" fill="#6b6b80" font-size="8">?? (闭源)</text>
+
+  <!-- Claude Opus 4.7 -->
+  <circle cx="650" cy="48" r="16" fill="#f093fb33" stroke="#f093fb" stroke-width="2"/>
+  <text x="650" y="52" text-anchor="middle" fill="#f093fb" font-size="8">O4.7</text>
+  <text x="650" y="33" text-anchor="middle" fill="#f093fb" font-size="8">Claude Opus</text>
+  <text x="650" y="70" text-anchor="middle" fill="#6b6b80" font-size="8">?? (闭源)</text>
+
+  <!-- Gemini 3.5 Flash -->
+  <circle cx="500" cy="72" r="15" fill="#fbbf2433" stroke="#fbbf24" stroke-width="2"/>
+  <text x="500" y="76" text-anchor="middle" fill="#fbbf24" font-size="8">G3.5F</text>
+  <text x="500" y="56" text-anchor="middle" fill="#fbbf24" font-size="8">Gemini 3.5</text>
+  <text x="500" y="94" text-anchor="middle" fill="#6b6b80" font-size="8">?? (闭源)</text>
+
+  <!-- Divider: open vs closed -->
+  <line x1="440" y1="30" x2="440" y2="240" stroke="#fbbf2444" stroke-width="1" stroke-dasharray="5,5"/>
+  <text x="260" y="248" text-anchor="middle" fill="#6b6b80" font-size="9">← 开源/开放权重</text>
+  <text x="580" y="248" text-anchor="middle" fill="#6b6b80" font-size="9">闭源 →</text>
+</svg>
+<p class="caption">Step 3.7 Flash 定位：开放模型中参数效率最高的 Agent 模型</p>
+</div>
+
+<div class="key-point">
+<strong>总结：</strong>Step 3.7 Flash 是一个"Agent-first"的 196B 多模态模型，在开放权重模型中 Agent 能力最强（超过更大的 DeepSeek V4 Flash 284B 的多项指标）。但与闭源顶级模型仍有明显差距。核心创新可能在 post-training 阶段（Agent RL + Tool-use 数据），而非架构创新。
+</div>
+
+<footer>Generated 2026.06.02 | Step 3.7 Flash</footer>
+</div>
+</body>
+</html>

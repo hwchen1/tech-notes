@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Notes</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #0f0f1a; color: #e0e0e0; height: 100vh; overflow: hidden;
+            display: flex;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px; min-width: 280px; height: 100vh;
+            background: #13131f; border-right: 1px solid #2a2a3e;
+            display: flex; flex-direction: column; overflow: hidden;
+            transition: width 0.3s, min-width 0.3s;
+        }
+        .sidebar.collapsed {
+            width: 48px; min-width: 48px;
+        }
+        .sidebar.collapsed .sidebar-content,
+        .sidebar.collapsed .sidebar-header h2 { display: none; }
+        .sidebar.collapsed .toggle-btn { transform: rotate(180deg); }
+
+        .sidebar-header {
+            padding: 20px 16px 12px; border-bottom: 1px solid #2a2a3e;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .sidebar-header h2 {
+            font-size: 1.1em; color: #7eb8ff; white-space: nowrap;
+        }
+        .toggle-btn {
+            background: none; border: none; color: #888; cursor: pointer;
+            font-size: 1.2em; padding: 4px 8px; border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .toggle-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+        .sidebar-content {
+            flex: 1; overflow-y: auto; padding: 12px 0;
+        }
+        .sidebar-content::-webkit-scrollbar { width: 4px; }
+        .sidebar-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+        /* Nav sections */
+        .nav-section {
+            margin-bottom: 4px;
+        }
+        .nav-section-header {
+            display: flex; align-items: center; padding: 8px 16px;
+            cursor: pointer; user-select: none; transition: background 0.15s;
+            border-radius: 0; position: relative;
+        }
+        .nav-section-header:hover { background: rgba(255,255,255,0.05); }
+        .nav-section-header .icon { margin-right: 8px; font-size: 0.9em; }
+        .nav-section-header .arrow {
+            margin-left: auto; font-size: 0.7em; color: #666;
+            transition: transform 0.2s;
+        }
+        .nav-section.open > .nav-section-header .arrow { transform: rotate(90deg); }
+        .nav-section-header .title {
+            font-size: 0.85em; color: #aaa; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .nav-section-header .section-menu-btn {
+            opacity: 0; margin-left: 6px; margin-right: 4px; padding: 2px 5px;
+            font-size: 0.75em; color: #666; cursor: pointer; border-radius: 3px;
+            transition: all 0.15s; line-height: 1; letter-spacing: 1px; position: relative;
+        }
+        .nav-section-header:hover .section-menu-btn { opacity: 1; }
+        .nav-section-header .section-menu-btn:hover { color: #7eb8ff; background: rgba(126,184,255,0.15); }
+        .section-dropdown {
+            display: none; position: absolute; top: 100%; right: 0; z-index: 999;
+            background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;
+            min-width: 140px; padding: 4px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .section-dropdown.show { display: block; }
+        .section-dropdown-item {
+            padding: 7px 14px; font-size: 0.8em; color: #ccc; cursor: pointer;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .section-dropdown-item:hover { background: rgba(126,184,255,0.1); color: #fff; }
+        .section-dropdown-item.danger { color: #ff6b6b; }
+        .section-dropdown-item.danger:hover { background: rgba(255,107,107,0.1); }
+
+        .nav-items {
+            display: none; padding: 2px 0; min-height: 4px;
+            transition: background 0.2s;
+        }
+        .nav-section.open > .nav-items { display: block; }
+
+        /* Nested sections */
+        .nav-section .nav-section {
+            margin-left: 12px; border-left: 1px solid #2a2a3e;
+        }
+        .nav-section .nav-section .nav-section-header {
+            padding-left: 12px;
+        }
+        .nav-section .nav-section .nav-section-header .title {
+            font-size: 0.8em; text-transform: none; letter-spacing: 0;
+        }
+        .nav-section .nav-section .nav-item {
+            padding-left: 24px;
+        }
+
+        .nav-item {
+            display: flex; align-items: center; padding: 7px 16px 7px 32px;
+            cursor: pointer; transition: all 0.15s; border-left: 3px solid transparent;
+            font-size: 0.9em; color: #ccc; position: relative;
+        }
+        .nav-item:hover {
+            background: rgba(126,184,255,0.08); color: #fff;
+        }
+        .nav-item.active {
+            background: rgba(126,184,255,0.12); color: #7eb8ff;
+            border-left-color: #7eb8ff; font-weight: 500;
+        }
+        .nav-item .dot {
+            width: 6px; height: 6px; border-radius: 50%; margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .nav-item .item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nav-item .item-menu-btn {
+            opacity: 0; margin-left: 6px; padding: 2px 5px;
+            font-size: 0.7em; color: #666; cursor: pointer; border-radius: 3px;
+            transition: all 0.15s; line-height: 1; letter-spacing: 1px; position: relative;
+        }
+        .nav-item:hover .item-menu-btn { opacity: 1; }
+        .nav-item .item-menu-btn:hover { color: #7eb8ff; background: rgba(126,184,255,0.15); }
+        .item-dropdown {
+            display: none; position: absolute; top: 100%; right: 0; z-index: 999;
+            background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px;
+            min-width: 120px; padding: 4px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .item-dropdown.show { display: block; }
+        .item-dropdown-item {
+            padding: 7px 14px; font-size: 0.8em; color: #ccc; cursor: pointer;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .item-dropdown-item:hover { background: rgba(126,184,255,0.1); color: #fff; }
+        .item-dropdown-item.danger { color: #ff6b6b; }
+        .item-dropdown-item.danger:hover { background: rgba(255,107,107,0.1); }
+
+        /* Drag styles */
+        .nav-item.dragging, .nav-section.dragging { opacity: 0.4; }
+        .nav-items.drag-over { background: rgba(126,184,255,0.06); border-radius: 4px; }
+        .nav-item.drag-above, .nav-section.drag-above { box-shadow: 0 -2px 0 #7eb8ff; }
+        .nav-item.drag-below, .nav-section.drag-below { box-shadow: 0 2px 0 #7eb8ff; }
+        .nav-section-header.drag-over-section { background: rgba(126,184,255,0.12); }
+
+        /* Main content */
+        .main {
+            flex: 1; display: flex; flex-direction: column; overflow: hidden;
+        }
+        .toolbar {
+            padding: 12px 24px; border-bottom: 1px solid #2a2a3e;
+            display: flex; align-items: center; gap: 12px;
+            background: #111120;
+        }
+        .toolbar .breadcrumb {
+            font-size: 0.85em; color: #888;
+        }
+        .toolbar .breadcrumb span { color: #7eb8ff; }
+        .toolbar .actions { margin-left: auto; display: flex; gap: 8px; }
+        .toolbar button {
+            background: rgba(255,255,255,0.05); border: 1px solid #333;
+            color: #aaa; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+            font-size: 0.8em; transition: all 0.2s;
+        }
+        .toolbar button:hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+        .content-frame {
+            flex: 1; border: none; width: 100%; height: 100%;
+            background: #0a0a14;
+        }
+
+        /* Welcome page */
+        .welcome {
+            flex: 1; display: flex; flex-direction: column;
+            align-items: center; padding: 40px;
+            overflow-y: auto;
+        }
+        .welcome h1 {
+            font-size: 2em; margin-bottom: 12px;
+            background: linear-gradient(135deg, #7eb8ff, #ff6b6b);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .welcome p { color: #888; margin-bottom: 30px; }
+        .welcome .cards {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px; width: 100%; max-width: 800px;
+        }
+        .welcome .card {
+            background: rgba(255,255,255,0.03); border: 1px solid #2a2a3e;
+            border-radius: 12px; padding: 20px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .welcome .card:hover {
+            background: rgba(126,184,255,0.08); border-color: #7eb8ff;
+            transform: translateY(-2px);
+        }
+        .welcome .card h3 { color: #7eb8ff; font-size: 0.95em; margin-bottom: 6px; }
+        .welcome .card p { color: #888; font-size: 0.8em; margin: 0; }
+
+        /* Modal */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 1000; align-items: center; justify-content: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 12px;
+            padding: 24px; width: 340px; max-width: 90vw;
+        }
+        .modal h3 { color: #7eb8ff; font-size: 1em; margin-bottom: 16px; }
+        .modal input, .modal select {
+            width: 100%; padding: 8px 12px; background: #12121c; border: 1px solid #333;
+            color: #e0e0e0; border-radius: 6px; font-size: 0.9em; margin-bottom: 12px;
+            outline: none;
+        }
+        .modal input:focus, .modal select:focus { border-color: #7eb8ff; }
+        .modal .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+        .modal .modal-buttons button {
+            padding: 6px 16px; border-radius: 6px; border: 1px solid #333;
+            cursor: pointer; font-size: 0.85em; transition: all 0.2s;
+        }
+        .modal .btn-cancel { background: transparent; color: #888; }
+        .modal .btn-cancel:hover { background: rgba(255,255,255,0.05); color: #fff; }
+        .modal .btn-confirm { background: #7eb8ff; color: #0f0f1a; border-color: #7eb8ff; font-weight: 600; }
+        .modal .btn-confirm:hover { background: #5ea0f0; }
+        .modal .btn-danger { background: #ff4757; color: #fff; border-color: #ff4757; font-weight: 600; }
+        .modal .btn-danger:hover { background: #e0313f; }
+        .modal label { display: block; color: #aaa; font-size: 0.8em; margin-bottom: 4px; }
+    </style>
+</head>
+<body>
+
+<nav class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>AI Notes</h2>
+        <button class="toggle-btn" style="margin-left:auto;font-size:1.1em;padding:4px 8px;" onclick="showCreateDirModal()" title="新建目录">＋</button>
+        <button class="toggle-btn" onclick="toggleSidebar()" title="折叠">◀</button>
+    </div>
+    <div class="sidebar-content" id="sidebar-content">
+    </div>
+</nav>
+
+<main class="main" id="main">
+    <div class="welcome" id="welcome">
+        <h1>AI Notes</h1>
+        <p>点击左侧导航或下方卡片打开笔记 · 拖拽笔记可移动分组</p>
+        <div class="cards" id="welcome-cards"></div>
+    </div>
+
+    <div class="toolbar" id="toolbar" style="display:none;">
+        <div class="breadcrumb">
+            <span id="breadcrumb-section">-</span> / <span id="breadcrumb-page">-</span>
+        </div>
+        <div class="actions">
+            <button onclick="refreshFrame()">刷新 ↻</button>
+            <button onclick="goToPrev()">← 上一篇</button>
+            <button onclick="goToNext()">下一篇 →</button>
+            <button onclick="openInNewTab()">在新标签打开 ↗</button>
+            <button onclick="goHome()">返回首页</button>
+        </div>
+    </div>
+
+    <iframe class="content-frame" id="content-frame" style="display:none;"></iframe>
+</main>
+
+<!-- Create Directory Modal -->
+<div class="modal-overlay" id="modal-create-dir">
+    <div class="modal">
+        <h3 id="create-dir-title">新建目录</h3>
+        <label>目录名称</label>
+        <input type="text" id="dir-name" placeholder="例如：强化学习">
+        <label>图标 (emoji)</label>
+        <input type="text" id="dir-icon" placeholder="例如：🚀" maxlength="4">
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="hideModal('modal-create-dir')">取消</button>
+            <button class="btn-confirm" onclick="createDirectory()">创建</button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Delete Modal removed -->
+
+<!-- Rename Directory Modal -->
+<div class="modal-overlay" id="modal-rename-dir">
+    <div class="modal">
+        <h3>重命名目录</h3>
+        <p style="color:#888;font-size:0.8em;margin-bottom:12px;">当前名称：<span id="rename-dir-old"></span></p>
+        <label>新名称</label>
+        <input type="text" id="rename-dir-name" placeholder="输入新名称">
+        <label>图标 (emoji, 可选)</label>
+        <input type="text" id="rename-dir-icon" placeholder="例如：🚀" maxlength="4">
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="hideModal('modal-rename-dir')">取消</button>
+            <button class="btn-confirm" onclick="renameDirectory()">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Directory Modal -->
+<div class="modal-overlay" id="modal-delete-dir">
+    <div class="modal">
+        <h3 style="color:#ff6b6b;">删除目录</h3>
+        <p style="color:#ccc;font-size:0.85em;margin-bottom:8px;">确定要删除「<span id="delete-dir-name"></span>」吗？</p>
+        <p id="delete-dir-warn" style="color:#ff6b6b;font-size:0.8em;margin-bottom:12px;"></p>
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="hideModal('modal-delete-dir')">取消</button>
+            <button class="btn-danger" onclick="deleteDirectory()">删除</button>
+        </div>
+    </div>
+</div>
+
+<!-- Rename Item Modal -->
+<div class="modal-overlay" id="modal-rename-item">
+    <div class="modal">
+        <h3>重命名笔记</h3>
+        <p style="color:#888;font-size:0.8em;margin-bottom:12px;">当前名称：<span id="rename-item-old"></span></p>
+        <label>新名称</label>
+        <input type="text" id="rename-item-name" placeholder="输入新名称">
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="hideModal('modal-rename-item')">取消</button>
+            <button class="btn-confirm" onclick="renameItem()">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- Hide Item Modal -->
+<div class="modal-overlay" id="modal-hide-item">
+    <div class="modal">
+        <h3 style="color:#ff6b6b;">隐藏笔记</h3>
+        <p style="color:#ccc;font-size:0.85em;margin-bottom:8px;">确定要隐藏「<span id="hide-item-name"></span>」吗？</p>
+        <p style="color:#888;font-size:0.8em;margin-bottom:12px;">笔记文件不会被删除，仅从侧边栏中移除。</p>
+        <div class="modal-buttons">
+            <button class="btn-cancel" onclick="hideModal('modal-hide-item')">取消</button>
+            <button class="btn-danger" onclick="hideItem()">隐藏</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'ai-notes-layout';
+const LAYOUT_VERSION = 10;
+let currentPage = null;
+
+const DEFAULT_LAYOUT = [
+    {
+        id: 'insights', icon: '💡', title: '行业洞察', open: true,
+        items: [
+            { page: 'mai_thinking.html', label: 'MAI-Thinking-1 (Meta)', color: '#0668E1' },
+            { page: 'muse_spark.html', label: 'Muse Spark (Meta MSL)', color: '#39c0ed' },
+            { page: 'vlm_agent_future.html', label: 'VLM × Code Agent 未来', color: '#f093fb' },
+            { page: 'ai_cluster_mindmap.html', label: 'AI集群产业链全景', color: '#6366f1' },
+        ]
+    },
+    {
+        id: 'distributed', icon: '⚡', title: '分布式训练', open: true,
+        items: [
+            { page: 'megatron_bridge_training_pipeline.html', label: 'CP / EP / SP 与通信模式', color: '#4d96ff' },
+        ]
+    },
+    {
+        id: 'lm-arch', icon: '🏗️', title: 'LM 架构', open: true,
+        items: [
+            { page: 'deepseek_v3.html', label: 'DeepSeek-V3 架构', color: '#764ba2' },
+            { page: 'qwen3_lm.html', label: 'Qwen3-235B-A22B 架构', color: '#00f2fe' },
+            { page: 'step37_flash.html', label: 'Step 3.7 Flash (196B)', color: '#38bdf8' },
+            { page: 'ernie45_vl.html', label: 'ERNIE 4.5 VL (28B-A3B)', color: '#2932e1' },
+        ]
+    },
+    {
+        id: 'architecture', icon: '🧠', title: '模型架构', open: true,
+        items: [
+            { page: 'activation_functions.html', label: '激活函数对比', color: '#98c379' },
+            { page: 'attention_moe_rope.html', label: 'Attention / MoE / RoPE', color: '#ff6b6b' },
+            { page: 'flash_attention.html', label: 'Flash Attention V1→V3', color: '#4facfe' },
+            { page: 'normalization.html', label: 'Normalization 设计', color: '#e599f7' },
+            { page: 'lora.html', label: 'LoRA 低秩微调', color: '#ffd43b' },
+            { page: 'sparse_attention.html', label: 'Sparse Attention', color: '#06b6d4' },
+            { page: 'multi_token_prediction.html', label: 'Multi-Token Prediction', color: '#ff6b6b' },
+            { page: 'kv_cache.html', label: 'KV Cache 深度解析', color: '#ff6b6b' },
+            { page: 'rope_yarn_explained.html', label: 'RoPE & YaRN 位置编码', color: '#a78bfa' },
+        ]
+    },
+    {
+        id: 'linear-attn', icon: '🔁', title: 'Linear Attention 系列', open: true,
+        items: [
+            { page: 'linear_attention.html', label: 'Linear Attention 综述', color: '#38d9a9' },
+            { page: 'la_ssm.html', label: 'SSM 基础', color: '#4ecdc4' },
+            { page: 'infini_attention.html', label: 'Infini-attention', color: '#f7971e' },
+            { page: 'la_gla.html', label: 'GLA', color: '#e599f7' },
+            { page: 'la_mamba.html', label: 'Mamba (S6)', color: '#4facfe' },
+            { page: 'la_mamba3.html', label: 'Mamba-3', color: '#4facfe' },
+            { page: 'la_rwkv.html', label: 'RWKV', color: '#f7971e' },
+            { page: 'la_deltanet.html', label: 'DeltaNet', color: '#ff6b6b' },
+            { page: 'la_gated_deltanet.html', label: 'Gated DeltaNet', color: '#38d9a9' },
+            { page: 'la_kimi_linear.html', label: 'Kimi Linear (KDA)', color: '#f7971e' },
+            { page: 'la_gated_deltanet2.html', label: 'Gated DeltaNet-2', color: '#22b8cf' },
+            { page: 'la_mdn.html', label: 'MDN (Momentum DeltaNet)', color: '#c678dd' },
+            { page: 'la_m2rnn.html', label: 'M²RNN', color: '#e06c75' },
+            { page: 'la_titans.html', label: 'Titans (Google)', color: '#667eea' },
+            { page: 'la_atlas.html', label: 'ATLAS (Titans v2)', color: '#845ef7' },
+            { page: 'la_miras.html', label: 'Miras (统一框架)', color: '#a78bfa' },
+            { page: 'la_tnt.html', label: 'TNT (17x 训练加速)', color: '#f06595' },
+            { page: 'la_trellis.html', label: 'Trellis (KV Cache 压缩)', color: '#20c997' },
+            { page: 'la_memory_caching.html', label: 'Memory Caching (Growing Memory)', color: '#fab005' },
+            { page: 'la_fox.html', label: 'FoX (Forgetting Transformer)', color: '#fcc419' },
+            { page: 'la_griffin.html', label: 'Griffin', color: '#06b6d4' },
+            { page: 'la_hymba.html', label: 'Hymba (NVIDIA)', color: '#76b900' },
+            { page: 'la_recurrent_gemma.html', label: 'RecurrentGemma', color: '#ffa94d' },
+        ]
+    },
+    {
+        id: 'vlm', icon: '👁️', title: 'VLM 架构', open: true,
+        items: [
+            { page: 'llava.html', label: 'LLaVA', color: '#e599f7' },
+            { page: 'qwen25_vl.html', label: 'Qwen2.5-VL', color: '#ffa94d' },
+            { page: 'qwen3_vl.html', label: 'Qwen3-VL', color: '#38d9a9' },
+            { page: 'qwen35_vl.html', label: 'Qwen3.5-VL', color: '#4facfe' },
+            { page: 'gemma4_vl.html', label: 'Gemma4-VL', color: '#667eea' },
+            { page: 'glm45v.html', label: 'GLM-4.5V', color: '#6bcb77' },
+            { page: 'kimi_k25_vl.html', label: 'Kimi-K2.5-VL', color: '#f5576c' },
+            { page: 'nemotron_nano_vl.html', label: 'Nemotron-Nano-12B-v2-VL', color: '#76b900' },
+            { page: 'qformer.html', label: 'Q-Former (BLIP-2)', color: '#f7971e' },
+        ]
+    },
+    {
+        id: 'vit', icon: '🔬', title: 'ViT 架构', open: true,
+        items: [
+            { page: 'vit_clip.html', label: 'CLIP ViT', color: '#4facfe' },
+            { page: 'vit_siglip.html', label: 'SigLIP', color: '#38d9a9' },
+            { page: 'vit_siglip2.html', label: 'SigLIP2', color: '#00b4d8' },
+            { page: 'vit_radio.html', label: 'RADIO', color: '#f5a623' },
+            { page: 'vit_moonvit3d.html', label: 'MoonViT3d', color: '#c678dd' },
+            { page: 'vit_cogvit.html', label: 'CogViT', color: '#e07766' },
+            { page: 'vit_mae.html', label: 'MAE', color: '#667eea' },
+            { page: 'vit_eva.html', label: 'EVA', color: '#f093fb' },
+            { page: 'vit_dinov2.html', label: 'DINOv2', color: '#00f2fe' },
+            { page: 'vit_sam.html', label: 'SAM ViT', color: '#ff6b6b' },
+            { page: 'cogvit_analysis.html', label: 'CogViT 视觉编码器 (GLM-5V)', color: '#6bcb77' },
+            { page: 'vit_progress_analysis.html', label: 'ViT in VLM 进展分析', color: '#f093fb' },
+            { page: 'vit_techniques_deep_dive.html', label: 'ViT 核心技术详解', color: '#ffa94d' },
+            { page: 'conv2d_vs_linear.html', label: 'Conv2d vs Linear (Patch Embed)', color: '#f093fb' },
+        ]
+    },
+    {
+        id: 'omni', icon: '🌐', title: 'Omni 多模态', open: true,
+        items: [
+            { page: 'omni_encoder.html', label: 'Omni-Encoder (Hyperbody)', color: '#764ba2' },
+            { page: 'omni_chameleon.html', label: 'Chameleon (Meta)', color: '#f7971e' },
+            { page: 'omni_emu3.html', label: 'Emu3 (智源)', color: '#667eea' },
+            { page: 'omni_janus.html', label: 'Janus (DeepSeek)', color: '#38d9a9' },
+            { page: 'omni_fuyu.html', label: 'Fuyu (Adept)', color: '#ff6b6b' },
+            { page: 'omni_transfusion.html', label: 'Transfusion (Meta)', color: '#4facfe' },
+            { page: 'omni_show_o.html', label: 'Show-o', color: '#f093fb' },
+            { page: 'omni_unified_io2.html', label: 'Unified-IO 2 (AI2)', color: '#00f2fe' },
+            { page: 'omni_minicpm_o.html', label: 'MiniCPM-o (清华)', color: '#e599f7' },
+            { page: 'omni_vita.html', label: 'VITA', color: '#6bcb77' },
+            { page: 'omni_qwen_omni.html', label: 'Qwen2.5-Omni', color: '#ffa94d' },
+            { page: 'omni_mqt.html', label: 'MQT (LLaVA-OneVision)', color: '#a855f7' },
+            { page: 'omni_deepseek_ocr2.html', label: 'DeepSeek-OCR 2', color: '#ff8a00' },
+        ]
+    },
+];
+
+// --- State Management ---
+function loadLayout() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            const defaultIds = DEFAULT_LAYOUT.map(s => s.id);
+            const savedIds = parsed.map(s => s.id);
+            let changed = false;
+            // Merge missing sections
+            const missing = defaultIds.filter(id => !savedIds.includes(id));
+            if (missing.length > 0) {
+                missing.forEach(id => {
+                    const section = DEFAULT_LAYOUT.find(s => s.id === id);
+                    if (section) parsed.push(JSON.parse(JSON.stringify(section)));
+                });
+                changed = true;
+            }
+            // One-time sync when layout version changes (items moved between groups)
+            const savedVer = parseInt(localStorage.getItem(STORAGE_KEY + '-ver') || '0');
+            if (savedVer < LAYOUT_VERSION) {
+                const pageToSection = {};
+                DEFAULT_LAYOUT.forEach(s => { if (s.items) s.items.forEach(i => { pageToSection[i.page] = s.id; }); });
+                parsed.forEach(section => {
+                    if (!section.items) section.items = [];
+                    const before = section.items.length;
+                    section.items = section.items.filter(i => pageToSection[i.page] === section.id || !pageToSection[i.page]);
+                    if (section.items.length !== before) {
+                        changed = true;
+                        // Reset renderOrder since indices changed
+                        delete section.renderOrder;
+                    }
+                });
+                // Re-sort sections to match DEFAULT_LAYOUT order
+                parsed.sort((a, b) => {
+                    const ai = defaultIds.indexOf(a.id);
+                    const bi = defaultIds.indexOf(b.id);
+                    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+                });
+                changed = true;
+                localStorage.setItem(STORAGE_KEY + '-ver', String(LAYOUT_VERSION));
+            }
+            // Merge missing items within existing sections
+            const allSavedPages = new Set();
+            function collectSavedPages(sections) {
+                sections.forEach(s => {
+                    if (s.items) s.items.forEach(i => allSavedPages.add(i.page));
+                    if (s.children) collectSavedPages(s.children);
+                });
+            }
+            collectSavedPages(parsed);
+            parsed.forEach(section => {
+                const defSection = DEFAULT_LAYOUT.find(s => s.id === section.id);
+                if (defSection) {
+                    defSection.items.forEach(item => {
+                        if (!allSavedPages.has(item.page)) {
+                            if (!section.items) section.items = [];
+                            section.items.push(JSON.parse(JSON.stringify(item)));
+                            // Also add to renderOrder if present
+                            if (section.renderOrder) {
+                                section.renderOrder.push('i' + (section.items.length - 1));
+                            }
+                            allSavedPages.add(item.page);
+                            changed = true;
+                        }
+                    });
+                }
+            });
+            // Sanitize renderOrder: ensure all items/children are in renderOrder
+            function sanitizeRenderOrder(sections) {
+                sections.forEach(s => {
+                    if (s.renderOrder) {
+                        const validKeys = new Set();
+                        if (s.items) s.items.forEach((_, i) => validKeys.add('i' + i));
+                        if (s.children) s.children.forEach((_, i) => validKeys.add('c' + i));
+                        // Remove keys that point to non-existent entries
+                        s.renderOrder = s.renderOrder.filter(k => validKeys.has(k));
+                        // Add missing keys
+                        validKeys.forEach(k => {
+                            if (!s.renderOrder.includes(k)) {
+                                s.renderOrder.push(k);
+                                changed = true;
+                            }
+                        });
+                    }
+                    if (s.children) sanitizeRenderOrder(s.children);
+                });
+            }
+            sanitizeRenderOrder(parsed);
+            if (changed) saveLayout(parsed);
+            return parsed;
+        } catch(e) {}
+    }
+    return JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
+}
+
+function saveLayout(layout) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+}
+
+function resetLayout() {
+    if (!confirm('重置布局将恢复默认分组，确认？')) return;
+    localStorage.removeItem(STORAGE_KEY);
+    renderSidebar(DEFAULT_LAYOUT);
+    renderWelcomeCards(DEFAULT_LAYOUT);
+}
+
+// --- Render ---
+function renderSidebar(layout) {
+    const container = document.getElementById('sidebar-content');
+    container.innerHTML = '';
+    layout.forEach((section, si) => {
+        container.appendChild(renderSection(section, [si]));
+    });
+}
+
+function renderSection(section, path) {
+    const sec = document.createElement('div');
+    sec.className = 'nav-section' + (section.open !== false ? ' open' : '');
+    sec.dataset.sectionPath = JSON.stringify(path);
+    sec.innerHTML = `
+        <div class="nav-section-header" draggable="false">
+            <span class="icon">${section.icon || '📁'}</span>
+            <span class="title">${section.title}</span>
+            <span class="section-menu-btn" title="目录操作">···
+                <div class="section-dropdown">
+                    <div class="section-dropdown-item" data-action="add-subdir">＋ 新建子目录</div>
+                    <div class="section-dropdown-item" data-action="rename">✎ 重命名</div>
+                    <div class="section-dropdown-item danger" data-action="delete">✕ 删除目录</div>
+                </div>
+            </span>
+            <span class="arrow">▶</span>
+        </div>
+        <div class="nav-items" data-section-path="${encodeURIComponent(JSON.stringify(path))}"></div>
+    `;
+    const header = sec.querySelector('.nav-section-header');
+    header.querySelector('.arrow').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSectionByPath(path);
+    });
+    header.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.target.closest('.section-menu-btn')) return;
+        toggleSectionByPath(path);
+    });
+    const menuBtn = header.querySelector('.section-menu-btn');
+    const dropdown = header.querySelector('.section-dropdown');
+    menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeAllDropdowns();
+        dropdown.classList.toggle('show');
+    });
+    dropdown.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const item = e.target.closest('.section-dropdown-item');
+        if (!item) return;
+        dropdown.classList.remove('show');
+        const action = item.dataset.action;
+        if (action === 'add-subdir') showCreateSubDirModal(path);
+        else if (action === 'rename') showRenameDirModal(path);
+        else if (action === 'delete') showDeleteDirModal(path);
+    });
+
+    // Drop onto section header = move item into this section
+    header.addEventListener('dragover', (e) => {
+        if (!dragData) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        header.classList.add('drag-over-section');
+    });
+    header.addEventListener('dragleave', (e) => {
+        header.classList.remove('drag-over-section');
+    });
+    header.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        header.classList.remove('drag-over-section');
+        if (!dragData) return;
+        const layout = loadLayout();
+        const moved = removeFromSource(layout, dragData);
+        if (moved) insertIntoTarget(layout, path, moved, { el: null });
+        saveLayout(layout);
+        renderSidebar(layout);
+        if (currentPage) {
+            document.querySelectorAll('.nav-item').forEach(i => {
+                i.classList.toggle('active', i.dataset.page === currentPage);
+            });
+        }
+    });
+
+    const itemsContainer = sec.querySelector('.nav-items');
+
+    // Build render order: supports mixed items & child dirs
+    const order = section.renderOrder || buildDefaultOrder(section);
+    order.forEach((key, renderIdx) => {
+        const type = key[0]; // 'c' or 'i'
+        const idx = parseInt(key.slice(1));
+        if (type === 'c' && section.children && section.children[idx]) {
+            const childPath = [...path, 'c', idx];
+            const childEl = renderSection(section.children[idx], childPath);
+            childEl.dataset.renderIdx = renderIdx;
+            childEl.dataset.orderKey = key;
+            setupDragSection(childEl, childPath);
+            itemsContainer.appendChild(childEl);
+        } else if (type === 'i' && section.items && section.items[idx]) {
+            const item = section.items[idx];
+            const el = document.createElement('div');
+            el.className = 'nav-item';
+            el.draggable = true;
+            el.dataset.page = item.page;
+            el.dataset.sectionPath = JSON.stringify(path);
+            el.dataset.itemIdx = idx;
+            el.dataset.renderIdx = renderIdx;
+            el.dataset.orderKey = key;
+            el.innerHTML = `
+                <span class="dot" style="background:${item.color || '#888'}"></span>
+                <span class="item-label">${item.label}</span>
+                <span class="item-menu-btn" title="笔记操作">···
+                    <div class="item-dropdown">
+                        <div class="item-dropdown-item" data-action="rename">✎ 重命名</div>
+                        <div class="item-dropdown-item danger" data-action="hide">✕ 隐藏</div>
+                    </div>
+                </span>
+            `;
+            const itemMenuBtn = el.querySelector('.item-menu-btn');
+            const itemDropdown = el.querySelector('.item-dropdown');
+            itemMenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeAllDropdowns();
+                itemDropdown.classList.toggle('show');
+            });
+            itemDropdown.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const actionEl = e.target.closest('.item-dropdown-item');
+                if (!actionEl) return;
+                itemDropdown.classList.remove('show');
+                const action = actionEl.dataset.action;
+                if (action === 'rename') showRenameItemModal(path, idx);
+                else if (action === 'hide') showHideItemModal(path, idx);
+            });
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('.item-menu-btn')) return;
+                loadPageByUrl(item.page);
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                el.classList.add('active');
+            });
+            setupDragItem(el);
+            itemsContainer.appendChild(el);
+        }
+    });
+
+    setupDropZone(itemsContainer);
+    return sec;
+}
+
+function buildDefaultOrder(section) {
+    const order = [];
+    if (section.children) section.children.forEach((_, i) => order.push('c' + i));
+    if (section.items) section.items.forEach((_, i) => order.push('i' + i));
+    return order;
+}
+
+function renderWelcomeCards(layout) {
+    const container = document.getElementById('welcome-cards');
+    container.innerHTML = '';
+    const descriptions = {
+        'deepseek_v3.html': '671B/37B — MLA + DeepSeekMoE(256 experts) + MTP + FP8 + Aux-loss-free',
+        'qwen3_lm.html': '235B/22B — GQA(4 KV heads) + 128 experts MoE + 94层深网络 + RoPE base=1M',
+        'step37_flash.html': 'StepFun 196B — Agent-first 多模态模型，SWE-Bench Pro 56.3',
+        'ernie45_vl.html': '双池异构 MoE (文本64+视觉64+共享2) + Interleaved 3D M-RoPE + DFN ViT',
+        'megatron_bridge_training_pipeline.html': 'Context/Expert/Sequence Parallelism 详解，六种集合通信原语',
+        'attention_moe_rope.html': 'MHA→MQA→GQA→MLA 演进，MoE vs MoT，RoPE + YaRN',
+        'flash_attention.html': 'IO-Aware Tiling → Parallelism → Hopper 异步流水线',
+        'normalization.html': 'PostNorm → PreNorm → RMSNorm 演进与实现',
+        'lora.html': '低秩分解原理、前向计算、代码实现、超参选择与变体',
+        'linear_attention.html': 'O(N²)→O(N) 核技巧推导、RNN 递推、chunk-wise 并行',
+        'infini_attention.html': 'Local Attention + Compressive Memory + Gate — 有限显存处理无限上下文',
+        'la_gla.html': '数据依赖门控衰减 + Chunk-wise 并行, 最实用的纯 Linear Attention 方案',
+        'la_mamba.html': '选择性 SSM — 输入依赖参数化 + 硬件感知 Selective Scan, ≡ 带衰减 Linear Attention',
+        'la_rwkv.html': '纯 RNN 路线 — WKV 加权指数衰减, Token/Channel Mixing, 开源 14B',
+        'la_deltanet.html': 'Delta Rule 先擦后写 — 解决 Linear Attention 只能累加不能覆盖的根本缺陷',
+        'la_gated_deltanet.html': 'GLA 门控 + Delta Rule 擦写融合, 目前单体 Linear Attention 最强方案',
+        'la_kimi_linear.html': '首次 Linear Attention 全面超越 Full Attention — KDA + MLA 混合, 3B/48B MoE, KV cache 减 75%',
+        'la_gated_deltanet2.html': '解耦 Erase/Write 为独立 channel-wise 门, 泛化 GDN 和 KDA, 多 key recall 大幅提升',
+        'la_mdn.html': 'Delta Rule + 动量加速 — 二阶递推系统, 复数特征值, 多针检索 +13.40',
+        'la_m2rnn.html': '非线性 RNN + 矩阵值隐状态 — 突破 TC⁰ 表达力, Hybrid 仅需 1 层即提升 7+ 分',
+        'la_atlas.html': 'Titans v2 — DeepTransformers 多层记忆, 10M context 80%+ BABILong, Miras 统一框架',
+        'la_miras.html': 'Titans 统一框架 — 4轴设计空间(架构/目标/门控/算法), Moneta NIAH 93.5 vs GDN 75.8',
+        'la_tnt.html': 'Titans 训练加速 17x — 分层 chunk + 两阶段训练, 0.96h 达到原始 Titans 质量',
+        'la_trellis.html': '学习压缩 KV Cache — 两遍梯度+非线性写入, NIAH 79.8 > GDN 75.8, 固定显存',
+        'la_memory_caching.html': 'RNN Growing Memory — 隐状态 checkpoint 扩展记忆, GRM +2.24 Acc on GDN',
+        'la_fox.html': 'Softmax Attention + Forget Gate — 数据依赖遗忘, 无需位置编码, FlashAttention 兼容',
+        'la_ssm.html': 'State Space Model 入门 — 连续→离散化, SSM/Linear Attention/RNN 三视角统一',
+        'la_mamba3.html': '推理优先设计 — 复数态(state tracking) + 梯形离散化 + MIMO, 超越 GDN +1.8pts',
+        'la_titans.html': 'Neural Long-term Memory — surprise-based 梯度更新, 超越简单矩阵累加',
+        'la_griffin.html': 'RG-LRU + Local Sliding Window 混合 — 交替层实现长距离+精确 recall',
+        'la_hymba.html': '并行混合头 — 同层 Attention+SSM head 拼接 + Meta Tokens 全局聚合',
+        'la_recurrent_gemma.html': 'Griffin 架构 + Gemma 训练 — 固定显存推理, 无 KV cache, 端侧友好',
+        'sparse_attention.html': 'O(N²)→O(N·k) 稀疏化mask, Sliding Window/Longformer/NSA, 训练vs推理稀疏',
+        'multi_token_prediction.html': '一次预测多 token — 更强表征 + Speculative Decoding 加速',
+        'kv_cache.html': 'GQA/MLA 压缩、PagedAttention、量化与稀疏策略',
+        'activation_functions.html': 'ReLU → GELU → SiLU → SwiGLU 演进，公式、图解',
+        'rope_yarn_explained.html': '旋转位置编码原理、时钟比喻、YaRN 三频段智能缩放',
+        'cogvit_analysis.html': 'GLM-5V-Turbo 双教师蒸馏 + NaFlex 可变分辨率',
+        'vit_progress_analysis.html': '五大前沿模型 ViT 架构对比、参数规模、预训练流程',
+        'vit_techniques_deep_dive.html': '2D-RoPE/mRoPE、MIM、双教师蒸馏、NaFlex+SigLIP',
+        'conv2d_vs_linear.html': 'CLIP ViT Patch Embedding — Conv2d 与 Linear 等价性, stride=kernel 不重叠分块',
+        'qwen35_vl.html': 'Hybrid GDN+Attention, mRoPE, 512 experts MoE, Deepstack',
+        'gemma4_vl.html': 'Sliding/Global Attention, K=V Tying, All-MoE 128 experts',
+        'glm45v.html': 'mRoPE, Conv3d Vision + 2D RoPE, 128 experts MoE',
+        'kimi_k25_vl.html': 'MLA 低秩 KV 压缩, 384 experts MoE, MoonViT3d',
+        'nemotron_nano_vl.html': '纯 Mamba (零 Attention), RADIO ViT, Pixel Shuffle',
+        'qformer.html': 'BLIP-2 可学习 Query 桥接冻结 ViT + 冻结 LLM, 32 tokens 极致压缩',
+        'omni_encoder.html': 'MoE-LLM 替代 ViT 做全模态 Encoder, Causal 推理 + 双Query 10x-80x 可调压缩',
+        'omni_chameleon.html': 'Meta Early-Fusion, VQGAN 8192 codebook 离散化图像, 统一 Transformer 处理所有模态',
+        'omni_emu3.html': '智源统一 NTP 做生成+理解, MoVQGAN 32768 codebook, DPO 对齐生成质量',
+        'omni_janus.html': 'DeepSeek 解耦视觉编码 — 理解用 SigLIP, 生成用 VQ, 共享 LLM backbone',
+        'omni_fuyu.html': 'Adept 去掉 ViT — 原始 patch 直接线性投影进 LLM, 原生可变分辨率, UI/文档理解',
+        'omni_transfusion.html': 'Meta NTP+Diffusion 混合损失 — 文本离散token用CE, 图像连续向量用扩散, 同一个Transformer',
+        'omni_show_o.html': 'AR+离散Diffusion 统一 — 文本用因果注意力NTP, 图像用双向注意力mask-denoise, 共享权重',
+        'omni_unified_io2.html': 'AI2 Any-to-Any — 7+模态统一离散化(图/文/音/视频/3D/动作), encoder-decoder 序列生成',
+        'omni_minicpm_o.html': '清华端侧 Omni 8B — SigLIP+Whisper+LLM+TTS, 实时流式语音对话+视觉理解',
+        'omni_vita.html': 'Duplex 全模态交互 — InternViT+Mixtral-8x7B, 非唤醒/可打断/边听边说',
+        'omni_qwen_omni.html': '阿里 Thinker-Talker 架构 — 大模型推理+小模型流式语音, TMRoPE 时间对齐',
+        'omni_mqt.html': 'Matryoshka Query 可变长压缩 — 576→2~256 tokens, 套娃训练按需截断, 即插即用',
+        'omni_deepseek_ocr2.html': 'Visual Causal Flow — SAM ViT + Qwen2 混合注意力压缩 + DeepSeek-V2 MoE, 3.4B 端到端文档OCR',
+        'qwen25_vl.html': 'Dense GQA + mRoPE, Window Attention ViT, 动态分辨率',
+        'qwen3_vl.html': 'Deepstack 多层视觉注入, mRoPE, 2D RoPE ViT',
+        'llava.html': '经典 CLIP ViT + MLP Projector, 两阶段训练, AnyRes',
+        'vlm_agent_future.html': 'VLM × Code Agent 未来发展方向',
+        'mai_thinking.html': 'Meta Agentic RL 推理模型 — 大规模 Docker 环境构建 + 多轮工具交互 RL, SWE-Bench SOTA',
+        'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
+        'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
+        'vit_clip.html': 'OpenAI 对比学习 dual encoder, ViT-B/L/H, InfoNCE loss',
+        'vit_siglip.html': 'Sigmoid 替代 Softmax loss, SoViT shape-optimized, MAP pooling',
+        'vit_siglip2.html': 'NaFlex 可变分辨率 + 自蒸馏 + Captioning Loss — SigLIP 全面升级, Gemma4-VL 的 vision encoder',
+        'vit_radio.html': 'NVIDIA 多教师蒸馏 (CLIP+DINO+SAM), 一个 backbone 多种能力',
+        'vit_moonvit3d.html': 'Conv3d 时空分词, 3D RoPE, SwiGLU+RMSNorm, Kimi 视频 ViT',
+        'vit_cogvit.html': 'EVA2-E 初始化 63层 4.4B, 动态切片高分辨率, GLM-4V 编码器',
+        'vit_mae.html': 'Meta 75% 随机遮挡 + 像素重建, 非对称 encoder-decoder, 极简高效',
+        'vit_eva.html': 'BAAI MIM+CLIP 联合预训练, EVA-02 加入 RoPE+SwiGLU, 十亿参数级',
+        'vit_dinov2.html': 'Meta 自蒸馏+iBOT, 无需文本配对, 通用视觉特征 foundation model',
+        'vit_sam.html': 'Meta 1024² 高分辨率, Window+Global Attention, 分割专用 ViT',
+    };
+    const sectionIcons = {};
+    function mapIcons(sections) {
+        sections.forEach(s => {
+            if (s.items) s.items.forEach(i => { sectionIcons[i.page] = s.icon; });
+            if (s.children) mapIcons(s.children);
+        });
+    }
+    mapIcons(layout);
+
+    // Collect all items, sort by creation date (newest first)
+    const allItems = [];
+    function collectItems(sections) {
+        sections.forEach(section => {
+            if (section.items) section.items.forEach(item => {
+                allItems.push({ ...item, sectionIcon: section.icon });
+            });
+            if (section.children) collectItems(section.children);
+        });
+    }
+    collectItems(layout);
+    const createdOrder = [
+        'mai_thinking.html',
+        'muse_spark.html',
+        'conv2d_vs_linear.html',
+        'la_kimi_linear.html',
+        'la_ssm.html',
+        'la_mamba3.html',
+        'la_mdn.html',
+        'la_m2rnn.html',
+        'la_atlas.html',
+        'la_miras.html',
+        'la_tnt.html',
+        'la_trellis.html',
+        'la_memory_caching.html',
+        'la_fox.html',
+        'la_gated_deltanet2.html',
+        'ernie45_vl.html',
+        'vit_siglip2.html',
+        'la_gla.html',
+        'la_mamba.html',
+        'la_rwkv.html',
+        'la_deltanet.html',
+        'la_gated_deltanet.html',
+        'la_titans.html',
+        'la_griffin.html',
+        'la_hymba.html',
+        'la_recurrent_gemma.html',
+        'infini_attention.html',
+        'omni_deepseek_ocr2.html',
+        'omni_mqt.html',
+        'omni_transfusion.html',
+        'omni_show_o.html',
+        'omni_unified_io2.html',
+        'omni_minicpm_o.html',
+        'omni_vita.html',
+        'omni_qwen_omni.html',
+        'omni_fuyu.html',
+        'omni_chameleon.html',
+        'omni_emu3.html',
+        'omni_janus.html',
+        'omni_encoder.html',
+        'sparse_attention.html',
+        'ai_cluster_mindmap.html',
+        'qformer.html',
+        'vit_clip.html',
+        'vit_siglip.html',
+        'vit_radio.html',
+        'vit_moonvit3d.html',
+        'vit_cogvit.html',
+        'vit_mae.html',
+        'vit_eva.html',
+        'vit_dinov2.html',
+        'vit_sam.html',
+        'gemma4_vl.html',
+        'kimi_k25_vl.html',
+        'nemotron_nano_vl.html',
+        'step37_flash.html',
+        'qwen35_vl.html',
+        'qwen3_vl.html',
+        'glm45v.html',
+        'vit_progress_analysis.html',
+        'vit_techniques_deep_dive.html',
+        'cogvit_analysis.html',
+        'rope_yarn_explained.html',
+        'kv_cache.html',
+        'multi_token_prediction.html',
+        'linear_attention.html',
+        'qwen3_lm.html',
+        'vlm_agent_future.html',
+        'qwen25_vl.html',
+        'llava.html',
+        'lora.html',
+        'normalization.html',
+        'flash_attention.html',
+        'activation_functions.html',
+        'attention_moe_rope.html',
+        'deepseek_v3.html',
+        'megatron_bridge_training_pipeline.html',
+    ];
+    allItems.sort((a, b) => {
+        const ia = createdOrder.indexOf(a.page);
+        const ib = createdOrder.indexOf(b.page);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+
+    allItems.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.onclick = () => loadPageByUrl(item.page);
+        card.innerHTML = `
+            <h3>${item.sectionIcon} ${item.label}</h3>
+            <p>${descriptions[item.page] || ''}</p>
+        `;
+        container.appendChild(card);
+    });
+}
+
+// --- Drag & Drop ---
+let draggedItem = null;
+let dragData = null; // { type: 'item'|'dir', sectionPath, itemIdx|childIdx, orderKey }
+
+function setupDragItem(el) {
+    el.addEventListener('dragstart', (e) => {
+        draggedItem = el;
+        dragData = { type: 'item', sectionPath: JSON.parse(el.dataset.sectionPath), itemIdx: +el.dataset.itemIdx, orderKey: el.dataset.orderKey };
+        el.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+    });
+    el.addEventListener('dragend', () => {
+        if (draggedItem) draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        dragData = null;
+        document.querySelectorAll('.drag-over, .drag-above, .drag-below, .drag-over-section').forEach(
+            el => el.classList.remove('drag-over', 'drag-above', 'drag-below', 'drag-over-section')
+        );
+    });
+}
+
+function setupDragSection(secEl, path) {
+    const header = secEl.querySelector(':scope > .nav-section-header');
+    header.draggable = true;
+    header.addEventListener('dragstart', (e) => {
+        e.stopPropagation();
+        draggedItem = secEl;
+        const parentPath = path.slice(0, -2);
+        const childIdx = path[path.length - 1];
+        dragData = { type: 'dir', sectionPath: parentPath, childIdx: childIdx, orderKey: secEl.dataset.orderKey };
+        secEl.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+    });
+    header.addEventListener('dragend', () => {
+        if (draggedItem) draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        dragData = null;
+        document.querySelectorAll('.drag-over, .drag-above, .drag-below, .drag-over-section').forEach(
+            el => el.classList.remove('drag-over', 'drag-above', 'drag-below', 'drag-over-section')
+        );
+    });
+}
+
+function setupDropZone(container) {
+    container.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        container.classList.add('drag-over');
+
+        const entries = [...container.querySelectorAll(':scope > .nav-item:not(.dragging), :scope > .nav-section:not(.dragging)')];
+        entries.forEach(i => i.classList.remove('drag-above', 'drag-below'));
+        const closest = getClosestEntry(container, e.clientY);
+        if (closest.el) {
+            closest.el.classList.add(closest.position === 'above' ? 'drag-above' : 'drag-below');
+        }
+    });
+    container.addEventListener('dragleave', (e) => {
+        if (!container.contains(e.relatedTarget)) {
+            container.classList.remove('drag-over');
+            container.querySelectorAll('.drag-above, .drag-below').forEach(
+                el => el.classList.remove('drag-above', 'drag-below')
+            );
+        }
+    });
+    container.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        container.classList.remove('drag-over');
+        container.querySelectorAll('.drag-above, .drag-below').forEach(
+            el => el.classList.remove('drag-above', 'drag-below')
+        );
+        if (!dragData) return;
+
+        const targetPath = JSON.parse(decodeURIComponent(container.dataset.sectionPath));
+        const closest = getClosestEntry(container, e.clientY);
+        const layout = loadLayout();
+
+        if (dragData.type === 'item') {
+            moveItem(layout, dragData, targetPath, closest);
+        } else if (dragData.type === 'dir') {
+            moveDir(layout, dragData, targetPath, closest);
+        }
+
+        saveLayout(layout);
+        renderSidebar(layout);
+        if (currentPage) {
+            document.querySelectorAll('.nav-item').forEach(i => {
+                i.classList.toggle('active', i.dataset.page === currentPage);
+            });
+        }
+    });
+}
+
+function getClosestEntry(container, y) {
+    const entries = [...container.querySelectorAll(':scope > .nav-item:not(.dragging), :scope > .nav-section:not(.dragging)')];
+    let closest = { el: null, position: 'below', offset: Infinity };
+    entries.forEach(entry => {
+        const header = entry.classList.contains('nav-section')
+            ? entry.querySelector(':scope > .nav-section-header')
+            : entry;
+        const rect = header.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        const offset = Math.abs(y - mid);
+        if (offset < closest.offset) {
+            closest = { el: entry, position: y < mid ? 'above' : 'below', offset };
+        }
+    });
+    return closest;
+}
+
+function removeFromSource(layout, dragData) {
+    const srcSection = getSectionByPath(layout, dragData.sectionPath);
+    if (!srcSection) return null;
+    if (!srcSection.renderOrder) srcSection.renderOrder = buildDefaultOrder(srcSection);
+
+    if (dragData.type === 'item') {
+        const srcKey = 'i' + dragData.itemIdx;
+        const [moved] = srcSection.items.splice(dragData.itemIdx, 1);
+        srcSection.renderOrder = srcSection.renderOrder.filter(k => k !== srcKey).map(k => {
+            if (k[0] === 'i') {
+                const i = parseInt(k.slice(1));
+                return 'i' + (i > dragData.itemIdx ? i - 1 : i);
+            }
+            return k;
+        });
+        return { type: 'item', data: moved };
+    } else {
+        const srcKey = 'c' + dragData.childIdx;
+        const [moved] = srcSection.children.splice(dragData.childIdx, 1);
+        srcSection.renderOrder = srcSection.renderOrder.filter(k => k !== srcKey).map(k => {
+            if (k[0] === 'c') {
+                const i = parseInt(k.slice(1));
+                return 'c' + (i > dragData.childIdx ? i - 1 : i);
+            }
+            return k;
+        });
+        return { type: 'dir', data: moved };
+    }
+}
+
+function insertIntoTarget(layout, targetPath, moved, closest) {
+    const tgtSection = getSectionByPath(layout, targetPath);
+    if (!tgtSection) return;
+    if (!tgtSection.renderOrder) tgtSection.renderOrder = buildDefaultOrder(tgtSection);
+
+    let newKey;
+    if (moved.type === 'item') {
+        tgtSection.items.push(moved.data);
+        newKey = 'i' + (tgtSection.items.length - 1);
+    } else {
+        if (!tgtSection.children) tgtSection.children = [];
+        tgtSection.children.push(moved.data);
+        newKey = 'c' + (tgtSection.children.length - 1);
+    }
+
+    // Remove if already present (shouldn't be, but safety)
+    tgtSection.renderOrder = tgtSection.renderOrder.filter(k => k !== newKey);
+
+    if (closest.el && closest.el.dataset.orderKey) {
+        const closestKey = closest.el.dataset.orderKey;
+        let insertAt = tgtSection.renderOrder.indexOf(closestKey);
+        if (insertAt === -1) insertAt = tgtSection.renderOrder.length;
+        if (closest.position === 'below') insertAt++;
+        tgtSection.renderOrder.splice(insertAt, 0, newKey);
+    } else {
+        tgtSection.renderOrder.push(newKey);
+    }
+}
+
+function moveItem(layout, dragData, targetPath, closest) {
+    const moved = removeFromSource(layout, dragData);
+    if (moved) insertIntoTarget(layout, targetPath, moved, closest);
+}
+
+function moveDir(layout, dragData, targetPath, closest) {
+    const moved = removeFromSource(layout, dragData);
+    if (moved) insertIntoTarget(layout, targetPath, moved, closest);
+}
+
+// --- Create / Delete ---
+let createDirParentPath = null; // null = top-level, array = sub-dir
+
+function showCreateDirModal() {
+    createDirParentPath = null;
+    document.getElementById('create-dir-title').textContent = '新建目录';
+    document.getElementById('dir-name').value = '';
+    document.getElementById('dir-icon').value = '';
+    document.getElementById('modal-create-dir').classList.add('show');
+    setTimeout(() => document.getElementById('dir-name').focus(), 100);
+}
+
+function showCreateSubDirModal(parentPath) {
+    createDirParentPath = parentPath;
+    const layout = loadLayout();
+    const parent = getSectionByPath(layout, parentPath);
+    document.getElementById('create-dir-title').textContent = `在「${parent.title}」下新建子目录`;
+    document.getElementById('dir-name').value = '';
+    document.getElementById('dir-icon').value = '';
+    document.getElementById('modal-create-dir').classList.add('show');
+    setTimeout(() => document.getElementById('dir-name').focus(), 100);
+}
+
+function createDirectory() {
+    const name = document.getElementById('dir-name').value.trim();
+    const icon = document.getElementById('dir-icon').value.trim() || '📁';
+    if (!name) return;
+    const layout = loadLayout();
+    const newDir = {
+        id: 'custom-' + Date.now(),
+        icon: icon,
+        title: name,
+        open: true,
+        items: [],
+        children: []
+    };
+    if (createDirParentPath === null) {
+        layout.push(newDir);
+    } else {
+        const parent = getSectionByPath(layout, createDirParentPath);
+        if (!parent.children) parent.children = [];
+        parent.children.push(newDir);
+        // Add to renderOrder
+        if (!parent.renderOrder) parent.renderOrder = buildDefaultOrder(parent);
+        else parent.renderOrder.push('c' + (parent.children.length - 1));
+    }
+    saveLayout(layout);
+    renderSidebar(layout);
+    hideModal('modal-create-dir');
+}
+
+function hideModal(id) {
+    document.getElementById(id).classList.remove('show');
+}
+
+function closeAllDropdowns() {
+    document.querySelectorAll('.section-dropdown.show, .item-dropdown.show').forEach(d => d.classList.remove('show'));
+}
+
+let renameDirPath = null;
+function showRenameDirModal(path) {
+    renameDirPath = path;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, path);
+    document.getElementById('rename-dir-old').textContent = section.title;
+    document.getElementById('rename-dir-name').value = section.title;
+    document.getElementById('rename-dir-icon').value = section.icon || '';
+    document.getElementById('modal-rename-dir').classList.add('show');
+    setTimeout(() => { const inp = document.getElementById('rename-dir-name'); inp.focus(); inp.select(); }, 100);
+}
+
+function renameDirectory() {
+    const name = document.getElementById('rename-dir-name').value.trim();
+    const icon = document.getElementById('rename-dir-icon').value.trim();
+    if (!name) return;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, renameDirPath);
+    section.title = name;
+    if (icon) section.icon = icon;
+    saveLayout(layout);
+    renderSidebar(layout);
+    hideModal('modal-rename-dir');
+}
+
+let deleteDirPath = null;
+function showDeleteDirModal(path) {
+    deleteDirPath = path;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, path);
+    const itemCount = countItems(section);
+    document.getElementById('delete-dir-name').textContent = section.title;
+    document.getElementById('delete-dir-warn').textContent = itemCount > 0
+        ? `该目录包含 ${itemCount} 个笔记，删除后笔记将移入未分类。`
+        : '该目录为空，可以安全删除。';
+    document.getElementById('modal-delete-dir').classList.add('show');
+}
+
+function countItems(section) {
+    let count = (section.items || []).length;
+    (section.children || []).forEach(c => { count += countItems(c); });
+    return count;
+}
+
+function collectAllItems(section) {
+    let items = [...(section.items || [])];
+    (section.children || []).forEach(c => { items = items.concat(collectAllItems(c)); });
+    return items;
+}
+
+function deleteDirectory() {
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, deleteDirPath);
+    const orphanedItems = collectAllItems(section);
+
+    if (deleteDirPath.length === 1) {
+        layout.splice(deleteDirPath[0], 1);
+    } else {
+        const parentPath = deleteDirPath.slice(0, -2);
+        const childIdx = deleteDirPath[deleteDirPath.length - 1];
+        const parent = getSectionByPath(layout, parentPath);
+        parent.children.splice(childIdx, 1);
+        // Update parent renderOrder
+        const delKey = 'c' + childIdx;
+        if (parent.renderOrder) {
+            parent.renderOrder = parent.renderOrder.filter(k => k !== delKey).map(k => {
+                if (k[0] === 'c') {
+                    const ci = parseInt(k.slice(1));
+                    return 'c' + (ci > childIdx ? ci - 1 : ci);
+                }
+                return k;
+            });
+        }
+    }
+
+    if (orphanedItems.length > 0) {
+        let uncategorized = layout.find(s => s.id === 'uncategorized');
+        if (!uncategorized) {
+            uncategorized = { id: 'uncategorized', icon: '📦', title: '未分类', open: true, items: [], children: [] };
+            layout.push(uncategorized);
+        }
+        uncategorized.items = uncategorized.items.concat(orphanedItems);
+    }
+
+    saveLayout(layout);
+    renderSidebar(layout);
+    hideModal('modal-delete-dir');
+}
+
+let renameItemPath = null, renameItemIdx = null;
+function showRenameItemModal(path, idx) {
+    renameItemPath = path;
+    renameItemIdx = idx;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, path);
+    const item = section.items[idx];
+    document.getElementById('rename-item-old').textContent = item.label;
+    document.getElementById('rename-item-name').value = item.label;
+    document.getElementById('modal-rename-item').classList.add('show');
+    setTimeout(() => { const inp = document.getElementById('rename-item-name'); inp.focus(); inp.select(); }, 100);
+}
+
+function renameItem() {
+    const name = document.getElementById('rename-item-name').value.trim();
+    if (!name) return;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, renameItemPath);
+    section.items[renameItemIdx].label = name;
+    saveLayout(layout);
+    renderSidebar(layout);
+    hideModal('modal-rename-item');
+    if (currentPage) {
+        document.querySelectorAll('.nav-item').forEach(i => {
+            i.classList.toggle('active', i.dataset.page === currentPage);
+        });
+    }
+}
+
+let hideItemPath = null, hideItemIdx = null;
+function showHideItemModal(path, idx) {
+    hideItemPath = path;
+    hideItemIdx = idx;
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, path);
+    const item = section.items[idx];
+    document.getElementById('hide-item-name').textContent = item.label;
+    document.getElementById('modal-hide-item').classList.add('show');
+}
+
+function hideItem() {
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, hideItemPath);
+    const removedIdx = hideItemIdx;
+    section.items.splice(removedIdx, 1);
+    const delKey = 'i' + removedIdx;
+    if (section.renderOrder) {
+        section.renderOrder = section.renderOrder.filter(k => k !== delKey).map(k => {
+            if (k[0] === 'i') {
+                const ii = parseInt(k.slice(1));
+                return 'i' + (ii > removedIdx ? ii - 1 : ii);
+            }
+            return k;
+        });
+    }
+    saveLayout(layout);
+    renderSidebar(layout);
+    renderWelcomeCards(layout);
+    hideModal('modal-hide-item');
+    if (currentPage) {
+        document.querySelectorAll('.nav-item').forEach(i => {
+            i.classList.toggle('active', i.dataset.page === currentPage);
+        });
+    }
+}
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+function toggleSectionByPath(path) {
+    const layout = loadLayout();
+    const section = getSectionByPath(layout, path);
+    if (section) {
+        section.open = !section.open;
+        saveLayout(layout);
+        renderSidebar(layout);
+        if (currentPage) {
+            document.querySelectorAll('.nav-item').forEach(i => {
+                i.classList.toggle('active', i.dataset.page === currentPage);
+            });
+        }
+    }
+}
+
+function getSectionByPath(layout, path) {
+    let node = layout[path[0]];
+    for (let i = 1; i < path.length; i += 2) {
+        if (path[i] === 'c' && node.children) {
+            node = node.children[path[i + 1]];
+        }
+    }
+    return node;
+}
+
+function loadPageByUrl(url) {
+    currentPage = url;
+    const frame = document.getElementById('content-frame');
+    const welcome = document.getElementById('welcome');
+    const toolbar = document.getElementById('toolbar');
+
+    welcome.style.display = 'none';
+    toolbar.style.display = 'flex';
+    frame.style.display = 'block';
+    frame.src = url;
+
+    // Breadcrumb from current layout
+    const layout = loadLayout();
+    let sectionTitle = '笔记', pageLabel = url;
+    function findInSections(sections, parentTitle) {
+        for (const s of sections) {
+            const title = parentTitle ? parentTitle + ' / ' + s.title : s.title;
+            if (s.items) {
+                for (const i of s.items) {
+                    if (i.page === url) { sectionTitle = title; pageLabel = i.label; return true; }
+                }
+            }
+            if (s.children && findInSections(s.children, title)) return true;
+        }
+        return false;
+    }
+    findInSections(layout, '');
+    document.getElementById('breadcrumb-section').textContent = sectionTitle;
+    document.getElementById('breadcrumb-page').textContent = pageLabel;
+
+    // Highlight nav item
+    document.querySelectorAll('.nav-item').forEach(i => {
+        i.classList.toggle('active', i.dataset.page === url);
+    });
+}
+
+function openInNewTab() {
+    if (currentPage) window.open(currentPage, '_blank');
+}
+
+function refreshFrame() {
+    const frame = document.getElementById('content-frame');
+    if (frame && frame.src) frame.src = frame.src;
+}
+
+function getAllPages() {
+    const layout = loadLayout();
+    const pages = [];
+    function collect(sections) {
+        sections.forEach(section => {
+            if (section.children) collect(section.children);
+            if (section.items) section.items.forEach(item => pages.push(item.page));
+        });
+    }
+    collect(layout);
+    return pages;
+}
+
+function goToPrev() {
+    if (!currentPage) return;
+    const pages = getAllPages();
+    const idx = pages.indexOf(currentPage);
+    if (idx > 0) loadPageByUrl(pages[idx - 1]);
+}
+
+function goToNext() {
+    if (!currentPage) return;
+    const pages = getAllPages();
+    const idx = pages.indexOf(currentPage);
+    if (idx < pages.length - 1) loadPageByUrl(pages[idx + 1]);
+}
+
+function goHome() {
+    currentPage = null;
+    document.getElementById('content-frame').style.display = 'none';
+    document.getElementById('toolbar').style.display = 'none';
+    document.getElementById('welcome').style.display = 'flex';
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+}
+
+// --- Init ---
+window.addEventListener('load', () => {
+    const layout = loadLayout();
+    renderSidebar(layout);
+    renderWelcomeCards(layout);
+    const hash = window.location.hash.slice(1);
+    if (hash) loadPageByUrl(hash);
+});
+
+document.addEventListener('click', () => closeAllDropdowns());
+
+// Expose for child iframe navigation (related-notes links)
+function loadPage(url) { loadPageByUrl(url); }
+
+// Close modal on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.classList.remove('show');
+    });
+});
+
+// Cmd+B / Ctrl+B toggle sidebar
+document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+    }
+});
+
+// Enter key in create dir modal
+document.getElementById('dir-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createDirectory();
+});
+// Enter key in rename item modal
+document.getElementById('rename-item-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') renameItem();
+});
+</script>
+
+</body>
+</html>

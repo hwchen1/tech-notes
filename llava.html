@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLaVA Architecture Analysis</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #e599f7, #f0abfc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #e599f7; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #e599f70a; border: 1px solid #e599f722; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #e599f7; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 24px; align-items: start; margin: 24px 0; }
+.three-col pre { height: 100%; }
+.three-col .svg-block { margin: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.three-col .explanation { padding: 16px; background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; }
+.three-col .explanation h3 { margin-top: 0; }
+.three-col .explanation p { font-size: 0.84rem; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+@media (max-width: 1100px) { .three-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>LLaVA (Large Language and Vision Assistant)</h1>
+<p class="subtitle">Simple & Elegant VLM: CLIP ViT Encoder + MLP Projector + LLM Decoder -- LLaVA-1.5 / LLaVA-NeXT</p>
+
+<!-- ===== 1. Overall Architecture ===== -->
+<h2>1. Overall Architecture (CLIP + MLP + LLM)</h2>
+
+<div class="three-col">
+<pre><span class="cm"># LLaVA-1.5 architecture</span>
+<span class="cm"># Elegantly simple: 3 components</span>
+
+<span class="kw">class</span> <span class="fn">LLaVA</span>(nn.Module):
+    <span class="cm">"""Visual Instruction Tuning
+    - Vision: CLIP ViT-L/14 @336px
+    - Projector: 2-layer MLP
+    - LLM: Vicuna/LLaMA 7B/13B
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.vision_encoder = CLIPViT(
+            image_size=<span class="num">336</span>,
+            patch_size=<span class="num">14</span>,
+            hidden_size=<span class="num">1024</span>,
+            num_layers=<span class="num">24</span>,
+            num_heads=<span class="num">16</span>)
+        self.projector = MLP(
+            in_features=<span class="num">1024</span>,
+            hidden=<span class="num">4096</span>,
+            out_features=<span class="num">4096</span>)
+        self.llm = LlamaForCausalLM(
+            hidden_size=<span class="num">4096</span>,
+            num_layers=<span class="num">32</span>,
+            num_heads=<span class="num">32</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, images, tokens):
+        vis_feats = self.vision_encoder(images)
+        vis_tokens = self.projector(vis_feats)
+        <span class="cm"># Concatenate at image position</span>
+        embeds = merge(vis_tokens, tokens)
+        <span class="kw">return</span> self.llm(embeds)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 380 420" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="ar" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#e599f7"/></marker></defs>
+  <text x="190" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">LLaVA-1.5 Pipeline</text>
+  <!-- Image input -->
+  <rect x="40" y="35" width="120" height="30" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="100" y="54" text-anchor="middle" fill="#e599f7" font-size="9">Image (336x336)</text>
+  <!-- Text input -->
+  <rect x="220" y="35" width="120" height="30" rx="6" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="280" y="54" text-anchor="middle" fill="#61afef" font-size="9">Text Tokens</text>
+  <!-- CLIP -->
+  <path d="M 100 65 L 100 90" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="30" y="95" width="140" height="50" rx="8" fill="#e599f710" stroke="#e599f7"/>
+  <text x="100" y="117" text-anchor="middle" fill="#e599f7" font-size="10" font-weight="bold">CLIP ViT-L/14</text>
+  <text x="100" y="134" text-anchor="middle" fill="#6b6b80" font-size="8">24 layers, 1024-dim</text>
+  <!-- Projector -->
+  <path d="M 100 145 L 100 170" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="40" y="175" width="120" height="40" rx="6" fill="#1e1e2e" stroke="#f0abfc"/>
+  <text x="100" y="193" text-anchor="middle" fill="#f0abfc" font-size="9">2-Layer MLP</text>
+  <text x="100" y="207" text-anchor="middle" fill="#6b6b80" font-size="8">1024 -> 4096 -> 4096</text>
+  <!-- Merge -->
+  <path d="M 100 215 L 190 260" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M 280 65 L 280 120 L 280 120 L 190 260" stroke="#61afef" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="140" y="265" width="100" height="30" rx="6" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="190" y="284" text-anchor="middle" fill="#98c379" font-size="9">Concatenate</text>
+  <!-- LLM -->
+  <path d="M 190 295 L 190 320" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="110" y="325" width="160" height="55" rx="8" fill="#61afef10" stroke="#61afef"/>
+  <text x="190" y="348" text-anchor="middle" fill="#61afef" font-size="10" font-weight="bold">LLaMA Decoder</text>
+  <text x="190" y="365" text-anchor="middle" fill="#6b6b80" font-size="8">32 layers, 4096-dim, RoPE</text>
+  <!-- Output -->
+  <path d="M 190 380 L 190 400" stroke="#61afef" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="190" y="415" text-anchor="middle" fill="#6b6b80" font-size="9">Response Tokens</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Design Philosophy</h3>
+<p><strong style="color:#e599f7">Simplicity is key.</strong> LLaVA connects a pre-trained CLIP vision encoder to a pre-trained LLM with just a lightweight MLP projector. No complex cross-attention, no special vision tokens.</p>
+<p>Image features are projected into the LLM's embedding space and simply concatenated into the token sequence at the <code>&lt;image&gt;</code> placeholder position.</p>
+<p style="margin-top:12px"><strong style="color:#f0abfc">LLaVA-1.0 vs 1.5:</strong> v1.0 used a single linear layer as projector. v1.5 upgraded to a 2-layer MLP with GELU activation, significantly improving performance.</p>
+<p style="margin-top:12px"><strong style="color:#61afef">No special tokens:</strong> Unlike Flamingo or BLIP-2, LLaVA does not use perceiver/Q-Former. Vision features directly become part of the input sequence.</p>
+</div>
+</div>
+
+<!-- ===== 2. CLIP Vision Encoder ===== -->
+<h2>2. CLIP ViT-L/14 Vision Encoder</h2>
+
+<div class="three-col">
+<pre><span class="cm"># CLIP ViT-L/14 @ 336px</span>
+<span class="cm"># Pre-trained, frozen in Stage 1</span>
+
+<span class="kw">class</span> <span class="fn">CLIPVisionEncoder</span>(nn.Module):
+    <span class="cm">"""CLIP ViT-L/14
+    Input: 336x336 image
+    Patches: 14x14 -> 24x24 = 576 patches
+    Output: 576 tokens x 1024-dim
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self):
+        self.patch_embed = Conv2d(
+            <span class="num">3</span>, <span class="num">1024</span>,
+            kernel_size=<span class="num">14</span>, stride=<span class="num">14</span>)
+        self.pos_embed = Parameter(
+            zeros(<span class="num">577</span>, <span class="num">1024</span>))  <span class="cm"># +1 CLS</span>
+        self.layers = nn.ModuleList([
+            TransformerBlock(
+                dim=<span class="num">1024</span>,
+                heads=<span class="num">16</span>,
+                mlp_dim=<span class="num">4096</span>)
+            <span class="kw">for</span> _ <span class="kw">in</span> range(<span class="num">24</span>)])
+        self.ln_post = LayerNorm(<span class="num">1024</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, img):
+        <span class="cm"># img: [B, 3, 336, 336]</span>
+        x = self.patch_embed(img)
+        <span class="cm"># x: [B, 576, 1024]</span>
+        x = x + self.pos_embed[<span class="num">1</span>:]
+        <span class="kw">for</span> layer <span class="kw">in</span> self.layers:
+            x = layer(x)
+        <span class="kw">return</span> self.ln_post(x)</pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 360 400" xmlns="http://www.w3.org/2000/svg">
+  <text x="180" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">CLIP ViT-L/14 @ 336px</text>
+  <!-- Image -->
+  <rect x="120" y="30" width="120" height="35" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="180" y="46" text-anchor="middle" fill="#e599f7" font-size="9">Image 336x336x3</text>
+  <text x="180" y="58" text-anchor="middle" fill="#6b6b80" font-size="7">RGB input</text>
+  <!-- Patch embed -->
+  <path d="M 180 65 L 180 82" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="100" y="85" width="160" height="30" rx="6" fill="#e599f710" stroke="#e599f7"/>
+  <text x="180" y="104" text-anchor="middle" fill="#e599f7" font-size="9">Patch Embed (14x14 conv)</text>
+  <!-- Patches -->
+  <path d="M 180 115 L 180 132" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="110" y="135" width="140" height="25" rx="5" fill="#1e1e2e" stroke="#f0abfc"/>
+  <text x="180" y="151" text-anchor="middle" fill="#f0abfc" font-size="8">576 patches x 1024-dim</text>
+  <!-- + pos embed -->
+  <path d="M 180 160 L 180 177" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="115" y="180" width="130" height="25" rx="5" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="180" y="196" text-anchor="middle" fill="#98c379" font-size="8">+ Position Embedding</text>
+  <!-- Transformer blocks -->
+  <path d="M 180 205 L 180 222" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="90" y="225" width="180" height="100" rx="8" fill="#11111a" stroke="#e599f755"/>
+  <text x="180" y="245" text-anchor="middle" fill="#e599f7" font-size="9">Transformer Block x24</text>
+  <rect x="110" y="255" width="140" height="22" rx="4" fill="#1e1e2e" stroke="#61afef55"/>
+  <text x="180" y="270" text-anchor="middle" fill="#61afef" font-size="8">Multi-Head Attn (16 heads)</text>
+  <rect x="110" y="283" width="140" height="22" rx="4" fill="#1e1e2e" stroke="#d19a6655"/>
+  <text x="180" y="298" text-anchor="middle" fill="#d19a66" font-size="8">MLP (1024 -> 4096 -> 1024)</text>
+  <text x="180" y="318" text-anchor="middle" fill="#5c6370" font-size="7">LayerNorm + Residual</text>
+  <!-- Output -->
+  <path d="M 180 325 L 180 345" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="100" y="348" width="160" height="30" rx="6" fill="#1e1e2e" stroke="#98c379"/>
+  <text x="180" y="362" text-anchor="middle" fill="#98c379" font-size="9">LayerNorm</text>
+  <text x="180" y="374" text-anchor="middle" fill="#6b6b80" font-size="7">Output: [B, 576, 1024]</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Vision Encoder Details</h3>
+<p><strong style="color:#e599f7">CLIP ViT-L/14 @ 336px</strong> is the standard vision encoder for LLaVA-1.5. The higher resolution (336 vs 224) provides finer-grained visual features.</p>
+<p>The image is split into 14x14 patches: 336/14 = 24 patches per side, yielding <strong>576 visual tokens</strong> per image.</p>
+<p style="margin-top:12px"><strong style="color:#f0abfc">Pre-trained & frozen:</strong> In Stage 1 (projector pre-training), the vision encoder is completely frozen. In Stage 2 (instruction tuning), it can optionally be fine-tuned.</p>
+<p style="margin-top:12px"><strong style="color:#61afef">CLS token dropped:</strong> LLaVA uses all 576 patch tokens (not the CLS token) as visual features, preserving spatial information for the LLM.</p>
+</div>
+</div>
+
+<!-- ===== 3. MLP Projector ===== -->
+<h2>3. MLP Projector (Vision-Language Connector)</h2>
+
+<div class="three-col">
+<pre><span class="cm"># LLaVA-1.5: 2-layer MLP projector</span>
+<span class="cm"># LLaVA-1.0: single Linear layer</span>
+
+<span class="kw">class</span> <span class="fn">MultimodalProjector</span>(nn.Module):
+    <span class="cm">"""Projects vision features into
+    the LLM embedding space.
+
+    LLaVA-1.0: Linear(1024, 4096)
+    LLaVA-1.5: MLP with GELU
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self,
+                 input_size=<span class="num">1024</span>,
+                 hidden_size=<span class="num">4096</span>,
+                 output_size=<span class="num">4096</span>):
+        self.linear_1 = Linear(
+            input_size, hidden_size)
+        self.act = GELU()
+        self.linear_2 = Linear(
+            hidden_size, output_size)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, vis_features):
+        <span class="cm"># vis_features: [B, 576, 1024]</span>
+        x = self.linear_1(vis_features)
+        x = self.act(x)
+        x = self.linear_2(x)
+        <span class="cm"># output: [B, 576, 4096]</span>
+        <span class="kw">return</span> x
+
+<span class="cm"># In Megatron-Bridge:</span>
+<span class="cm"># MultimodalProjector with</span>
+<span class="cm"># projector_type="mlp"</span>
+<span class="cm"># Configured via ModuleSpec</span></pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 340 320" xmlns="http://www.w3.org/2000/svg">
+  <text x="170" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">MLP Projector (LLaVA-1.5)</text>
+  <!-- Input -->
+  <rect x="85" y="35" width="170" height="30" rx="6" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="170" y="54" text-anchor="middle" fill="#e599f7" font-size="9">Vision Features [576, 1024]</text>
+  <!-- Linear 1 -->
+  <path d="M 170 65 L 170 88" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="95" y="92" width="150" height="35" rx="6" fill="#f0abfc10" stroke="#f0abfc"/>
+  <text x="170" y="108" text-anchor="middle" fill="#f0abfc" font-size="9">Linear (1024 -> 4096)</text>
+  <text x="170" y="121" text-anchor="middle" fill="#6b6b80" font-size="7">~4.2M params</text>
+  <!-- GELU -->
+  <path d="M 170 127 L 170 148" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="115" y="152" width="110" height="28" rx="6" fill="#98c37910" stroke="#98c379"/>
+  <text x="170" y="170" text-anchor="middle" fill="#98c379" font-size="9">GELU Activation</text>
+  <!-- Linear 2 -->
+  <path d="M 170 180 L 170 200" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="95" y="204" width="150" height="35" rx="6" fill="#f0abfc10" stroke="#f0abfc"/>
+  <text x="170" y="220" text-anchor="middle" fill="#f0abfc" font-size="9">Linear (4096 -> 4096)</text>
+  <text x="170" y="233" text-anchor="middle" fill="#6b6b80" font-size="7">~16.8M params</text>
+  <!-- Output -->
+  <path d="M 170 239 L 170 260" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="85" y="264" width="170" height="30" rx="6" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="170" y="283" text-anchor="middle" fill="#61afef" font-size="9">LLM Embeddings [576, 4096]</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>The Critical Connector</h3>
+<p><strong style="color:#e599f7">Minimal but effective.</strong> The projector is the only trainable component in Stage 1. It learns to align CLIP's vision space with the LLM's language space.</p>
+<p><strong style="color:#f0abfc">LLaVA-1.0 vs 1.5:</strong> Upgrading from a single linear layer to a 2-layer MLP with GELU was one of the key improvements in LLaVA-1.5, yielding significant accuracy gains.</p>
+<p style="margin-top:12px"><strong style="color:#98c379">Parameter count:</strong> Only ~21M parameters total -- negligible compared to the 7B LLM. Yet this tiny bridge enables powerful multimodal understanding.</p>
+<p style="margin-top:12px"><strong style="color:#61afef">In Megatron-Bridge:</strong> Implemented as <code>MultimodalProjector</code> with <code>projector_type="mlp"</code>, configured via <code>ModuleSpec</code> in the LLaVA provider.</p>
+</div>
+</div>
+
+<!-- ===== 4. Two-Stage Training ===== -->
+<h2>4. Two-Stage Training Strategy</h2>
+
+<div class="three-col">
+<pre><span class="cm"># Stage 1: Projector Pre-training</span>
+<span class="cm"># Only MLP projector is trained</span>
+<span class="cm"># Vision encoder: FROZEN</span>
+<span class="cm"># LLM: FROZEN</span>
+
+stage1_config = dict(
+    data=<span class="st">"CC-595K image-text pairs"</span>,
+    trainable=[<span class="st">"projector"</span>],
+    frozen=[<span class="st">"vision_encoder"</span>, <span class="st">"llm"</span>],
+    lr=<span class="num">1e-3</span>,
+    epochs=<span class="num">1</span>,
+    batch_size=<span class="num">256</span>,
+)
+
+<span class="cm"># Stage 2: End-to-End Fine-tuning</span>
+<span class="cm"># Projector + LLM are trained</span>
+<span class="cm"># Vision encoder: optionally unfrozen</span>
+
+stage2_config = dict(
+    data=<span class="st">"LLaVA-Instruct-665K"</span>,
+    trainable=[<span class="st">"projector"</span>, <span class="st">"llm"</span>],
+    frozen=[<span class="st">"vision_encoder"</span>],  <span class="cm"># or unfreeze</span>
+    lr=<span class="num">2e-5</span>,
+    epochs=<span class="num">1</span>,
+    batch_size=<span class="num">128</span>,
+)
+
+<span class="cm"># In Megatron-Bridge provider:</span>
+<span class="cm"># freeze_language_model=True (Stage 1)</span>
+<span class="cm"># freeze_modality_encoders={"images": True}</span></pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 380 380" xmlns="http://www.w3.org/2000/svg">
+  <text x="190" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">Two-Stage Training</text>
+  <!-- Stage 1 -->
+  <rect x="20" y="30" width="160" height="180" rx="10" fill="#11111a" stroke="#e599f755"/>
+  <text x="100" y="50" text-anchor="middle" fill="#e599f7" font-size="10" font-weight="bold">Stage 1</text>
+  <text x="100" y="66" text-anchor="middle" fill="#6b6b80" font-size="8">Projector Pre-training</text>
+  <rect x="40" y="78" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#555"/>
+  <text x="100" y="94" text-anchor="middle" fill="#555" font-size="8">CLIP ViT (FROZEN)</text>
+  <rect x="40" y="110" width="120" height="24" rx="4" fill="#e599f720" stroke="#e599f7"/>
+  <text x="100" y="126" text-anchor="middle" fill="#e599f7" font-size="8">MLP Projector (TRAIN)</text>
+  <rect x="40" y="142" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#555"/>
+  <text x="100" y="158" text-anchor="middle" fill="#555" font-size="8">LLM (FROZEN)</text>
+  <text x="100" y="185" text-anchor="middle" fill="#6b6b80" font-size="7">Data: CC-595K pairs</text>
+  <text x="100" y="200" text-anchor="middle" fill="#6b6b80" font-size="7">LR: 1e-3, 1 epoch</text>
+  <!-- Arrow -->
+  <path d="M 180 120 L 200 120" stroke="#e599f7" stroke-width="2" marker-end="url(#ar)"/>
+  <!-- Stage 2 -->
+  <rect x="200" y="30" width="160" height="180" rx="10" fill="#11111a" stroke="#61afef55"/>
+  <text x="280" y="50" text-anchor="middle" fill="#61afef" font-size="10" font-weight="bold">Stage 2</text>
+  <text x="280" y="66" text-anchor="middle" fill="#6b6b80" font-size="8">Instruction Tuning</text>
+  <rect x="220" y="78" width="120" height="24" rx="4" fill="#1e1e2e" stroke="#555"/>
+  <text x="280" y="94" text-anchor="middle" fill="#555" font-size="8">CLIP ViT (FROZEN)</text>
+  <rect x="220" y="110" width="120" height="24" rx="4" fill="#e599f720" stroke="#e599f7"/>
+  <text x="280" y="126" text-anchor="middle" fill="#e599f7" font-size="8">MLP Projector (TRAIN)</text>
+  <rect x="220" y="142" width="120" height="24" rx="4" fill="#61afef20" stroke="#61afef"/>
+  <text x="280" y="158" text-anchor="middle" fill="#61afef" font-size="8">LLM (TRAIN)</text>
+  <text x="280" y="185" text-anchor="middle" fill="#6b6b80" font-size="7">Data: LLaVA-Instruct-665K</text>
+  <text x="280" y="200" text-anchor="middle" fill="#6b6b80" font-size="7">LR: 2e-5, 1 epoch</text>
+  <!-- Result -->
+  <path d="M 190 210 L 190 240" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="90" y="245" width="200" height="35" rx="8" fill="#98c37910" stroke="#98c379"/>
+  <text x="190" y="260" text-anchor="middle" fill="#98c379" font-size="9">LLaVA-1.5 (Instruction-Following VLM)</text>
+  <text x="190" y="274" text-anchor="middle" fill="#6b6b80" font-size="7">Visual chat, reasoning, OCR, grounding</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>Training Strategy</h3>
+<p><strong style="color:#e599f7">Stage 1 -- Feature Alignment.</strong> Only the projector is trained on 595K image-caption pairs. This teaches the MLP to map CLIP features into the LLM's word embedding space. Fast: ~5 hours on 8 A100s.</p>
+<p><strong style="color:#61afef">Stage 2 -- Instruction Tuning.</strong> The projector and LLM are jointly fine-tuned on 665K multimodal instruction-following data (conversations, reasoning, detail descriptions).</p>
+<p style="margin-top:12px"><strong style="color:#98c379">Why two stages?</strong> Stage 1 bootstraps the cross-modal alignment cheaply. Stage 2 then teaches the model to follow complex visual instructions without catastrophic forgetting.</p>
+<p style="margin-top:12px"><strong style="color:#d19a66">Megatron-Bridge support:</strong> The <code>freeze_language_model</code> and <code>freeze_modality_encoders</code> flags in <code>MegatronMIMOProvider</code> directly map to this two-stage paradigm.</p>
+</div>
+</div>
+
+<!-- ===== 5. LLaVA-NeXT: Dynamic Resolution (AnyRes) ===== -->
+<h2>5. LLaVA-NeXT: Dynamic Resolution (AnyRes)</h2>
+
+<div class="three-col">
+<pre><span class="cm"># LLaVA-NeXT: AnyRes strategy</span>
+<span class="cm"># Split high-res images into tiles</span>
+<span class="cm"># Encode each tile + base image</span>
+
+<span class="kw">class</span> <span class="fn">AnyResProcessor</span>:
+    <span class="cm">"""Dynamic resolution for LLaVA-NeXT.
+    Supports arbitrary aspect ratios.
+    Max grids: e.g. 2x2, 1x3, 3x1, etc.
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self,
+                 base_size=<span class="num">336</span>,
+                 max_tiles=<span class="num">4</span>):
+        self.base_size = base_size
+        self.max_tiles = max_tiles
+
+    <span class="kw">def</span> <span class="fn">process</span>(self, image):
+        <span class="cm"># 1. Resize to base for global view</span>
+        base_img = resize(image, <span class="num">336</span>)
+
+        <span class="cm"># 2. Select best grid (e.g. 2x2)</span>
+        grid = select_grid(
+            image.size, self.max_tiles)
+
+        <span class="cm"># 3. Split into tiles</span>
+        tiles = split_to_tiles(
+            image, grid)  <span class="cm"># e.g. 4 tiles</span>
+
+        <span class="cm"># 4. Encode each independently</span>
+        base_feats = clip(base_img)
+        <span class="cm"># [576, 1024]</span>
+        tile_feats = [clip(t) <span class="kw">for</span> t <span class="kw">in</span> tiles]
+        <span class="cm"># 4 x [576, 1024]</span>
+
+        <span class="cm"># 5. Concatenate all features</span>
+        <span class="kw">return</span> cat([base_feats] + tile_feats)
+        <span class="cm"># [2880, 1024] for 2x2 grid</span></pre>
+
+<div class="svg-block">
+<svg viewBox="0 0 380 400" xmlns="http://www.w3.org/2000/svg">
+  <text x="190" y="18" text-anchor="middle" fill="#6b6b80" font-size="10">AnyRes: Dynamic High-Resolution</text>
+  <!-- Original image -->
+  <rect x="140" y="30" width="100" height="60" rx="4" fill="#1e1e2e" stroke="#e599f7"/>
+  <text x="190" y="55" text-anchor="middle" fill="#e599f7" font-size="8">High-Res Image</text>
+  <text x="190" y="68" text-anchor="middle" fill="#6b6b80" font-size="7">(e.g. 1344x672)</text>
+  <!-- Split arrows -->
+  <path d="M 160 90 L 80 115" stroke="#e599f7" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 220 90 L 300 115" stroke="#e599f7" stroke-width="1" marker-end="url(#ar)"/>
+  <!-- Base image -->
+  <rect x="30" y="118" width="90" height="50" rx="4" fill="#1e1e2e" stroke="#f0abfc"/>
+  <text x="75" y="140" text-anchor="middle" fill="#f0abfc" font-size="8">Base 336x336</text>
+  <text x="75" y="155" text-anchor="middle" fill="#6b6b80" font-size="7">(global view)</text>
+  <!-- Tiles -->
+  <rect x="250" y="118" width="100" height="50" rx="4" fill="#1e1e2e" stroke="#61afef"/>
+  <text x="300" y="135" text-anchor="middle" fill="#61afef" font-size="8">Tiles (2x2 grid)</text>
+  <rect x="255" y="145" width="20" height="18" rx="2" fill="#61afef20" stroke="#61afef55"/>
+  <rect x="278" y="145" width="20" height="18" rx="2" fill="#61afef20" stroke="#61afef55"/>
+  <rect x="301" y="145" width="20" height="18" rx="2" fill="#61afef20" stroke="#61afef55"/>
+  <rect x="324" y="145" width="20" height="18" rx="2" fill="#61afef20" stroke="#61afef55"/>
+  <!-- CLIP encode -->
+  <path d="M 75 168 L 75 195" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M 300 168 L 300 195" stroke="#e599f7" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="30" y="198" width="90" height="30" rx="5" fill="#e599f710" stroke="#e599f7"/>
+  <text x="75" y="217" text-anchor="middle" fill="#e599f7" font-size="8">CLIP Encode</text>
+  <rect x="250" y="198" width="100" height="30" rx="5" fill="#e599f710" stroke="#e599f7"/>
+  <text x="300" y="217" text-anchor="middle" fill="#e599f7" font-size="8">CLIP Encode x4</text>
+  <!-- Features -->
+  <path d="M 75 228 L 75 255" stroke="#f0abfc" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 300 228 L 300 255" stroke="#61afef" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="30" y="258" width="90" height="25" rx="4" fill="#1e1e2e" stroke="#f0abfc55"/>
+  <text x="75" y="274" text-anchor="middle" fill="#f0abfc" font-size="7">[576, 1024]</text>
+  <rect x="245" y="258" width="110" height="25" rx="4" fill="#1e1e2e" stroke="#61afef55"/>
+  <text x="300" y="274" text-anchor="middle" fill="#61afef" font-size="7">4 x [576, 1024]</text>
+  <!-- Concat -->
+  <path d="M 75 283 L 190 310" stroke="#f0abfc" stroke-width="1" marker-end="url(#ar)"/>
+  <path d="M 300 283 L 190 310" stroke="#61afef" stroke-width="1" marker-end="url(#ar)"/>
+  <rect x="120" y="313" width="140" height="30" rx="6" fill="#98c37910" stroke="#98c379"/>
+  <text x="190" y="327" text-anchor="middle" fill="#98c379" font-size="9">Concatenate Features</text>
+  <text x="190" y="339" text-anchor="middle" fill="#6b6b80" font-size="7">[2880, 1024] -> Projector -> LLM</text>
+</svg>
+</div>
+
+<div class="explanation">
+<h3>AnyRes Innovation</h3>
+<p><strong style="color:#e599f7">Problem:</strong> Fixed 336px resolution loses fine details in high-res images (text, small objects). LLaVA-NeXT solves this with dynamic tiling.</p>
+<p><strong style="color:#f0abfc">Base + Tiles:</strong> A low-res base image captures global context. High-res tiles preserve local details. Each is encoded independently by the same CLIP encoder.</p>
+<p style="margin-top:12px"><strong style="color:#61afef">Grid selection:</strong> The optimal grid (1x2, 2x1, 2x2, 1x3, etc.) is chosen based on the image's aspect ratio, up to a maximum tile budget.</p>
+<p style="margin-top:12px"><strong style="color:#98c379">Token count:</strong> With a 2x2 grid: 576 (base) + 4*576 (tiles) = 2880 visual tokens. This increases compute but dramatically improves OCR, document understanding, and fine-grained recognition.</p>
+</div>
+</div>
+
+<footer>Generated 2026.05.28</footer>
+</div>
+</body>
+</html>

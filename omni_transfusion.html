@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transfusion — NTP + Diffusion in One Transformer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #4facfe, #667eea); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #4facfe; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #4facfe0a; border: 1px solid #4facfe22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #4facfe; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #4facfe; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #4facfe; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Transfusion — NTP + Diffusion in One Transformer</h1>
+<p class="subtitle">Meta | Unified Multimodal | Discrete Text (NTP) + Continuous Image (Diffusion) | Single Transformer | 7B Params</p>
+
+<!-- ===== 1. Core Idea ===== -->
+<h2>1. 核心理念 — NTP + Diffusion 混合损失</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Transfusion: Single Transformer, Dual Loss</span>
+<span class="cm"># Text → discrete tokens → Cross-Entropy (NTP)</span>
+<span class="cm"># Image → continuous vectors → Diffusion Loss</span>
+
+<span class="cm"># Input: mixed sequence</span>
+sequence = [
+    text_tokens,        <span class="cm"># discrete integers</span>
+    BOI,                <span class="cm"># begin of image</span>
+    image_latents,      <span class="cm"># continuous float vectors</span>
+    EOI,                <span class="cm"># end of image</span>
+    text_tokens_2,      <span class="cm"># discrete integers</span>
+]
+
+<span class="cm"># Single Transformer processes everything</span>
+hidden = transformer(sequence)
+
+<span class="cm"># Dual loss computation</span>
+<span class="cm"># Text positions: standard NTP</span>
+text_logits = lm_head(hidden[text_mask])
+loss_text = cross_entropy(
+    text_logits, text_targets
+)
+
+<span class="cm"># Image positions: diffusion (denoise)</span>
+<span class="cm"># Predict noise ε from noisy latent z_t</span>
+eps_pred = noise_head(hidden[img_mask])
+loss_img = mse(eps_pred, eps_true)
+
+<span class="cm"># Combined loss</span>
+loss = lambda_t * loss_text + lambda_I * loss_img
+<span class="cm"># Both losses backprop through SAME transformer</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ar1" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#4facfe"/></marker>
+    <marker id="ar1o" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#f7971e"/></marker>
+    <marker id="ar1g" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#98c379"/></marker>
+  </defs>
+
+  <text x="200" y="16" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Transfusion: Dual Loss in Single Transformer</text>
+
+  <!-- Input sequence at bottom -->
+  <rect x="20" y="370" width="360" height="30" rx="6" fill="#11111a" stroke="#4facfe44"/>
+  <text x="200" y="389" text-anchor="middle" fill="#6b6b80" font-size="7">Input Mixed Sequence</text>
+
+  <!-- Token boxes -->
+  <rect x="30" y="340" width="55" height="18" rx="3" fill="#98c37922" stroke="#98c37966"/>
+  <text x="57" y="352" text-anchor="middle" fill="#98c379" font-size="6">text tokens</text>
+  <text x="57" y="362" text-anchor="middle" fill="#5c6370" font-size="5">(discrete)</text>
+
+  <rect x="90" y="340" width="22" height="18" rx="3" fill="#f7971e22" stroke="#f7971e66"/>
+  <text x="101" y="353" text-anchor="middle" fill="#f7971e" font-size="5">BOI</text>
+
+  <rect x="117" y="340" width="90" height="18" rx="3" fill="#4facfe22" stroke="#4facfe66"/>
+  <text x="162" y="352" text-anchor="middle" fill="#4facfe" font-size="6">image latents</text>
+  <text x="162" y="362" text-anchor="middle" fill="#5c6370" font-size="5">(continuous vectors)</text>
+
+  <rect x="212" y="340" width="22" height="18" rx="3" fill="#f7971e22" stroke="#f7971e66"/>
+  <text x="223" y="353" text-anchor="middle" fill="#f7971e" font-size="5">EOI</text>
+
+  <rect x="239" y="340" width="55" height="18" rx="3" fill="#98c37922" stroke="#98c37966"/>
+  <text x="266" y="352" text-anchor="middle" fill="#98c379" font-size="6">text tokens</text>
+  <text x="266" y="362" text-anchor="middle" fill="#5c6370" font-size="5">(discrete)</text>
+
+  <!-- Arrow up to transformer -->
+  <path d="M 200 335 L 200 290" stroke="#4facfe" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+  <!-- Transformer block -->
+  <rect x="50" y="220" width="300" height="68" rx="10" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="200" y="242" text-anchor="middle" fill="#4facfe" font-size="10" font-weight="bold">Transformer (Shared)</text>
+  <text x="200" y="258" text-anchor="middle" fill="#a8a8be" font-size="6">All positions processed together</text>
+  <text x="200" y="272" text-anchor="middle" fill="#a8a8be" font-size="6">Same weights for text &amp; image</text>
+  <text x="200" y="283" text-anchor="middle" fill="#6b6b80" font-size="5">7B params (32 layers, d=4096)</text>
+
+  <!-- Outputs split -->
+  <path d="M 130 220 L 90 190" stroke="#98c379" stroke-width="1.5" marker-end="url(#ar1g)"/>
+  <path d="M 270 220 L 310 190" stroke="#f7971e" stroke-width="1.5" marker-end="url(#ar1o)"/>
+
+  <!-- Text loss (left) -->
+  <rect x="30" y="150" width="130" height="38" rx="6" fill="#98c37911" stroke="#98c37966"/>
+  <text x="95" y="166" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">LM Head → CE Loss</text>
+  <text x="95" y="180" text-anchor="middle" fill="#6b6b80" font-size="6">-log P(x_i | x_&lt;i)</text>
+
+  <!-- Image loss (right) -->
+  <rect x="240" y="150" width="130" height="38" rx="6" fill="#f7971e11" stroke="#f7971e66"/>
+  <text x="305" y="166" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Noise Head → MSE</text>
+  <text x="305" y="180" text-anchor="middle" fill="#6b6b80" font-size="6">||eps - eps_theta||^2</text>
+
+  <!-- Combined loss -->
+  <path d="M 95 150 L 170 115" stroke="#98c379" stroke-width="1" marker-end="url(#ar1g)"/>
+  <path d="M 305 150 L 230 115" stroke="#f7971e" stroke-width="1" marker-end="url(#ar1o)"/>
+
+  <rect x="100" y="75" width="200" height="38" rx="8" fill="#4facfe11" stroke="#4facfe"/>
+  <text x="200" y="92" text-anchor="middle" fill="#4facfe" font-size="8" font-weight="bold">Total Loss</text>
+  <text x="200" y="106" text-anchor="middle" fill="#e0e0ea" font-size="6">L = lambda_t * CE + lambda_I * Diffusion</text>
+
+  <!-- Labels -->
+  <text x="95" y="200" text-anchor="middle" fill="#98c379" font-size="5">text positions</text>
+  <text x="305" y="200" text-anchor="middle" fill="#f7971e" font-size="5">image positions</text>
+
+  <!-- Key insight box -->
+  <rect x="80" y="38" width="240" height="22" rx="4" fill="#11111a" stroke="#5c6370"/>
+  <text x="200" y="52" text-anchor="middle" fill="#5c6370" font-size="5.5">Key: ONE model, TWO loss functions, SAME forward pass</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>核心创新</h3>
+<p><strong>关键洞察:</strong> Transfusion 不将图像离散化为 token (避免 VQ 量化损失)，而是直接保留连续向量表示，用 diffusion loss 训练图像部分。</p>
+<div class="formula">
+$\mathcal{L} = \lambda_t \sum_{i \in \text{text}} -\log P(x_i \mid x_{\lt i}) + \lambda_I \sum_{j \in \text{img}} \|\epsilon - \epsilon_\theta(z_j^t, t)\|^2$
+</div>
+<h3>vs Chameleon / Emu3</h3>
+<p><strong>Chameleon/Emu3:</strong> 图像 → 离散 token (VQ) → NTP loss。量化是有损的，图像质量有上限。</p>
+<p><strong>Transfusion:</strong> 图像保持连续 latent → diffusion loss。保留完整信息，图像质量无上限。</p>
+<h3>Best of Both Worlds</h3>
+<p>1. <strong>文本</strong> — LLM 的 AR 生成能力完整保留</p>
+<p>2. <strong>图像</strong> — Diffusion 的高质量生成完整保留</p>
+<p>3. <strong>统一</strong> — 共享一个 Transformer 的表示空间</p>
+</div>
+</div>
+
+<!-- ===== 2. Mixed Sequence ===== -->
+<h2>2. 混合序列 — 离散 + 连续</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Sequence construction: discrete + continuous</span>
+
+<span class="cm"># Text: standard BPE tokenization</span>
+<span class="cm"># x ∈ {0, 1, ..., V-1}, discrete integer IDs</span>
+text_tokens = bpe_tokenize(text)
+<span class="cm"># → [234, 1089, 42, 7731, ...]</span>
+<span class="cm"># Embedded via nn.Embedding lookup</span>
+
+<span class="cm"># Image: VAE encoder → continuous latents</span>
+<span class="cm"># z ∈ R^{h x w x c}, continuous float vectors</span>
+image_latent = vae_encoder(image)
+<span class="cm"># → shape: (32, 32, 4) for 256x256 img</span>
+<span class="cm"># Patchified into sequence of vectors</span>
+image_patches = patchify(image_latent)
+<span class="cm"># → (N_patches, patch_dim)</span>
+<span class="cm"># Each patch is a continuous vector, NOT a token</span>
+
+<span class="cm"># Sequence assembly</span>
+sequence = concat([
+    embed(text_tokens),  <span class="cm"># (T, d_model)</span>
+    embed(BOI),          <span class="cm"># (1, d_model)</span>
+    linear(image_patches), <span class="cm"># (N, d_model)</span>
+    embed(EOI),          <span class="cm"># (1, d_model)</span>
+    embed(more_text),    <span class="cm"># (T2, d_model)</span>
+])
+
+<span class="cm"># Attention pattern (CRITICAL):</span>
+<span class="cm"># - Text: CAUSAL (standard AR)</span>
+<span class="cm"># - Image patches: BIDIRECTIONAL within image</span>
+<span class="cm"># - Cross: causal (text after img sees img)</span>
+
+<span class="kw">def</span> <span class="fn">attention_mask</span>(seq):
+    mask = causal_mask(len(seq))
+    <span class="cm"># Override: image patches see each other</span>
+    img_start = find(BOI) + <span class="num">1</span>
+    img_end = find(EOI)
+    mask[img_start:img_end, img_start:img_end] = <span class="num">1</span>
+    <span class="kw">return</span> mask</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="16" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Mixed Sequence: Discrete + Continuous</text>
+
+  <!-- Sequence visualization -->
+  <text x="20" y="45" fill="#6b6b80" font-size="7">Input Sequence:</text>
+
+  <!-- Text segment 1 -->
+  <rect x="20" y="55" width="70" height="30" rx="4" fill="#98c37922" stroke="#98c37966"/>
+  <text x="55" y="68" text-anchor="middle" fill="#98c379" font-size="6" font-weight="bold">Text Tokens</text>
+  <text x="55" y="80" text-anchor="middle" fill="#5c6370" font-size="5">[234, 1089, 42...]</text>
+
+  <!-- BOI -->
+  <rect x="95" y="55" width="24" height="30" rx="4" fill="#f7971e22" stroke="#f7971e66"/>
+  <text x="107" y="73" text-anchor="middle" fill="#f7971e" font-size="6">BOI</text>
+
+  <!-- Image patches -->
+  <rect x="124" y="55" width="130" height="30" rx="4" fill="#4facfe22" stroke="#4facfe66"/>
+  <text x="189" y="68" text-anchor="middle" fill="#4facfe" font-size="6" font-weight="bold">Image Latents (continuous)</text>
+  <text x="189" y="80" text-anchor="middle" fill="#5c6370" font-size="5">[0.32, -1.7, 0.8...] x N patches</text>
+
+  <!-- EOI -->
+  <rect x="259" y="55" width="24" height="30" rx="4" fill="#f7971e22" stroke="#f7971e66"/>
+  <text x="271" y="73" text-anchor="middle" fill="#f7971e" font-size="6">EOI</text>
+
+  <!-- Text segment 2 -->
+  <rect x="288" y="55" width="70" height="30" rx="4" fill="#98c37922" stroke="#98c37966"/>
+  <text x="323" y="68" text-anchor="middle" fill="#98c379" font-size="6" font-weight="bold">Text Tokens</text>
+  <text x="323" y="80" text-anchor="middle" fill="#5c6370" font-size="5">[7731, 55, 902...]</text>
+
+  <!-- Type labels -->
+  <text x="55" y="100" text-anchor="middle" fill="#98c379" font-size="5">DISCRETE</text>
+  <text x="189" y="100" text-anchor="middle" fill="#4facfe" font-size="5">CONTINUOUS</text>
+  <text x="323" y="100" text-anchor="middle" fill="#98c379" font-size="5">DISCRETE</text>
+
+  <!-- Attention pattern section -->
+  <text x="200" y="130" text-anchor="middle" fill="#4facfe" font-size="8" font-weight="bold">Attention Pattern (Hybrid)</text>
+
+  <!-- Attention matrix -->
+  <rect x="80" y="145" width="240" height="180" rx="6" fill="#11111a" stroke="#2a2a3a"/>
+
+  <!-- Column labels -->
+  <text x="115" y="160" text-anchor="middle" fill="#98c379" font-size="5">text1</text>
+  <text x="160" y="160" text-anchor="middle" fill="#f7971e" font-size="5">BOI</text>
+  <text x="200" y="160" text-anchor="middle" fill="#4facfe" font-size="5">img</text>
+  <text x="240" y="160" text-anchor="middle" fill="#f7971e" font-size="5">EOI</text>
+  <text x="280" y="160" text-anchor="middle" fill="#98c379" font-size="5">text2</text>
+
+  <!-- Row labels -->
+  <text x="88" y="185" text-anchor="end" fill="#98c379" font-size="5">text1</text>
+  <text x="88" y="210" text-anchor="end" fill="#f7971e" font-size="5">BOI</text>
+  <text x="88" y="240" text-anchor="end" fill="#4facfe" font-size="5">img</text>
+  <text x="88" y="270" text-anchor="end" fill="#f7971e" font-size="5">EOI</text>
+  <text x="88" y="295" text-anchor="end" fill="#98c379" font-size="5">text2</text>
+
+  <!-- Causal region (text1 row) -->
+  <rect x="100" y="175" width="35" height="18" rx="2" fill="#98c37944"/>
+  <text x="117" y="187" text-anchor="middle" fill="#98c379" font-size="6">causal</text>
+
+  <!-- BOI row -->
+  <rect x="100" y="200" width="70" height="18" rx="2" fill="#f7971e33"/>
+  <text x="135" y="212" text-anchor="middle" fill="#f7971e" font-size="6">causal</text>
+
+  <!-- Image row - BIDIRECTIONAL within image -->
+  <rect x="100" y="228" width="70" height="22" rx="2" fill="#4facfe22"/>
+  <rect x="175" y="228" width="50" height="22" rx="2" fill="#4facfe88"/>
+  <text x="135" y="242" text-anchor="middle" fill="#4facfe" font-size="5">sees prior</text>
+  <text x="200" y="242" text-anchor="middle" fill="#fff" font-size="6" font-weight="bold">BIDIR</text>
+
+  <!-- EOI row -->
+  <rect x="100" y="258" width="160" height="18" rx="2" fill="#f7971e33"/>
+  <text x="180" y="270" text-anchor="middle" fill="#f7971e" font-size="6">sees all prior + img</text>
+
+  <!-- Text2 row -->
+  <rect x="100" y="283" width="195" height="18" rx="2" fill="#98c37944"/>
+  <text x="197" y="295" text-anchor="middle" fill="#98c379" font-size="6">causal (sees everything before)</text>
+
+  <!-- Legend -->
+  <rect x="90" y="340" width="12" height="8" rx="2" fill="#4facfe88"/>
+  <text x="108" y="347" fill="#a8a8be" font-size="5">Bidirectional (within image)</text>
+  <rect x="220" y="340" width="12" height="8" rx="2" fill="#98c37944"/>
+  <text x="238" y="347" fill="#a8a8be" font-size="5">Causal</text>
+
+  <!-- Key insight -->
+  <rect x="90" y="360" width="220" height="22" rx="4" fill="#11111a" stroke="#4facfe44"/>
+  <text x="200" y="374" text-anchor="middle" fill="#4facfe" font-size="5.5">Image patches attend to each other (like diffusion U-Net)</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>离散 vs 连续</h3>
+<p><strong>Text token:</strong> 离散整数 ID，通过 Embedding 查找表变为向量。</p>
+<div class="formula">
+$x \in \{0, 1, \ldots, V-1\}$ (BPE discrete)
+</div>
+<p><strong>Image latent:</strong> 连续浮点向量，通过线性投影映射到模型维度。</p>
+<div class="formula">
+$z \in \mathbb{R}^{h \times w \times c}$ (VAE continuous)
+</div>
+<h3>混合注意力</h3>
+<p><strong>关键设计:</strong> 整体序列是 causal (AR)，但图像 patch 之间是 bidirectional。</p>
+<p>这模拟了 diffusion model 中 U-Net 的全局空间注意力 — 图像的每个 patch 需要看到其他所有 patch 才能协调生成。</p>
+<h3>为什么不全用 causal?</h3>
+<p>如果图像 patch 也用 causal attention，则等于强制光栅扫描顺序生成图像 — 这远不如 diffusion 的全局去噪高效。Bidirectional 让图像部分获得 diffusion 的全部表达力。</p>
+</div>
+</div>
+
+<!-- ===== 3. Training & Scaling ===== -->
+<h2>3. 训练与 Scaling</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Training: joint optimization</span>
+<span class="cm"># Data: mixed text corpora + image-text pairs</span>
+
+<span class="cm"># Loss function</span>
+<span class="kw">def</span> <span class="fn">transfusion_loss</span>(model, batch):
+    hidden = model(batch.sequence)
+
+    <span class="cm"># Text: cross-entropy NTP</span>
+    text_h = hidden[batch.text_mask]
+    logits = model.lm_head(text_h)
+    ce_loss = F.cross_entropy(
+        logits, batch.text_targets
+    )
+
+    <span class="cm"># Image: diffusion (epsilon prediction)</span>
+    img_h = hidden[batch.img_mask]
+    <span class="cm"># Noise schedule: t ~ U(0, T)</span>
+    t = torch.randint(<span class="num">0</span>, T, (n_img,))
+    eps = torch.randn_like(batch.img_latents)
+    z_t = sqrt_alpha[t] * batch.img_latents \
+        + sqrt_one_minus_alpha[t] * eps
+    eps_pred = model.noise_head(img_h, t)
+    diff_loss = F.mse_loss(eps_pred, eps)
+
+    <span class="cm"># Combined</span>
+    loss = <span class="num">1.0</span> * ce_loss + <span class="num">1.0</span> * diff_loss
+    <span class="kw">return</span> loss
+
+<span class="cm"># Inference: dual mode</span>
+<span class="kw">def</span> <span class="fn">generate</span>(model, prompt):
+    <span class="cm"># Text: standard autoregressive</span>
+    tokens = ar_sample(model, prompt)
+
+    <span class="cm"># When BOI is generated, switch to diffusion</span>
+    <span class="kw">if</span> tokens[-<span class="num">1</span>] == BOI:
+        <span class="cm"># Image: iterative denoising</span>
+        z = torch.randn(n_patches, d)  <span class="cm"># noise</span>
+        <span class="kw">for</span> t <span class="kw">in</span> reversed(range(T)):
+            <span class="cm"># Denoise step (DDPM)</span>
+            eps = model.predict_noise(
+                context + z, t
+            )
+            z = denoise_step(z, eps, t)
+        image = vae_decode(z)
+        <span class="cm"># Continue AR after EOI</span>
+    <span class="kw">return</span> tokens, image
+
+<span class="cm"># Scaling: 7B competitive results</span>
+<span class="cm"># Text: matches Llama-1 7B on benchmarks</span>
+<span class="cm"># Image: FID competitive with DALL-E 2, SDXL</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="200" y="16" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Training &amp; Inference: Dual Mode</text>
+
+  <!-- Training section -->
+  <rect x="20" y="30" width="360" height="160" rx="8" fill="#0d0d18" stroke="#4facfe44"/>
+  <text x="200" y="48" text-anchor="middle" fill="#4facfe" font-size="8" font-weight="bold">TRAINING</text>
+
+  <!-- Data sources -->
+  <rect x="35" y="60" width="90" height="24" rx="4" fill="#98c37922" stroke="#98c37966"/>
+  <text x="80" y="75" text-anchor="middle" fill="#98c379" font-size="6">Text Corpora</text>
+
+  <rect x="140" y="60" width="110" height="24" rx="4" fill="#4facfe22" stroke="#4facfe66"/>
+  <text x="195" y="75" text-anchor="middle" fill="#4facfe" font-size="6">Image-Text Pairs</text>
+
+  <rect x="265" y="60" width="100" height="24" rx="4" fill="#c678dd22" stroke="#c678dd66"/>
+  <text x="315" y="75" text-anchor="middle" fill="#c678dd" font-size="6">Interleaved Data</text>
+
+  <!-- Arrow down -->
+  <path d="M 200 84 L 200 100" stroke="#4facfe" stroke-width="1" marker-end="url(#ar1)"/>
+
+  <!-- Mixed batch -->
+  <rect x="80" y="102" width="240" height="20" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+  <text x="200" y="115" text-anchor="middle" fill="#a8a8be" font-size="6">Mixed Batch: [text, BOI, img_latents, EOI, text, ...]</text>
+
+  <!-- Arrow to losses -->
+  <path d="M 140 122 L 100 140" stroke="#98c379" stroke-width="1" marker-end="url(#ar1g)"/>
+  <path d="M 260 122 L 300 140" stroke="#f7971e" stroke-width="1" marker-end="url(#ar1o)"/>
+
+  <!-- CE Loss -->
+  <rect x="40" y="140" width="120" height="36" rx="5" fill="#98c37911" stroke="#98c37944"/>
+  <text x="100" y="155" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">CE Loss (Text)</text>
+  <text x="100" y="168" text-anchor="middle" fill="#6b6b80" font-size="5">-log P(x_i | x_&lt;i)</text>
+
+  <!-- Diffusion Loss -->
+  <rect x="240" y="140" width="120" height="36" rx="5" fill="#f7971e11" stroke="#f7971e44"/>
+  <text x="300" y="155" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Diff Loss (Img)</text>
+  <text x="300" y="168" text-anchor="middle" fill="#6b6b80" font-size="5">||eps - eps_theta||^2</text>
+
+  <!-- Inference section -->
+  <rect x="20" y="205" width="360" height="195" rx="8" fill="#0d0d18" stroke="#f7971e44"/>
+  <text x="200" y="223" text-anchor="middle" fill="#f7971e" font-size="8" font-weight="bold">INFERENCE</text>
+
+  <!-- Text generation (left) -->
+  <rect x="35" y="235" width="150" height="80" rx="6" fill="#98c37911" stroke="#98c37944"/>
+  <text x="110" y="252" text-anchor="middle" fill="#98c379" font-size="7" font-weight="bold">Text Generation</text>
+  <text x="110" y="268" text-anchor="middle" fill="#a8a8be" font-size="6">Standard AR Sampling</text>
+  <text x="110" y="282" text-anchor="middle" fill="#6b6b80" font-size="5">token by token</text>
+  <text x="110" y="296" text-anchor="middle" fill="#6b6b80" font-size="5">top-p, temperature</text>
+  <text x="110" y="308" text-anchor="middle" fill="#98c379" font-size="5">→ until BOI or EOS</text>
+
+  <!-- Image generation (right) -->
+  <rect x="210" y="235" width="155" height="80" rx="6" fill="#f7971e11" stroke="#f7971e44"/>
+  <text x="287" y="252" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Image Generation</text>
+  <text x="287" y="268" text-anchor="middle" fill="#a8a8be" font-size="6">Iterative Denoising</text>
+  <text x="287" y="282" text-anchor="middle" fill="#6b6b80" font-size="5">z_T (noise) → z_0 (clean)</text>
+  <text x="287" y="296" text-anchor="middle" fill="#6b6b80" font-size="5">250 denoising steps</text>
+  <text x="287" y="308" text-anchor="middle" fill="#f7971e" font-size="5">→ VAE decode → pixels</text>
+
+  <!-- Flow arrow -->
+  <path d="M 185 275 L 210 275" stroke="#e0e0ea" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#ar1)"/>
+  <text x="197" y="268" text-anchor="middle" fill="#5c6370" font-size="4">BOI</text>
+
+  <!-- Scaling results -->
+  <rect x="35" y="330" width="340" height="55" rx="6" fill="#4facfe11" stroke="#4facfe44"/>
+  <text x="200" y="346" text-anchor="middle" fill="#4facfe" font-size="7" font-weight="bold">Scaling Results (7B)</text>
+  <text x="120" y="362" text-anchor="middle" fill="#98c379" font-size="6">Text: matches Llama-1 7B</text>
+  <text x="300" y="362" text-anchor="middle" fill="#f7971e" font-size="6">Image: FID ~ DALL-E 2</text>
+  <text x="200" y="378" text-anchor="middle" fill="#a8a8be" font-size="5">Continuous latents avoid VQ quality ceiling — scales better than discrete tokenization</text>
+</svg>
+</div>
+</div>
+<div class="col-caption">
+<h3>训练策略</h3>
+<p><strong>数据混合:</strong> 纯文本语料 + 图文对 + 交错多模态文档。Joint training，两个 loss 同时优化。</p>
+<div class="formula">
+$\mathcal{L} = \lambda_t \cdot \mathcal{L}_{\text{CE}} + \lambda_I \cdot \mathcal{L}_{\text{diff}}$
+</div>
+<p>实验中 lambda_t = lambda_I = 1.0，两个 loss 量级自然平衡。</p>
+<h3>推理: 双模式</h3>
+<p><strong>文本:</strong> 标准 AR 采样 (token-by-token)。</p>
+<p><strong>图像:</strong> 当模型生成 BOI token 时，切换到 diffusion 模式 — 从纯噪声 z_T 开始，迭代去噪 250 步得到 z_0，再用 VAE decoder 解码为像素。</p>
+<h3>Scaling 结论</h3>
+<p><strong>Transfusion-7B:</strong></p>
+<p>1. 文本 benchmark 与 Llama-1 7B 持平</p>
+<p>2. 图像生成 FID 接近 DALL-E 2 / SDXL</p>
+<p>3. 连续表示避免了 VQ 的质量天花板</p>
+<p>4. 支持交错生成: text → image → text → image</p>
+<div class="key-point">
+<strong>关键结论:</strong> 不需要两个独立模型。一个 Transformer 通过混合损失函数，可以同时获得 LLM 级别的文本能力和 diffusion 级别的图像质量。
+</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.01 | Transfusion: Meta, 2024</footer>
+
+</div>
+</body>
+</html>
