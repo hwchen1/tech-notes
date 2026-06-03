@@ -43,551 +43,839 @@ footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; col
 <div class="container">
 
 <h1>MAI-Thinking-1</h1>
-<p class="subtitle">Building a Hill-Climbing Machine — 持续 Log-linear RL 爬坡的推理模型 | Microsoft AI | 2025.06</p>
+<p class="subtitle">Building a Hill-Climbing Machine — Microsoft AI 从头训练的推理模型 | 109 页技术报告 | 2025.06</p>
 
-<!-- ===== 1. Architecture ===== -->
-<h2>1. 模型架构：MAI-Base-1</h2>
-
-<div class="three-col">
-<div class="col-code">
-<pre><span class="cm"># MAI-Base-1 架构 (从头训练)</span>
-<span class="cm"># Active params: 34.7B</span>
-<span class="cm"># Total params:  962B (sparse MoE)</span>
-<span class="cm"># Layers: 78</span>
-<span class="cm"># Hidden dim: 6656</span>
-<span class="cm"># FFN dim: 13312</span>
-<span class="cm"># Experts: top-8 / 512 (LatentMoE)</span>
-<span class="cm"># Context: 256K (after mid-training)</span>
-<span class="cm"># Tokenizer: o200k_base (200K vocab)</span>
-
-<span class="cm"># ===== Attention 设计 =====</span>
-<span class="cm"># 5:1 local:global 周期性注意力</span>
-<span class="cm"># (Follow Gemma 3 设计)</span>
-<span class="cm">#</span>
-<span class="cm"># Local layers (5/6):</span>
-<span class="cm">#   RoPE, sliding window = 512</span>
-<span class="cm">#   base freq = 10000</span>
-<span class="cm">#</span>
-<span class="cm"># Global layers (1/6):</span>
-<span class="cm">#   NoPE (无位置编码!)</span>
-<span class="cm">#   ref: Kazemnejad et al. 2023</span>
-<span class="cm">#   比 RoPE 更高效, 泛化更好</span>
-<span class="cm">#</span>
-<span class="cm"># GQA: 8 KV heads, head_dim=128</span>
-<span class="cm"># QK-RMSNorm (稳定训练)</span>
-
-<span class="cm"># ===== FFN 设计 =====</span>
-<span class="cm"># 交替 MoE + Dense FFN</span>
-<span class="cm"># MoE: LatentMoE (shared down-proj)</span>
-<span class="cm">#   8 of 512 experts per token</span>
-<span class="cm">#   SwiGLU activation</span>
-<span class="cm"># Dense: small FFN (zero-sparsity)</span>
-<span class="cm"># 优于 every-layer MoE (wall-clock)</span>
-
-<span class="cm"># ===== 训练基础设施 =====</span>
-<span class="cm"># Hardware: 8K GB200 GPUs</span>
-<span class="cm"># Platform: Azure (Microsoft)</span>
-<span class="cm"># Framework: YOLO (in-house)</span></pre>
-</div>
-
-<div class="svg-block">
-<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
-  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">MAI-Base-1 Architecture Overview</text>
-
-  <!-- Overall transformer body -->
-  <rect x="20" y="32" width="380" height="210" rx="8" fill="#1e1e2e" stroke="#0078d444"/>
-  <text x="210" y="50" text-anchor="middle" fill="#0078d4" font-size="9" font-weight="bold">Decoder-only Transformer (78 layers, 5:1 local:global)</text>
-
-  <!-- Layer block repeated -->
-  <rect x="35" y="60" width="170" height="70" rx="6" fill="#11111a" stroke="#50e6ff44"/>
-  <text x="120" y="78" text-anchor="middle" fill="#50e6ff" font-size="8" font-weight="bold">Local Attention (5 layers)</text>
-  <text x="120" y="93" text-anchor="middle" fill="#888" font-size="7">RoPE + Sliding Window 512</text>
-  <text x="120" y="107" text-anchor="middle" fill="#888" font-size="7">GQA: 8 KV heads, dim 128</text>
-  <text x="120" y="121" text-anchor="middle" fill="#667eea" font-size="6">训练快 + KV cache 小</text>
-
-  <rect x="215" y="60" width="170" height="70" rx="6" fill="#11111a" stroke="#0078d4" stroke-width="1.5"/>
-  <text x="300" y="78" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">Global Attention (1 layer)</text>
-  <text x="300" y="93" text-anchor="middle" fill="#888" font-size="7">NoPE (无位置编码)</text>
-  <text x="300" y="107" text-anchor="middle" fill="#888" font-size="7">Full context, no positional bias</text>
-  <text x="300" y="121" text-anchor="middle" fill="#0078d4" font-size="6">泛化性更强 (ref: 2305.19466)</text>
-
-  <!-- FFN block -->
-  <rect x="35" y="140" width="170" height="50" rx="6" fill="#11111a" stroke="#38d9a944"/>
-  <text x="120" y="158" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Dense FFN</text>
-  <text x="120" y="173" text-anchor="middle" fill="#888" font-size="7">SwiGLU, zero-sparsity</text>
-  <text x="120" y="185" text-anchor="middle" fill="#38d9a9" font-size="6">wall-clock 优于 every-layer MoE</text>
-
-  <rect x="215" y="140" width="170" height="50" rx="6" fill="#11111a" stroke="#f7971e44"/>
-  <text x="300" y="158" text-anchor="middle" fill="#f7971e" font-size="8" font-weight="bold">Sparse MoE (LatentMoE)</text>
-  <text x="300" y="173" text-anchor="middle" fill="#888" font-size="7">top-8 / 512 experts</text>
-  <text x="300" y="185" text-anchor="middle" fill="#f7971e" font-size="6">shared down-proj → dispatch</text>
-
-  <!-- Interleave arrows -->
-  <text x="210" y="207" text-anchor="middle" fill="#6b6b80" font-size="7">交替排列: [Local+Dense] → [Local+MoE] → ... → [Global+Dense] → ...</text>
-
-  <!-- Training data -->
-  <rect x="20" y="250" width="380" height="50" rx="8" fill="#11111a" stroke="#1e1e30"/>
-  <text x="210" y="268" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">Pre-training: 30T tokens + Mid-training: 3.55T tokens</text>
-  <text x="210" y="284" text-anchor="middle" fill="#888" font-size="7">全部 in-house 数据 | 无合成数据 | 无蒸馏 | 无开源训练集 | 去除 AI 生成内容</text>
-  <text x="210" y="296" text-anchor="middle" fill="#667eea" font-size="6">Web + GitHub code + Books + Papers + News + Multilingual + Domain-specific</text>
-
-  <!-- Key design decisions -->
-  <rect x="20" y="310" width="380" height="60" rx="8" fill="#0078d408" stroke="#0078d433"/>
-  <text x="210" y="328" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">关键设计决策</text>
-  <text x="40" y="345" fill="#a8a8be" font-size="7">1. 高稀疏度 MoE (64×) → 大容量小推理成本</text>
-  <text x="40" y="360" fill="#a8a8be" font-size="7">2. NoPE global attn → 长度泛化更好</text>
-  <text x="240" y="345" fill="#a8a8be" font-size="7">3. 交替 Dense+MoE → wall-clock 最优</text>
-  <text x="240" y="360" fill="#a8a8be" font-size="7">4. Scaling ladder 驱动架构选择</text>
-</svg>
-<p class="caption">MAI-Base-1: 34.7B active / 962B total, 周期性 local/global attention + 交替 dense/MoE FFN</p>
-</div>
-
-<div class="col-caption">
-<h3>核心设计理念</h3>
-<p>Microsoft AI 的架构选择不追求新颖性，而是追求<strong>可验证的 scaling 效率</strong>：</p>
-
-<p><strong>Scaling Ladder 方法论：</strong>每个决策（MoE 稀疏度、注意力模式、FFN 配置）都通过 8 个量级的 ladder 模型（365M → 35B）验证 scaling 性质。只有在<strong>所有尺度</strong>都持续有效的改进才被采纳。</p>
-
-<p><strong>Efficiency Gain (EG) 指标：</strong></p>
-<p>\( EG = f^{-1}(L') / C' \)</p>
-<p>基线需要多少额外计算才能达到候选模型的损失？EG=1.3 意味着基线需要 30% 更多计算。</p>
-
-<div class="key-point"><strong>NoPE 的采用：</strong>Global attention 层使用无位置编码 (Kazemnejad et al., 2023)，在 scaling ladder 上性能与 RoPE 相当但更高效。5:1 local:global 比例大幅减少了 KV cache 开销。</div>
-
-<div class="key-point"><strong>LatentMoE：</strong>在 all-to-all dispatch 之前施加 shared down-projection 将 token 压缩到低维空间（3072 → experts），减少通信量。与 NVIDIA 联合设计。</div>
-</div>
-</div>
-
-<!-- ===== 2. RL Climb ===== -->
-<h2>2. 核心方法：Hill-Climbing Machine</h2>
+<!-- ===== 1. 主逻辑 ===== -->
+<h2>1. 主逻辑：团队做了什么</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># Hill-Climbing = 持续 log-linear RL 改进</span>
-<span class="cm"># 核心哲学: 进步不靠单个模型突破</span>
-<span class="cm">#   而是构建一个能持续改进的系统</span>
+<pre><span class="cm"># ====== 一句话总结 ======</span>
+<span class="cm"># Microsoft AI 从零构建了一个</span>
+<span class="cm"># "Hill-Climbing Machine"：</span>
+<span class="cm"># 不是训练一个模型，而是建造一台</span>
+<span class="cm"># 能持续改进模型的机器。</span>
 
-<span class="cm"># ====== RL 目标 (GRPO-based) ======</span>
-<span class="cm"># J(θ) = E[ Σ min(r·A, clip(r)·A) ]</span>
-<span class="cm"># r_it = π_θ(y_it|q,y_&lt;t) / π_old(...)</span>
-<span class="cm"># A_i = (R_i - mean(R)) / std(R)</span>
-<span class="cm"># Token-level policy gradient</span>
-<span class="cm"># 每个 token 贡献相等 (不管长度)</span>
+<span class="cm"># ====== 做了什么 ======</span>
+<span class="cm"># 1. 自研架构 MAI-Base-1</span>
+<span class="cm">#    34.7B active / 962B total MoE</span>
+<span class="cm">#    在 8K GB200 GPUs 上训练</span>
+<span class="cm">#</span>
+<span class="cm"># 2. 全 in-house 数据 (30T tokens)</span>
+<span class="cm">#    零合成数据，零蒸馏</span>
+<span class="cm">#    自研 pipeline 从 HTML/PDF 提取</span>
+<span class="cm">#</span>
+<span class="cm"># 3. RL 爬坡 (核心创新)</span>
+<span class="cm">#    GRPO + Adaptive Entropy</span>
+<span class="cm">#    三域专家分别爬坡再合并</span>
+<span class="cm">#    持续 log-linear 提升数千步</span>
+<span class="cm">#</span>
+<span class="cm"># 4. 结果: 35B active 达到 frontier</span>
+<span class="cm">#    AIME 2025: 97.0%</span>
+<span class="cm">#    SWE-Bench Pro: 52.8%</span>
+<span class="cm">#    与 Sonnet 4.6 人类评测持平</span>
 
-<span class="cm"># ====== Reward 分解 ======</span>
-<span class="cm"># R(q,y) = R_task + w_lang·R_lang</span>
-<span class="cm">#          - w_len·R_len</span>
-<span class="cm"># R_task: 领域相关 (测试/judge)</span>
-<span class="cm"># R_lang: 语言一致性 (防 CoT 混语言)</span>
-<span class="cm"># R_len: 长度惩罚 (ρ·|y|/ℓ_max)</span>
-
-<span class="cm"># ====== 稳定性创新 ======</span>
-
-<span class="cm"># 1. Adaptive Entropy Control</span>
-<span class="cm"># k ← clip(k + δ·sign(H* - Ĥ), 0, k_max)</span>
-<span class="cm"># 动态调整 clip 上界 → 自动熵正则</span>
-<span class="cm"># 熵太低→放宽上界→鼓励探索</span>
-<span class="cm"># 熵太高→收紧上界→稳定训练</span>
-
-<span class="cm"># 2. Outer Ratio Clip</span>
-<span class="cm"># 对所有分支施加硬 clip [r_min, r_max]</span>
-<span class="cm"># 防止极端 importance ratio → 梯度爆炸</span>
-
-<span class="cm"># 3. Self-Distillation Recovery</span>
-<span class="cm"># 爬坡崩溃时 → 收集最优轨迹 (~1M)</span>
-<span class="cm"># → SFT 回到稳定点 → 继续 RL 爬坡</span>
-<span class="cm"># 也用于跨代基模型迁移</span>
-
-<span class="cm"># 4. Problem Sampling Filter</span>
-<span class="cm"># pass_rate ∈ [ρ_min, ρ_max] 才训练</span>
-<span class="cm"># 太简单/太难的 = 低方差 = 无用</span></pre>
+<span class="cm"># ====== 三大设计原则 ======</span>
+<span class="cm"># 1. Learned, not inherited</span>
+<span class="cm">#    能力从训练中学习，不蒸馏他人模型</span>
+<span class="cm">#    蒸馏的智能缺乏可控性和鲁棒性</span>
+<span class="cm">#    不能支撑长期 RL 爬坡</span>
+<span class="cm">#</span>
+<span class="cm"># 2. Simplicity is sustainable</span>
+<span class="cm">#    简单可扩展的 recipe</span>
+<span class="cm">#    干净可信的数据</span>
+<span class="cm">#    透明的基础设施</span>
+<span class="cm">#</span>
+<span class="cm"># 3. Scientific rigor avoids shortcuts</span>
+<span class="cm">#    每个决策必须通过 scaling ladder</span>
+<span class="cm">#    验证在所有尺度下持续有效</span>
+<span class="cm">#    不接受只在小规模有效的改进</span></pre>
 </div>
 
 <div class="svg-block">
 <svg viewBox="0 0 420 400" xmlns="http://www.w3.org/2000/svg">
-  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">三域 RL 爬坡 → 合并 → 最终模型</text>
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Hill-Climbing Machine 全流程</text>
 
-  <!-- Mid-trained base -->
-  <rect x="150" y="30" width="120" height="35" rx="6" fill="#1e1e2e" stroke="#667eea"/>
-  <text x="210" y="45" text-anchor="middle" fill="#667eea" font-size="8" font-weight="bold">MAI-Base-1</text>
-  <text x="210" y="58" text-anchor="middle" fill="#888" font-size="7">Mid-trained (33.55T tokens)</text>
+  <!-- Phase 1: Architecture -->
+  <rect x="15" y="32" width="390" height="55" rx="8" fill="#1e1e2e" stroke="#667eea"/>
+  <text x="25" y="48" fill="#667eea" font-size="8" font-weight="bold">Phase 1: 架构设计 (Scaling Ladder 驱动)</text>
+  <text x="30" y="64" fill="#888" font-size="7">5 代架构演进 (v2→v5) | 8 个 ladder 模型 (365M→35B) 验证每个决策</text>
+  <text x="30" y="78" fill="#a8a8be" font-size="6.5">最终: 78L, top-8/512 MoE, 5:1 local/global attn, LatentMoE + Dense FFN 交替</text>
 
-  <!-- Three specialist climbs -->
-  <line x1="210" y1="65" x2="80" y2="85" stroke="#4facfe" stroke-width="1"/>
-  <line x1="210" y1="65" x2="210" y2="85" stroke="#38d9a9" stroke-width="1"/>
-  <line x1="210" y1="65" x2="340" y2="85" stroke="#f7971e" stroke-width="1"/>
+  <!-- Phase 2: Data -->
+  <rect x="15" y="95" width="390" height="55" rx="8" fill="#1e1e2e" stroke="#38d9a9"/>
+  <text x="25" y="111" fill="#38d9a9" font-size="8" font-weight="bold">Phase 2: 数据构建 (全 In-house)</text>
+  <text x="30" y="127" fill="#888" font-size="7">30T tokens: Code 55% + STEM 16% + Math 5% + Web 15% + PDF 5% + Books 3%</text>
+  <text x="30" y="141" fill="#a8a8be" font-size="6.5">自研爬虫 + HTML/PDF extraction + 3层去重 + Scaling-based 混合比例优化</text>
 
-  <!-- STEM Climb -->
-  <rect x="20" y="85" width="120" height="100" rx="6" fill="#11111a" stroke="#4facfe"/>
-  <text x="80" y="102" text-anchor="middle" fill="#4facfe" font-size="8" font-weight="bold">STEM Climb</text>
-  <text x="80" y="117" text-anchor="middle" fill="#888" font-size="6.5">Math + Science + Code</text>
-  <text x="80" y="131" text-anchor="middle" fill="#888" font-size="6.5">Reward: 正确性验证</text>
-  <text x="80" y="145" text-anchor="middle" fill="#888" font-size="6.5">自研数据 pipeline</text>
-  <text x="80" y="159" text-anchor="middle" fill="#888" font-size="6.5">(textbook→QA extraction)</text>
-  <text x="80" y="177" text-anchor="middle" fill="#4facfe" font-size="6">最长爬坡: 数千步</text>
+  <!-- Phase 3: Pre-training -->
+  <rect x="15" y="158" width="390" height="50" rx="8" fill="#1e1e2e" stroke="#4facfe"/>
+  <text x="25" y="174" fill="#4facfe" font-size="8" font-weight="bold">Phase 3: Pre-training + Mid-training</text>
+  <text x="30" y="190" fill="#888" font-size="7">Pre: 30T tokens @ 16K ctx | Mid-1: 2.85T @ 64K | Mid-2: 0.7T @ 256K</text>
+  <text x="30" y="202" fill="#a8a8be" font-size="6.5">YOLO 框架, FP8 混合精度, bitwise 确定性训练, 4K→8K GB200</text>
 
-  <!-- Agentic Climb -->
-  <rect x="150" y="85" width="120" height="100" rx="6" fill="#11111a" stroke="#38d9a9"/>
-  <text x="210" y="102" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Agentic Climb</text>
-  <text x="210" y="117" text-anchor="middle" fill="#888" font-size="6.5">SWE + Tool Use</text>
-  <text x="210" y="131" text-anchor="middle" fill="#888" font-size="6.5">Multi-step 容器化环境</text>
-  <text x="210" y="145" text-anchor="middle" fill="#888" font-size="6.5">Reward: 测试通过率</text>
-  <text x="210" y="159" text-anchor="middle" fill="#888" font-size="6.5">+ AI judge 反馈</text>
-  <text x="210" y="177" text-anchor="middle" fill="#38d9a9" font-size="6">STEM 混合稳定训练</text>
+  <!-- Phase 4: RL Climb (core) -->
+  <rect x="15" y="216" width="390" height="110" rx="8" fill="#0078d408" stroke="#0078d4" stroke-width="2"/>
+  <text x="25" y="232" fill="#0078d4" font-size="8" font-weight="bold">Phase 4: RL 爬坡 (核心创新)</text>
 
-  <!-- Helpfulness Climb -->
-  <rect x="280" y="85" width="120" height="100" rx="6" fill="#11111a" stroke="#f7971e"/>
-  <text x="340" y="102" text-anchor="middle" fill="#f7971e" font-size="8" font-weight="bold">Helpfulness Climb</text>
-  <text x="340" y="117" text-anchor="middle" fill="#888" font-size="6.5">Safety + Preference</text>
-  <text x="340" y="131" text-anchor="middle" fill="#888" font-size="6.5">Reward: AI judge</text>
-  <text x="340" y="145" text-anchor="middle" fill="#888" font-size="6.5">+ 人类偏好信号</text>
-  <text x="340" y="159" text-anchor="middle" fill="#888" font-size="6.5">Safety-Helpfulness 平衡</text>
-  <text x="340" y="177" text-anchor="middle" fill="#f7971e" font-size="6">dual constraint 优化</text>
+  <rect x="30" y="240" width="110" height="35" rx="4" fill="#4facfe11" stroke="#4facfe"/>
+  <text x="85" y="254" text-anchor="middle" fill="#4facfe" font-size="7" font-weight="bold">STEM Climb</text>
+  <text x="85" y="268" text-anchor="middle" fill="#888" font-size="6">Math/Science/Code</text>
 
-  <!-- Consolidation -->
-  <line x1="80" y1="185" x2="210" y2="210" stroke="#4facfe" stroke-width="1" stroke-dasharray="3,2"/>
-  <line x1="210" y1="185" x2="210" y2="210" stroke="#38d9a9" stroke-width="1" stroke-dasharray="3,2"/>
-  <line x1="340" y1="185" x2="210" y2="210" stroke="#f7971e" stroke-width="1" stroke-dasharray="3,2"/>
+  <rect x="150" y="240" width="110" height="35" rx="4" fill="#38d9a911" stroke="#38d9a9"/>
+  <text x="205" y="254" text-anchor="middle" fill="#38d9a9" font-size="7" font-weight="bold">Agentic Climb</text>
+  <text x="205" y="268" text-anchor="middle" fill="#888" font-size="6">SWE + Tool Use</text>
 
-  <rect x="130" y="210" width="160" height="35" rx="6" fill="#1e1e2e" stroke="#c678dd"/>
-  <text x="210" y="226" text-anchor="middle" fill="#c678dd" font-size="8" font-weight="bold">Trace Distillation SFT</text>
-  <text x="210" y="239" text-anchor="middle" fill="#888" font-size="6.5">~1M traces 合并三域能力</text>
+  <rect x="270" y="240" width="125" height="35" rx="4" fill="#f7971e11" stroke="#f7971e"/>
+  <text x="332" y="254" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Helpfulness Climb</text>
+  <text x="332" y="268" text-anchor="middle" fill="#888" font-size="6">Safety + Preference</text>
 
-  <!-- Final climb -->
-  <line x1="210" y1="245" x2="210" y2="260" stroke="#c678dd" stroke-width="1"/>
-  <rect x="130" y="260" width="160" height="35" rx="6" fill="#1e1e2e" stroke="#0078d4" stroke-width="2"/>
-  <text x="210" y="276" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">Final RL Climb</text>
-  <text x="210" y="289" text-anchor="middle" fill="#888" font-size="6.5">全域微调 → MAI-Thinking-1</text>
+  <text x="210" y="293" text-anchor="middle" fill="#c678dd" font-size="7">↓ Trace Distillation SFT (~1M traces) ↓</text>
+  <text x="210" y="308" text-anchor="middle" fill="#0078d4" font-size="7" font-weight="bold">Final RL Climb → MAI-Thinking-1</text>
+  <text x="210" y="320" text-anchor="middle" fill="#888" font-size="6.5">持续 log-linear 提升, self-distillation 崩溃恢复</text>
 
-  <!-- Log-linear performance -->
-  <rect x="20" y="310" width="380" height="80" rx="8" fill="#0078d408" stroke="#0078d433"/>
-  <text x="210" y="328" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">Log-linear Performance Climb</text>
-
-  <!-- Simplified performance curve -->
-  <line x1="50" y1="370" x2="380" y2="370" stroke="#333" stroke-width="0.5"/>
-  <line x1="50" y1="370" x2="50" y2="338" stroke="#333" stroke-width="0.5"/>
-  <text x="215" y="382" text-anchor="middle" fill="#666" font-size="6">RL Steps (thousands)</text>
-  <text x="40" y="354" text-anchor="middle" fill="#666" font-size="6" transform="rotate(-90 40 354)">Score</text>
-
-  <path d="M60 368 Q120 360, 180 352 Q240 345, 300 340 Q340 337, 370 335" stroke="#0078d4" stroke-width="2" fill="none"/>
-  <circle cx="130" cy="357" r="3" fill="#ff6b6b"/>
-  <text x="130" y="352" text-anchor="middle" fill="#ff6b6b" font-size="5.5">self-distill</text>
-  <circle cx="250" cy="344" r="3" fill="#ff6b6b"/>
-  <text x="250" y="339" text-anchor="middle" fill="#ff6b6b" font-size="5.5">self-distill</text>
-  <text x="380" y="332" fill="#38d9a9" font-size="6">↑ 持续提升</text>
+  <!-- Result -->
+  <rect x="15" y="335" width="390" height="55" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="25" y="351" fill="#0078d4" font-size="8" font-weight="bold">结果: 同参数量级 Frontier</text>
+  <text x="30" y="367" fill="#38d9a9" font-size="7">AIME'25: 97.0 | AIME'26: 94.5 | LCB v6: 87.7 | SWE-Pro: 52.8 | GPQA: 84.2</text>
+  <text x="30" y="381" fill="#888" font-size="6.5">vs Sonnet 4.6: AIME 领先, SWE-Pro 接近 Opus, Human eval 持平 | 完全无蒸馏</text>
 </svg>
-<p class="caption">三个领域专家爬坡 → SFT 合并 → 最终爬坡。Self-distillation 实现崩溃恢复和跨代迁移</p>
+<p class="caption">从架构→数据→预训练→RL 爬坡，端到端自研的 "Hill-Climbing Machine"</p>
 </div>
 
 <div class="col-caption">
-<h3>Hill-Climbing 核心理念</h3>
-<p>MAI-Thinking-1 的核心贡献不是单一的模型创新，而是构建了一个<strong>能持续改进的系统</strong>：</p>
+<h3>核心叙事</h3>
+<p>这篇论文的核心论点：</p>
+<p><strong>"Progress in AI is driven not by a single model, but by the ability to continually improve upon the current state of models."</strong></p>
 
-<p><strong>三大设计原则：</strong></p>
-<p>1. <strong>Capabilities should be learned, not inherited</strong> — 不蒸馏第三方模型</p>
-<p>2. <strong>Simplicity is sustainable</strong> — 简单可扩展的 recipe</p>
-<p>3. <strong>Scientific rigor avoids shortcuts</strong> — 所有决策通过 ladder 验证</p>
+<p>不是"我们训练了一个很强的模型"，而是"我们建造了一台能持续产出越来越强模型的机器"。MAI-Thinking-1 只是这台机器的第一个产品。</p>
 
-<div class="key-point"><strong>Self-Distillation 的作用：</strong>(1) 爬坡崩溃时恢复进度 (2) 新基模型上迁移旧爬坡成果 (3) 过滤 reward hacking 样本。~1M traces 足以匹配教师性能。</div>
+<div class="key-point"><strong>与其他报告的差异：</strong>DeepSeek、Llama 等报告侧重"我们做了什么创新"。MAI 报告侧重"我们如何构建一个能持续改进的系统"——更像是一份<strong>工程方法论论文</strong>。</div>
 
-<h3>Adaptive Entropy Control</h3>
-<p>RL 爬坡的最大挑战是<strong>熵崩溃</strong>（模型过早收敛到单一策略）。MAI 用积分控制器动态调整 clip 上界：</p>
-<p>\( k \leftarrow \text{clip}(k + \delta \cdot \text{sign}(H^* - \hat{H}(\pi_\theta)),\, 0,\, k_{\max}) \)</p>
-<p>这比显式 entropy bonus 更稳定，避免了超参敏感性。</p>
+<h3>关键数字</h3>
+<table>
+<tr><th>指标</th><th>数值</th></tr>
+<tr><td>总参数</td><td>962B (MoE)</td></tr>
+<tr><td>激活参数</td><td>34.7B</td></tr>
+<tr><td>训练 tokens</td><td>30T + 3.55T mid</td></tr>
+<tr><td>GPU</td><td>8K GB200 (Azure)</td></tr>
+<tr><td>架构迭代</td><td>5 代 (v2→v5)</td></tr>
+<tr><td>RL 步数</td><td>数千步 per climb</td></tr>
+<tr><td>技术报告</td><td>109 页</td></tr>
+</table>
 
-<div class="key-point"><strong>为什么不需要 Reward Model：</strong>STEM 域用代码执行验证正确性；Agentic 域用测试通过率作 reward。只有 Helpfulness 域需要 AI judge。Ground-truth reward 无法被 hack。</div>
+<div class="key-point"><strong>从头训练的意义：</strong>不用任何第三方模型蒸馏 = 完整掌控整个 pipeline。蒸馏获得的能力"缺乏可控性和鲁棒性"，不能支撑长期持续爬坡。这是方法论选择，不是资源限制。</div>
 </div>
 </div>
 
-<!-- ===== 3. Agentic RL ===== -->
-<h2>3. Agentic Climb：多步环境交互 RL</h2>
+<!-- ===== 2. 亮点 ===== -->
+<h2>2. 亮点总结</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># Agentic RL 与标准 STEM RL 的区别:</span>
-<span class="cm"># STEM: 单轮生成 → 验证答案</span>
-<span class="cm"># Agentic: 多步交互 → 环境反馈 → 迭代</span>
+<pre><span class="cm"># ====== 架构亮点 ======</span>
+<span class="cm"># 1. NoPE Global Attention</span>
+<span class="cm">#    全局层不用位置编码</span>
+<span class="cm">#    比 RoPE 更好泛化 (2305.19466)</span>
+<span class="cm">#    更少计算开销</span>
+<span class="cm">#</span>
+<span class="cm"># 2. 交替 Dense + MoE FFN</span>
+<span class="cm">#    比 every-layer MoE 更快</span>
+<span class="cm">#    wall-clock 优于同 FLOP 设计</span>
+<span class="cm">#    不依赖 shared expert</span>
+<span class="cm">#</span>
+<span class="cm"># 3. LatentMoE (NVIDIA 联合)</span>
+<span class="cm">#    dispatch 前 down-project</span>
+<span class="cm">#    减少 all-to-all 通信量</span>
+<span class="cm">#</span>
+<span class="cm"># 4. Attention output zero-init</span>
+<span class="cm">#    防止初始 causal mean pooling</span>
+<span class="cm">#    避免 MoE routing 不平衡</span>
 
-<span class="cm"># ====== Multi-step 框架 ======</span>
-<span class="cm"># Episode = trajectory of steps:</span>
-<span class="cm">#   Step 1: model → tool_call → observe</span>
-<span class="cm">#   Step 2: model → tool_call → observe</span>
-<span class="cm">#   ...    (直到完成或超时)</span>
-<span class="cm">#   Final: reward = test_pass_rate</span>
+<span class="cm"># ====== 训练亮点 ======</span>
+<span class="cm"># 5. Adaptive Entropy Control</span>
+<span class="cm">#    积分控制器动态调整 clip 上界</span>
+<span class="cm">#    比 entropy bonus 更稳定</span>
+<span class="cm">#</span>
+<span class="cm"># 6. Self-Distillation Recovery</span>
+<span class="cm">#    崩溃不怕 → 收集轨迹 → SFT</span>
+<span class="cm">#    跨代迁移 RL 进度</span>
+<span class="cm">#</span>
+<span class="cm"># 7. Outer Ratio Clip</span>
+<span class="cm">#    防极端 importance ratio 爆炸</span>
+<span class="cm">#</span>
+<span class="cm"># 8. STEM 混合稳定 Agentic</span>
+<span class="cm">#    Agentic 单独训不稳定</span>
+<span class="cm">#    混合 STEM 后稳定 + 正迁移</span>
 
-<span class="cm"># 工具集 (SWE environments):</span>
-<span class="cm"># - bash (终端命令)</span>
-<span class="cm"># - string_replace (文件编辑)</span>
-<span class="cm"># 只用这两个工具, 极简但强大</span>
+<span class="cm"># ====== 数据亮点 ======</span>
+<span class="cm"># 9. Rank Non-invariance 发现</span>
+<span class="cm">#    小规模最优 ≠ 大规模最优</span>
+<span class="cm">#    Code-heavy 最终赢过 STEM-heavy</span>
+<span class="cm">#</span>
+<span class="cm"># 10. 无 AI 生成数据</span>
+<span class="cm">#     主动去除训练数据中的 AI 内容</span>
+<span class="cm">#     100% 人类生成数据</span>
 
-<span class="cm"># ====== SWE 环境构建 ======</span>
-<span class="cm"># 1. 从 GitHub repos 构建容器</span>
-<span class="cm"># 2. 每个环境 = 完整 repo + 依赖 + 测试</span>
-<span class="cm"># 3. 自动 setup/teardown</span>
-<span class="cm"># 4. 测试套件 = 自动 reward 信号</span>
-
-<span class="cm"># ====== 混合训练 ======</span>
-<span class="cm"># Agentic climb 混合 STEM 任务:</span>
-<span class="cm"># - STEM 帮助稳定训练</span>
-<span class="cm"># - STEM → Agentic 正迁移</span>
-<span class="cm"># - Agentic → STEM 无负迁移</span>
-<span class="cm"># 最终: agentic + coding 联合爬坡</span>
-
-<span class="cm"># ====== Reward 设计 ======</span>
-<span class="cm"># SWE: 测试通过率 (verifiable)</span>
-<span class="cm"># Tool use: AI judge (行为质量)</span>
-<span class="cm"># 混合: verifiable + judge reward</span>
-<span class="cm"># 关键: 测试结果 = ground truth</span>
-<span class="cm">#   不可被 gaming/hacking</span></pre>
+<span class="cm"># ====== 工程亮点 ======</span>
+<span class="cm"># 11. Bitwise 确定性训练</span>
+<span class="cm">#     相同配置 = 完全相同模型</span>
+<span class="cm">#     调试、回溯、复现无障碍</span>
+<span class="cm">#</span>
+<span class="cm"># 12. YOLO 框架 (自研)</span>
+<span class="cm">#     MFU ~20% on 8K GB200</span>
+<span class="cm">#     FP8 + custom Triton kernels</span></pre>
 </div>
 
 <div class="svg-block">
-<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
-  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">Multi-step Agentic RL Loop</text>
+<svg viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">12 大亮点按层次分布</text>
 
-  <!-- Task input -->
-  <rect x="20" y="35" width="120" height="45" rx="6" fill="#1e1e2e" stroke="#f7971e"/>
-  <text x="80" y="52" text-anchor="middle" fill="#f7971e" font-size="8" font-weight="bold">Task Spec</text>
-  <text x="80" y="66" text-anchor="middle" fill="#888" font-size="6.5">GitHub Issue / Bug report</text>
-  <text x="80" y="76" text-anchor="middle" fill="#888" font-size="6.5">+ repo context</text>
+  <!-- Architecture -->
+  <rect x="15" y="30" width="190" height="120" rx="8" fill="#667eea08" stroke="#667eea44"/>
+  <text x="25" y="46" fill="#667eea" font-size="8" font-weight="bold">架构设计 (4)</text>
+  <rect x="22" y="53" width="176" height="20" rx="3" fill="#667eea11"/>
+  <text x="110" y="66" text-anchor="middle" fill="#667eea" font-size="6.5">① NoPE Global Attention</text>
+  <rect x="22" y="77" width="176" height="20" rx="3" fill="#667eea11"/>
+  <text x="110" y="90" text-anchor="middle" fill="#667eea" font-size="6.5">② Dense + MoE 交替 (wall-clock 最优)</text>
+  <rect x="22" y="101" width="176" height="20" rx="3" fill="#667eea11"/>
+  <text x="110" y="114" text-anchor="middle" fill="#667eea" font-size="6.5">③ LatentMoE (低通信开销)</text>
+  <rect x="22" y="125" width="176" height="20" rx="3" fill="#667eea11"/>
+  <text x="110" y="138" text-anchor="middle" fill="#667eea" font-size="6.5">④ Attn output zero-init</text>
 
-  <!-- SEE Environment -->
-  <rect x="160" y="35" width="120" height="45" rx="6" fill="#1e1e2e" stroke="#38d9a9"/>
-  <text x="220" y="52" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">SEE Container</text>
-  <text x="220" y="66" text-anchor="middle" fill="#888" font-size="6.5">Sandbox Execution Env</text>
-  <text x="220" y="76" text-anchor="middle" fill="#888" font-size="6.5">code + deps + tests</text>
+  <!-- Training -->
+  <rect x="215" y="30" width="190" height="120" rx="8" fill="#0078d408" stroke="#0078d444"/>
+  <text x="225" y="46" fill="#0078d4" font-size="8" font-weight="bold">训练方法 (4)</text>
+  <rect x="222" y="53" width="176" height="20" rx="3" fill="#0078d411"/>
+  <text x="310" y="66" text-anchor="middle" fill="#0078d4" font-size="6.5">⑤ Adaptive Entropy Control</text>
+  <rect x="222" y="77" width="176" height="20" rx="3" fill="#0078d411"/>
+  <text x="310" y="90" text-anchor="middle" fill="#0078d4" font-size="6.5">⑥ Self-Distillation Recovery</text>
+  <rect x="222" y="101" width="176" height="20" rx="3" fill="#0078d411"/>
+  <text x="310" y="114" text-anchor="middle" fill="#0078d4" font-size="6.5">⑦ Outer Ratio Clip (防梯度爆炸)</text>
+  <rect x="222" y="125" width="176" height="20" rx="3" fill="#0078d411"/>
+  <text x="310" y="138" text-anchor="middle" fill="#0078d4" font-size="6.5">⑧ STEM 混合稳定 Agentic RL</text>
 
-  <!-- Model -->
-  <rect x="300" y="35" width="100" height="45" rx="6" fill="#1e1e2e" stroke="#0078d4" stroke-width="2"/>
-  <text x="350" y="52" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">MAI Policy</text>
-  <text x="350" y="66" text-anchor="middle" fill="#888" font-size="6.5">Think + Act</text>
-  <text x="350" y="76" text-anchor="middle" fill="#888" font-size="6.5">(extended CoT)</text>
+  <!-- Data -->
+  <rect x="15" y="158" width="190" height="75" rx="8" fill="#38d9a908" stroke="#38d9a944"/>
+  <text x="25" y="174" fill="#38d9a9" font-size="8" font-weight="bold">数据工程 (2)</text>
+  <rect x="22" y="181" width="176" height="20" rx="3" fill="#38d9a911"/>
+  <text x="110" y="194" text-anchor="middle" fill="#38d9a9" font-size="6.5">⑨ Rank Non-invariance 发现</text>
+  <rect x="22" y="205" width="176" height="20" rx="3" fill="#38d9a911"/>
+  <text x="110" y="218" text-anchor="middle" fill="#38d9a9" font-size="6.5">⑩ 零 AI 生成数据, 全人类知识</text>
 
-  <!-- Multi-step loop -->
-  <rect x="20" y="95" width="380" height="180" rx="8" fill="#0078d406" stroke="#0078d422"/>
-  <text x="210" y="113" text-anchor="middle" fill="#0078d4" font-size="9" font-weight="bold">Multi-step Trajectory (一个 episode)</text>
+  <!-- Engineering -->
+  <rect x="215" y="158" width="190" height="75" rx="8" fill="#f7971e08" stroke="#f7971e44"/>
+  <text x="225" y="174" fill="#f7971e" font-size="8" font-weight="bold">工程基础 (2)</text>
+  <rect x="222" y="181" width="176" height="20" rx="3" fill="#f7971e11"/>
+  <text x="310" y="194" text-anchor="middle" fill="#f7971e" font-size="6.5">⑪ Bitwise 确定性训练</text>
+  <rect x="222" y="205" width="176" height="20" rx="3" fill="#f7971e11"/>
+  <text x="310" y="218" text-anchor="middle" fill="#f7971e" font-size="6.5">⑫ YOLO 自研框架 (MFU 20%)</text>
 
-  <!-- Steps -->
-  <rect x="35" y="125" width="90" height="50" rx="4" fill="#11111a" stroke="#667eea"/>
-  <text x="80" y="142" text-anchor="middle" fill="#667eea" font-size="7" font-weight="bold">Step 1</text>
-  <text x="80" y="155" text-anchor="middle" fill="#888" font-size="6">&lt;think&gt; 分析问题</text>
-  <text x="80" y="166" text-anchor="middle" fill="#888" font-size="6">bash: grep -r "bug"</text>
+  <!-- Core value highlight -->
+  <rect x="15" y="245" width="390" height="80" rx="8" fill="#0078d40a" stroke="#0078d433"/>
+  <text x="210" y="263" text-anchor="middle" fill="#0078d4" font-size="9" font-weight="bold">最大亮点: 方法论透明度</text>
+  <text x="30" y="283" fill="#a8a8be" font-size="7">• 109 页完整公开: 架构搜索 → 数据 pipeline → RL recipe → 集群部署</text>
+  <text x="30" y="298" fill="#a8a8be" font-size="7">• 公开失败经验: 训练崩溃、rank non-invariance、entropy collapse</text>
+  <text x="30" y="313" fill="#a8a8be" font-size="7">• 公开 scaling law 细节: EG 计算方法、ladder 验证流程、MFU 优化历程</text>
 
-  <text x="132" y="150" fill="#4facfe" font-size="10">→</text>
-
-  <rect x="140" y="125" width="90" height="50" rx="4" fill="#11111a" stroke="#38d9a9"/>
-  <text x="185" y="142" text-anchor="middle" fill="#38d9a9" font-size="7" font-weight="bold">Step 2</text>
-  <text x="185" y="155" text-anchor="middle" fill="#888" font-size="6">&lt;think&gt; 定位问题</text>
-  <text x="185" y="166" text-anchor="middle" fill="#888" font-size="6">str_replace: fix</text>
-
-  <text x="237" y="150" fill="#4facfe" font-size="10">→</text>
-
-  <rect x="245" y="125" width="90" height="50" rx="4" fill="#11111a" stroke="#f7971e"/>
-  <text x="290" y="142" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">Step 3</text>
-  <text x="290" y="155" text-anchor="middle" fill="#888" font-size="6">&lt;think&gt; 验证修复</text>
-  <text x="290" y="166" text-anchor="middle" fill="#888" font-size="6">bash: pytest</text>
-
-  <text x="342" y="150" fill="#4facfe" font-size="10">→</text>
-
-  <rect x="350" y="125" width="45" height="50" rx="4" fill="#11111a" stroke="#888"/>
-  <text x="372" y="152" text-anchor="middle" fill="#888" font-size="7">...</text>
-  <text x="372" y="166" text-anchor="middle" fill="#888" font-size="6">N步</text>
-
-  <!-- Observations -->
-  <rect x="35" y="190" width="360" height="35" rx="4" fill="#38d9a908" stroke="#38d9a933"/>
-  <text x="210" y="205" text-anchor="middle" fill="#38d9a9" font-size="7" font-weight="bold">Environment Observations (each step)</text>
-  <text x="210" y="219" text-anchor="middle" fill="#888" font-size="6.5">command output | file content | test results | error messages</text>
-
-  <!-- Tools -->
-  <text x="210" y="248" text-anchor="middle" fill="#6b6b80" font-size="7">工具: bash + string_replace (仅此两个)</text>
-  <text x="210" y="262" text-anchor="middle" fill="#667eea" font-size="6.5">模型学会在这两个工具上组合出复杂策略</text>
-
-  <!-- Reward -->
-  <rect x="20" y="285" width="380" height="85" rx="8" fill="#11111a" stroke="#1e1e30"/>
-  <text x="210" y="303" text-anchor="middle" fill="#ff6b6b" font-size="9" font-weight="bold">Reward Signal</text>
-
-  <rect x="35" y="312" width="170" height="25" rx="3" fill="#38d9a908" stroke="#38d9a944"/>
-  <text x="120" y="328" text-anchor="middle" fill="#38d9a9" font-size="7">Verifiable: test_passed / test_total</text>
-
-  <rect x="215" y="312" width="170" height="25" rx="3" fill="#f7971e08" stroke="#f7971e44"/>
-  <text x="300" y="328" text-anchor="middle" fill="#f7971e" font-size="7">AI Judge: trajectory quality</text>
-
-  <text x="210" y="358" text-anchor="middle" fill="#0078d4" font-size="7" font-weight="bold">整条 trajectory 优化 (不只最终答案)</text>
+  <!-- Benchmark highlight -->
+  <rect x="15" y="335" width="390" height="75" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="353" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">Benchmark 定位</text>
+  <text x="30" y="372" fill="#38d9a9" font-size="7">AIME'25: 97.0 (超 Sonnet 4.6) | SWE-Pro: 52.8 (≈Opus 4.6) | LCB v6: 87.7</text>
+  <text x="30" y="387" fill="#f7971e" font-size="7">Terminal-Bench: 46.0 (未专门训练, 低于 Opus) | GPQA: 84.2 (略低于 Sonnet)</text>
+  <text x="30" y="402" fill="#888" font-size="6.5">Human eval vs Sonnet 4.6: 持平 (+0.07) | vs Opus 4.6: 略低 (-0.07)</text>
 </svg>
-<p class="caption">Agentic climb 在容器化环境中执行多步交互，reward 来自测试通过率 + AI 评判</p>
+<p class="caption">四层亮点: 不追求单点创新，追求全栈系统化的持续改进能力</p>
 </div>
 
 <div class="col-caption">
-<h3>SWE 环境基础设施</h3>
-<p>Agentic RL 的瓶颈是环境构建。Microsoft 投入大量基础设施：</p>
+<h3>亮点深度解读</h3>
 
-<table>
-<tr><th>组件</th><th>说明</th></tr>
-<tr><td>SEE</td><td>Sandbox Execution Environment</td></tr>
-<tr><td>容器化</td><td>每个 repo = 独立 Docker 环境</td></tr>
-<tr><td>测试套件</td><td>自动提取 + 验证可用</td></tr>
-<tr><td>并行度</td><td>大规模并发环境</td></tr>
-<tr><td>工具</td><td>bash + string_replace (极简)</td></tr>
-</table>
+<p><strong>① NoPE (No Position Encoding)</strong></p>
+<p>Global attention 层不使用任何位置编码。引用 Kazemnejad et al. 2023 (arXiv 2305.19466)：NoPE 在 length generalization 上优于 RoPE/ALiBi，且更高效。实测在 scaling ladder 上与 RoPE 持平。</p>
 
-<div class="key-point"><strong>关键发现：STEM 混合训练。</strong>单独做 Agentic climb 不稳定。混合 STEM 任务后训练更稳定，且 STEM → Agentic 有正迁移，反之无负迁移。</div>
+<p><strong>⑤ Adaptive Entropy Control</strong></p>
+<p>RL 爬坡最大风险是 entropy collapse（模型过早确定策略）。传统做法加 entropy bonus 超参敏感。MAI 用积分控制器：熵低→自动放宽 clip→鼓励探索；熵高→收紧→稳定训练。</p>
 
-<h3>涌现行为</h3>
-<p>随着 RL 爬坡推进，模型行为持续演化（论文 Appendix C.2）：</p>
-<p>• 早期：逐行阅读，盲目修改</p>
-<p>• 中期：学会 grep 定位，增量验证</p>
-<p>• 后期：全局分析，最小修改，错误恢复</p>
+<p><strong>⑥ Self-Distillation</strong></p>
+<p>解决三个问题：(1) 爬坡崩溃恢复 (2) 新基模型继承旧 RL 进度 (3) 过滤 reward hacking。~1M traces 足够。多 checkpoint 采样优于单一最终 checkpoint。</p>
 
-<p>这些策略不是 SFT 教的——完全从 RL 中涌现。</p>
+<p><strong>⑨ Rank Non-invariance</strong></p>
+<p>关键发现：小模型上最优的数据配比在大模型上不是最优的。STEM-heavy 在小规模赢，但 Code-heavy 在大规模赢（因为 STEM 数据多样性不足）。<strong>必须在目标规模验证。</strong></p>
 
-<div class="key-point"><strong>极简工具哲学：</strong>只给 bash + string_replace 两个工具。模型自己学会用它们组合出 grep、cat、git diff、pytest 等复杂操作序列。工具越简单 → 组合空间越大 → RL 越能探索创新策略。</div>
+<div class="key-point"><strong>⑪ Bitwise 确定性：</strong>完全相同配置 → 完全相同模型。需要控制：数据管道顺序、checkpoint 全状态、GPU kernel 累加顺序、NCCL 拓扑固定、禁用 NVLink SHARP。代价：MFU 有少量损失。收益：调试、回溯、科学复现。</div>
 </div>
 </div>
 
-<!-- ===== 4. Results ===== -->
-<h2>4. Benchmark 结果与分析</h2>
+<!-- ===== 3. 模型架构 ===== -->
+<h2>3. 模型架构设计</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># ====== 主要 Benchmark 结果 ======</span>
-<span class="cm"># (pass@1, avg over 4 runs, T=1, top-p=0.97)</span>
+<pre><span class="cm"># ====== MAI-Base-1 架构规格 ======</span>
+<span class="cm"># Type: Decoder-only Transformer</span>
+<span class="cm"># Active: 34.7B | Total: 962B</span>
+<span class="cm"># Layers: 78</span>
+<span class="cm"># Hidden: 6656</span>
+<span class="cm"># FFN (dense): 13312</span>
+<span class="cm"># Down-proj: 3072 (LatentMoE)</span>
+<span class="cm"># Expert FFN: 10240</span>
+<span class="cm"># Experts: 512, top-k=8</span>
+<span class="cm"># KV heads: 8 (GQA), head_dim=128</span>
+<span class="cm"># Q heads: 80</span>
+<span class="cm"># Tokenizer: o200k_base (200K vocab)</span>
+<span class="cm"># Embedding: tied input/output</span>
+<span class="cm"># Norm: RMSNorm (pre + post residual)</span>
+<span class="cm"># Bias: none</span>
+<span class="cm"># Activation: SwiGLU</span>
 
-<span class="cm"># STEM / Math:</span>
-<span class="cm"># AIME 2025:      97.0% (Sonnet 4.6: 95.6)</span>
-<span class="cm"># AIME 2026:      94.5%</span>
-<span class="cm"># HMMT Feb 2026:  84.9%</span>
-<span class="cm"># GPQA Diamond:   84.2%</span>
+<span class="cm"># ====== 注意力设计 ======</span>
+<span class="cm"># 周期: 5 local + 1 global (per block)</span>
+<span class="cm"># Local:</span>
+<span class="cm">#   RoPE, base_freq=10000</span>
+<span class="cm">#   Sliding window = 512 tokens</span>
+<span class="cm"># Global:</span>
+<span class="cm">#   NoPE (无位置编码)</span>
+<span class="cm">#   Full context (无 window 限制)</span>
+<span class="cm"># QK-RMSNorm (稳定大规模训练)</span>
+<span class="cm"># FlashAttention-4 + Ulysses CP</span>
 
-<span class="cm"># Agentic Coding:</span>
-<span class="cm"># LCB v6:         87.7%</span>
-<span class="cm"># SWE-Bench V:    73.5% (Sonnet 4.6: 79.6)</span>
-<span class="cm"># SWE-Bench Pro:  52.8% (Opus 4.6: 53.4)</span>
-<span class="cm"># Terminal-Bench:  46.0% (Opus 4.6: 65.4)</span>
+<span class="cm"># ====== FFN 设计 ======</span>
+<span class="cm"># 交替排列:</span>
+<span class="cm"># Layer 0: Local Attn + Dense FFN</span>
+<span class="cm"># Layer 1: Local Attn + MoE</span>
+<span class="cm"># Layer 2: Local Attn + Dense FFN</span>
+<span class="cm"># Layer 3: Local Attn + MoE</span>
+<span class="cm"># Layer 4: Local Attn + Dense FFN</span>
+<span class="cm"># Layer 5: Global Attn + MoE</span>
+<span class="cm"># ... repeat ×13 (= 78 layers)</span>
 
-<span class="cm"># General:</span>
-<span class="cm"># MMLU Pro:       85</span>
-<span class="cm"># IF Bench:       69</span>
-<span class="cm"># GraphWalks 128K: 90</span>
-<span class="cm"># BFCL v3:        72</span>
-
-<span class="cm"># Human Side-by-Side:</span>
-<span class="cm"># vs Sonnet 4.6: +0.07 preference</span>
-<span class="cm"># vs Opus 4.6:   -0.07 preference</span>
-<span class="cm"># (基本持平, 在 conciseness 上领先)</span>
-
-<span class="cm"># ====== 关键定位 ======</span>
-<span class="cm"># 1. 同参数量级最强之一</span>
-<span class="cm"># 2. STEM 接近 Opus 4.6</span>
-<span class="cm"># 3. SWE-Bench Pro 接近 Opus</span>
-<span class="cm"># 4. 完全从头训练 (无蒸馏)</span>
-<span class="cm"># 5. 35B active 推理成本低</span></pre>
+<span class="cm"># ====== LatentMoE ======</span>
+<span class="cm"># token → shared_down_proj (6656→3072)</span>
+<span class="cm"># → all-to-all dispatch (压缩空间)</span>
+<span class="cm"># → expert FFN (3072→10240→3072)</span>
+<span class="cm"># → all-to-all combine</span>
+<span class="cm"># → shared_up_proj (3072→6656)</span>
+<span class="cm"># 好处: 通信量降低 ~2× (6656→3072)</span></pre>
 </div>
 
 <div class="svg-block">
-<svg viewBox="0 0 420 360" xmlns="http://www.w3.org/2000/svg">
-  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">MAI-Thinking-1 vs Frontier Models</text>
+<svg viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">MAI-Base-1 Layer Structure (78 layers)</text>
 
-  <!-- STEM comparison -->
-  <rect x="15" y="32" width="390" height="95" rx="8" fill="#11111a" stroke="#1e1e30"/>
-  <text x="25" y="48" fill="#4facfe" font-size="8" font-weight="bold">STEM Reasoning</text>
+  <!-- One block (6 layers) -->
+  <rect x="30" y="30" width="360" height="260" rx="10" fill="#1e1e2e" stroke="#0078d444"/>
+  <text x="210" y="48" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">One Block (6 layers) × 13 = 78 layers</text>
 
-  <!-- AIME 2025 bar chart -->
-  <text x="30" y="65" fill="#888" font-size="6.5">AIME 2025</text>
-  <rect x="100" y="58" width="280" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="100" y="58" width="272" height="10" rx="2" fill="#0078d4"/>
-  <text x="376" y="66" fill="#0078d4" font-size="6">97.0</text>
-  <rect x="100" y="70" width="268" height="6" rx="1" fill="#667eea55"/>
-  <text x="372" y="76" fill="#667eea" font-size="5">95.6 Sonnet</text>
+  <!-- Layer 0-4: Local -->
+  <rect x="45" y="58" width="155" height="25" rx="4" fill="#4facfe11" stroke="#4facfe"/>
+  <text x="122" y="74" text-anchor="middle" fill="#4facfe" font-size="7">Local Attn (RoPE, SW=512)</text>
 
-  <!-- GPQA -->
-  <text x="30" y="90" fill="#888" font-size="6.5">GPQA Diamond</text>
-  <rect x="100" y="83" width="280" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="100" y="83" width="236" height="10" rx="2" fill="#0078d4"/>
-  <text x="340" y="91" fill="#0078d4" font-size="6">84.2</text>
-  <rect x="100" y="95" width="252" height="6" rx="1" fill="#667eea55"/>
-  <text x="356" y="101" fill="#667eea" font-size="5">89.9 Sonnet</text>
+  <rect x="210" y="58" width="80" height="25" rx="4" fill="#38d9a911" stroke="#38d9a9"/>
+  <text x="250" y="74" text-anchor="middle" fill="#38d9a9" font-size="7">Dense FFN</text>
 
-  <!-- LCB -->
-  <text x="30" y="115" fill="#888" font-size="6.5">LiveCodeBench v6</text>
-  <rect x="100" y="108" width="280" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="100" y="108" width="245" height="10" rx="2" fill="#0078d4"/>
-  <text x="349" y="116" fill="#0078d4" font-size="6">87.7</text>
+  <rect x="300" y="58" width="80" height="25" rx="4" fill="#f7971e11" stroke="#f7971e"/>
+  <text x="340" y="74" text-anchor="middle" fill="#f7971e" font-size="7">MoE 8/512</text>
 
-  <!-- Agentic comparison -->
-  <rect x="15" y="135" width="390" height="90" rx="8" fill="#11111a" stroke="#1e1e30"/>
-  <text x="25" y="151" fill="#38d9a9" font-size="8" font-weight="bold">Agentic Coding</text>
+  <text x="210" y="96" text-anchor="middle" fill="#888" font-size="6.5">Layer 0: Local + Dense | Layer 1: Local + MoE | ... | Layer 4: Local + Dense</text>
 
-  <!-- SWE-Bench Verified -->
-  <text x="30" y="168" fill="#888" font-size="6.5">SWE-Bench Verified</text>
-  <rect x="130" y="161" width="250" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="130" y="161" width="183" height="10" rx="2" fill="#0078d4"/>
-  <text x="317" y="169" fill="#0078d4" font-size="6">73.5</text>
-  <rect x="130" y="173" width="199" height="6" rx="1" fill="#667eea55"/>
-  <text x="333" y="179" fill="#667eea" font-size="5">79.6 Sonnet</text>
+  <!-- Layer 5: Global -->
+  <rect x="45" y="105" width="155" height="25" rx="4" fill="#0078d422" stroke="#0078d4" stroke-width="1.5"/>
+  <text x="122" y="121" text-anchor="middle" fill="#0078d4" font-size="7" font-weight="bold">Global Attn (NoPE, full ctx)</text>
 
-  <!-- SWE-Bench Pro -->
-  <text x="30" y="193" fill="#888" font-size="6.5">SWE-Bench Pro</text>
-  <rect x="130" y="186" width="250" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="130" y="186" width="132" height="10" rx="2" fill="#0078d4"/>
-  <text x="266" y="194" fill="#0078d4" font-size="6">52.8</text>
-  <rect x="130" y="198" width="133" height="6" rx="1" fill="#c678dd55"/>
-  <text x="267" y="204" fill="#c678dd" font-size="5">53.4 Opus</text>
+  <rect x="210" y="105" width="170" height="25" rx="4" fill="#f7971e11" stroke="#f7971e"/>
+  <text x="295" y="121" text-anchor="middle" fill="#f7971e" font-size="7">MoE 8/512</text>
 
-  <!-- Terminal-Bench -->
-  <text x="30" y="218" fill="#888" font-size="6.5">Terminal-Bench 2.0</text>
-  <rect x="130" y="211" width="250" height="10" rx="2" fill="#1e1e2e"/>
-  <rect x="130" y="211" width="115" height="10" rx="2" fill="#0078d4"/>
-  <text x="249" y="219" fill="#0078d4" font-size="6">46.0</text>
-  <rect x="130" y="223" width="163" height="6" rx="1" fill="#c678dd55"/>
-  <text x="297" y="229" fill="#c678dd" font-size="5">65.4 Opus</text>
+  <text x="210" y="145" text-anchor="middle" fill="#888" font-size="6.5">Layer 5: Global + MoE (每 6 层一个 global)</text>
 
-  <!-- Key positioning -->
-  <rect x="15" y="235" width="390" height="115" rx="8" fill="#0078d408" stroke="#0078d433"/>
-  <text x="210" y="253" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">定位分析</text>
+  <!-- LatentMoE detail -->
+  <rect x="45" y="160" width="335" height="80" rx="6" fill="#11111a" stroke="#f7971e33"/>
+  <text x="210" y="176" text-anchor="middle" fill="#f7971e" font-size="7" font-weight="bold">LatentMoE Detail</text>
 
-  <text x="30" y="273" fill="#38d9a9" font-size="7">✓ AIME 2025 超 Sonnet 4.6 (97.0 vs 95.6)</text>
-  <text x="30" y="289" fill="#38d9a9" font-size="7">✓ SWE-Bench Pro 接近 Opus 4.6 (52.8 vs 53.4)</text>
-  <text x="30" y="305" fill="#38d9a9" font-size="7">✓ Human eval: 与 Sonnet 持平 (conciseness 领先)</text>
-  <text x="30" y="321" fill="#f7971e" font-size="7">△ Terminal-Bench 明显落后 (未专门训练)</text>
-  <text x="30" y="337" fill="#f7971e" font-size="7">△ GPQA 略低于 Sonnet (84.2 vs 89.9)</text>
+  <rect x="55" y="185" width="60" height="20" rx="3" fill="#1e1e2e" stroke="#667eea44"/>
+  <text x="85" y="198" text-anchor="middle" fill="#667eea" font-size="6">Input (6656)</text>
+
+  <text x="120" y="198" fill="#888" font-size="8">→</text>
+
+  <rect x="128" y="185" width="65" height="20" rx="3" fill="#1e1e2e" stroke="#c678dd44"/>
+  <text x="160" y="198" text-anchor="middle" fill="#c678dd" font-size="6">Down (3072)</text>
+
+  <text x="198" y="198" fill="#888" font-size="8">→</text>
+
+  <rect x="205" y="185" width="55" height="20" rx="3" fill="#1e1e2e" stroke="#ff6b6b44"/>
+  <text x="232" y="198" text-anchor="middle" fill="#ff6b6b" font-size="6">A2A</text>
+
+  <text x="265" y="198" fill="#888" font-size="8">→</text>
+
+  <rect x="272" y="185" width="55" height="20" rx="3" fill="#f7971e22" stroke="#f7971e"/>
+  <text x="299" y="198" text-anchor="middle" fill="#f7971e" font-size="6">Expert</text>
+
+  <text x="332" y="198" fill="#888" font-size="8">→</text>
+
+  <rect x="339" y="185" width="35" height="20" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="356" y="198" text-anchor="middle" fill="#38d9a9" font-size="6">Out</text>
+
+  <text x="210" y="230" text-anchor="middle" fill="#888" font-size="6">Shared down-proj 减少 all-to-all 通信量 (6656→3072 = ~2× 压缩)</text>
+
+  <!-- Scaling ladder -->
+  <rect x="45" y="250" width="335" height="30" rx="4" fill="#0078d408" stroke="#0078d422"/>
+  <text x="210" y="269" text-anchor="middle" fill="#0078d4" font-size="7" font-weight="bold">Scaling Ladder 验证: L12(365M) → L18 → L24 → L30 → L36 → L42 → L66 → L78(35B)</text>
+
+  <!-- Key design rationale -->
+  <rect x="30" y="300" width="360" height="110" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="318" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">架构决策的验证方式</text>
+
+  <text x="40" y="338" fill="#667eea" font-size="7" font-weight="bold">Efficiency Gain (EG):</text>
+  <text x="40" y="354" fill="#888" font-size="6.5">EG = f⁻¹(L') / C' — 基线需多少额外 compute 才能匹配候选模型</text>
+  <text x="40" y="370" fill="#888" font-size="6.5">EG_FLOPs: 纯模型质量 (去耦硬件效率) | EG_Time: 包含实现效率</text>
+
+  <text x="40" y="390" fill="#38d9a9" font-size="7">结论: 交替 MoE+Dense 的 EG_FLOPs ≈ every-layer MoE, 但 EG_Time 更优</text>
+  <text x="40" y="404" fill="#38d9a9" font-size="7">结论: top-8/512 是质量与效率的最优平衡点</text>
 </svg>
-<p class="caption">MAI-Thinking-1 在 35B active 参数量下达到 frontier 水准，部分指标超 Sonnet 4.6</p>
+<p class="caption">架构核心: 周期性 Local/Global 注意力 + 交替 Dense/MoE FFN + LatentMoE 压缩通信</p>
 </div>
 
 <div class="col-caption">
-<h3>核心亮点总结</h3>
+<h3>关键架构决策</h3>
+
+<p><strong>为什么 5:1 Local:Global？</strong></p>
+<p>Follow Gemma 3 设计。大幅减少 KV cache：只有 1/6 的层需要存全量 KV。训练时减少注意力计算量。推理时 KV cache 降低 ~5×。</p>
+
+<p><strong>为什么 NoPE 而非 RoPE？</strong></p>
+<p>Global 层做 full-context attention，NoPE 在 length generalization 上表现更好（causal mask 已隐式提供位置信息）。Scaling ladder 实验证实与 RoPE 持平，但更高效。</p>
+
+<p><strong>为什么交替 Dense+MoE？</strong></p>
+<p>Every-layer MoE 在 EG_FLOPs 上只高 3%，但 wall-clock (EG_Time) 上反而差 18%。原因：all-to-all 通信无法完全隐藏。交替设计让 dense 层 "缓冲" 通信延迟。</p>
+
+<p><strong>为什么 LatentMoE？</strong></p>
+<p>Expert parallelism 需要 all-to-all 通信。LatentMoE 在 dispatch 前将 token 从 hidden_dim(6656) 压缩到 down_dim(3072)，通信量减半。与 NVIDIA 联合设计。</p>
+
+<div class="key-point"><strong>Attention Output Zero-Init：</strong>解决初始化时注意力做 causal mean pooling 导致 token 表示坍缩→MoE routing 极度不平衡的问题。设 output RMSNorm gain=0，让模型初始行为等价于纯 FFN stack。</div>
+
+<p><strong>架构演进：</strong>5代 (v2→v5)，每代都是模型改进+基础设施优化的共同演进。最终 MFU 从 v2 的 18% 提升到 v5 的 20%+，同时 EG 增长 1.69×。</p>
+</div>
+</div>
+
+<!-- ===== 4. 训练设计 ===== -->
+<h2>4. 训练设计：RL 爬坡方法论</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== RL 目标函数 (GRPO-based) ======</span>
+<span class="cm"># J(θ) = E_q,y[1/Σ|yi| · Σ_i Σ_t</span>
+<span class="cm">#   min(r_it·A_i, clip(r_it,1-ε,1+ε+k)·A_i)]</span>
+<span class="cm">#</span>
+<span class="cm"># r_it = π_θ(y_it|q,y_&lt;t) / π_old(...)</span>
+<span class="cm"># A_i = (R_i - mean(R_1:G)) / std(R_1:G)</span>
+<span class="cm"># Token-level: 每个 token 贡献相等</span>
+
+<span class="cm"># ====== Reward 分解 ======</span>
+<span class="cm"># R(q,y) = R_task(q,y)</span>
+<span class="cm">#        + w_lang · R_lang(y)</span>
+<span class="cm">#        - w_len · R_len(y)</span>
+<span class="cm">#</span>
+<span class="cm"># R_task: 领域相关</span>
+<span class="cm">#   STEM: 代码执行验证正确性</span>
+<span class="cm">#   Agentic: 测试通过率 + AI judge</span>
+<span class="cm">#   Helpfulness: AI judge + RM</span>
+<span class="cm">#</span>
+<span class="cm"># R_lang: 语言一致性 (防 CoT 混语言)</span>
+<span class="cm">#   = max(1 - α·n_non_english, 0)</span>
+<span class="cm">#   RL 后期 CoT 容易混入外语 token</span>
+<span class="cm">#</span>
+<span class="cm"># R_len: 长度惩罚</span>
+<span class="cm">#   = ρ_q · |y| / ℓ_max</span>
+<span class="cm">#   防止输出无限膨胀</span>
+
+<span class="cm"># ====== 三个 Climb ======</span>
+<span class="cm"># STEM Climb (最长):</span>
+<span class="cm">#   数据: 自研 PDF→QA pipeline</span>
+<span class="cm">#   Reward: 代码执行 / 数值比对</span>
+<span class="cm">#   数千步, 多次 self-distillation</span>
+<span class="cm">#</span>
+<span class="cm"># Agentic Climb:</span>
+<span class="cm">#   数据: SWE environments (Docker)</span>
+<span class="cm">#   工具: bash + string_replace (仅2个)</span>
+<span class="cm">#   多步 trajectory RL</span>
+<span class="cm">#   混合 STEM 稳定训练</span>
+<span class="cm">#</span>
+<span class="cm"># Helpfulness Climb:</span>
+<span class="cm">#   数据: 人类偏好 + 安全标注</span>
+<span class="cm">#   Reward: AI judge + trained RM</span>
+<span class="cm">#   Safety-Helpfulness 双目标</span>
+
+<span class="cm"># ====== 合并策略 ======</span>
+<span class="cm"># 三域专家 → Trace SFT → Final Climb</span>
+<span class="cm"># Self-distillation SFT:</span>
+<span class="cm">#   ~1M traces 足够</span>
+<span class="cm">#   多 checkpoint 采样 > 单一最终</span>
+<span class="cm">#   dropout=0.15 (高, 防止过拟合)</span>
+<span class="cm">#   load_balance_coeff=1e-2 (高)</span>
+<span class="cm"># Final Climb:</span>
+<span class="cm">#   全域 RL, 统一模型</span>
+
+<span class="cm"># ====== Hyperparams ======</span>
+<span class="cm"># Optimizer: AdamW (β1=β2=0.95, ε=1e-15)</span>
+<span class="cm"># LR: 1e-6 (constant, no warmup)</span>
+<span class="cm"># Batch: 7040 packed (max 12000 unpacked)</span>
+<span class="cm"># No weight decay</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 440" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">RL 爬坡核心机制</text>
+
+  <!-- Adaptive Entropy -->
+  <rect x="15" y="30" width="390" height="100" rx="8" fill="#0078d408" stroke="#0078d444"/>
+  <text x="25" y="46" fill="#0078d4" font-size="8" font-weight="bold">核心创新 ①: Adaptive Entropy Control</text>
+
+  <text x="30" y="65" fill="#a8a8be" font-size="7">问题: RL 爬坡中 entropy collapse → 模型丧失探索能力 → 卡在局部最优</text>
+  <text x="30" y="80" fill="#a8a8be" font-size="7">方案: 积分控制器动态调整 clip 上界 k</text>
+  <text x="30" y="97" fill="#50e6ff" font-size="7">k ← clip(k + δ · sign(H* − Ĥ(π_θ)), 0, k_max)</text>
+  <text x="30" y="115" fill="#888" font-size="6.5">Ĥ 低于 H* → k↑ → clip 上界放宽 → 鼓励探索 | Ĥ 高于 H* → k↓ → 收紧 → 稳定</text>
+  <text x="30" y="127" fill="#38d9a9" font-size="6">初始 k=0 (对称 clip), 不需要 entropy bonus, 比显式正则更稳定</text>
+
+  <!-- Self-distillation -->
+  <rect x="15" y="138" width="390" height="90" rx="8" fill="#c678dd08" stroke="#c678dd44"/>
+  <text x="25" y="154" fill="#c678dd" font-size="8" font-weight="bold">核心创新 ②: Self-Distillation (爬坡崩溃恢复)</text>
+
+  <text x="30" y="172" fill="#a8a8be" font-size="7">触发条件: (1) 训练崩溃 (2) 新基模型可用 (3) 过滤 reward hacking</text>
+  <text x="30" y="188" fill="#a8a8be" font-size="7">流程: 从多个 RL checkpoint 收集 ~1M reasoning traces → SFT → 继续 RL</text>
+
+  <text x="30" y="207" fill="#50e6ff" font-size="7">关键发现:</text>
+  <text x="100" y="207" fill="#888" font-size="6.5">多 checkpoint 采样 > 单一最终 (更多样性 → 更好探索)</text>
+  <text x="30" y="221" fill="#888" font-size="6.5">不要用早期 traces (质量差, 需多步恢复) | prompt 多样性 > 每 prompt 数量 | random > biased selection</text>
+
+  <!-- Agentic multi-step -->
+  <rect x="15" y="236" width="390" height="100" rx="8" fill="#38d9a908" stroke="#38d9a944"/>
+  <text x="25" y="252" fill="#38d9a9" font-size="8" font-weight="bold">核心创新 ③: Multi-step Agentic RL</text>
+
+  <text x="30" y="270" fill="#a8a8be" font-size="7">与 STEM 单轮 RL 的区别: trajectory = [policy_step, env_step, policy_step, env_step, ...]</text>
+  <text x="30" y="286" fill="#a8a8be" font-size="7">环境: Sandbox Execution Environment (SEE) — 容器化 repo + 测试套件</text>
+  <text x="30" y="302" fill="#a8a8be" font-size="7">工具: 仅 bash + string_replace (极简→组合空间最大→RL 能探索创新策略)</text>
+
+  <text x="30" y="320" fill="#50e6ff" font-size="7">关键发现: STEM 混合训练稳定 Agentic climb, 且有正迁移</text>
+  <text x="30" y="332" fill="#888" font-size="6.5">涌现行为: 早期盲目修改 → 中期增量验证 → 后期全局分析+最小修改+错误恢复</text>
+
+  <!-- Problem sampling -->
+  <rect x="15" y="344" width="390" height="85" rx="8" fill="#f7971e08" stroke="#f7971e44"/>
+  <text x="25" y="360" fill="#f7971e" font-size="8" font-weight="bold">训练稳定性工程</text>
+
+  <text x="30" y="378" fill="#a8a8be" font-size="7">Problem Sampling: 先小批量试 pass_rate → 过滤太简单/太难的 → 只训练有区分度的</text>
+  <text x="30" y="394" fill="#a8a8be" font-size="7">Rollout Sampling: top-p 采样 + nucleus mask 复用到训练 (防 off-policy 爆炸)</text>
+  <text x="30" y="410" fill="#a8a8be" font-size="7">Outer Ratio Clip: 硬 clip [r_min, r_max] 所有分支 → 防止极端梯度 norm spike</text>
+  <text x="30" y="424" fill="#a8a8be" font-size="7">Language Reward: 惩罚 CoT 中的外语 token (RL 后期容易出现混语言)</text>
+</svg>
+<p class="caption">RL 爬坡的核心: Adaptive Entropy + Self-Distillation + Multi-step Agentic + 稳定性工程</p>
+</div>
+
+<div class="col-caption">
+<h3>训练 pipeline 全貌</h3>
 
 <table>
-<tr><th>维度</th><th>MAI-Thinking-1</th></tr>
-<tr><td>机构</td><td><strong>Microsoft AI</strong></td></tr>
-<tr><td>架构</td><td>34.7B active / 962B total MoE</td></tr>
-<tr><td>注意力</td><td>5:1 Local(RoPE) + Global(NoPE)</td></tr>
-<tr><td>MoE</td><td>LatentMoE, top-8/512</td></tr>
-<tr><td>预训练</td><td>30T + 3.55T mid, in-house only</td></tr>
-<tr><td>RL</td><td>GRPO + adaptive entropy</td></tr>
-<tr><td>爬坡</td><td>3 specialist → merge → final</td></tr>
-<tr><td>硬件</td><td>8K GB200 GPUs (Azure)</td></tr>
-<tr><td>蒸馏</td><td>无 (from scratch)</td></tr>
+<tr><th>阶段</th><th>Tokens</th><th>Context</th><th>GPU</th></tr>
+<tr><td>Pre-training</td><td>30T</td><td>16K</td><td>4K GB200</td></tr>
+<tr><td>Mid-training 1</td><td>2.85T</td><td>64K</td><td>8K GB200</td></tr>
+<tr><td>Mid-training 2</td><td>0.7T</td><td>256K</td><td>8K GB200</td></tr>
+<tr><td>RL Climb ×3</td><td>-</td><td>256K</td><td>-</td></tr>
+<tr><td>Final Climb</td><td>-</td><td>256K</td><td>-</td></tr>
 </table>
 
-<div class="key-point"><strong>论文核心观点：</strong>"Progress in AI is driven not by a single model, but by the ability to continually improve upon the current state of models." — 构建 hill-climbing machine 比训练单个模型更重要。</div>
+<h3>YOLO 分布式框架</h3>
+<p>自研框架，支持全训练阶段。关键特性：</p>
+<p>• <strong>FP8 混合精度</strong> + stochastic rounding</p>
+<p>• Custom Triton/CUDA/CuteDSL kernels</p>
+<p>• Dropless MoE (变长 all-to-all)</p>
+<p>• ZeRO-2 optimizer sharding</p>
+<p>• Activation offloading to host memory</p>
+<p>• <strong>Bitwise 确定性</strong> (所有累加固定顺序)</p>
+<p>• 最终 MFU: ~20% on 8K GB200</p>
 
-<h3>与竞品的关键差异</h3>
-<p>• <strong>vs DeepSeek-R1</strong>: MAI 不蒸馏，完全 from scratch；DeepSeek 蒸馏到小模型</p>
-<p>• <strong>vs Claude Opus</strong>: MAI 35B active 更便宜推理；质量接近但不超越</p>
-<p>• <strong>vs GPT-5</strong>: 不同技术路线，MAI 更透明（发了技术报告）</p>
+<div class="key-point"><strong>Goodput 为生产 KPI：</strong>不只看 MFU，看"实际有用的训练时间 / 总 wall-clock"。故障不只丢时间，还触发 recompute、placement 扰动、MFU 降低。每个故障模式都有 owner。</div>
 
-<div class="key-point"><strong>最大贡献：</strong>109 页技术报告完整公开了从架构搜索、数据处理、RL 训练到集群部署的全流程。这是目前公开最详尽的 reasoning model 技术报告之一。</div>
+<h3>为什么 RL 从零开始？</h3>
+<p>MAI-Thinking-1 是 Microsoft AI 的<strong>第一个</strong>推理模型。RL 爬坡从 mid-trained checkpoint 出发，<strong>没有任何推理 trace 的先验暴露</strong>。模型完全通过 RL 学会推理格式和策略——这验证了 RL 本身的充分性。</p>
+
+<div class="key-point"><strong>Agentic Climb 的关键洞察：</strong>只给 bash + string_replace 两个工具。RL 训练后模型自己发现了 grep→read→edit→test→revert→retry 的复杂策略。工具越简单→组合空间越大→RL 越能创新。这些策略不是 SFT 教的。</div>
+</div>
+</div>
+
+<!-- ===== 5. 数据设计 ===== -->
+<h2>5. 数据设计</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 预训练数据组成 ======</span>
+<span class="cm"># Source         Unique  Train  Mix%  Epochs</span>
+<span class="cm"># Code           7.4T   16.4T  54.6  2.22×</span>
+<span class="cm"># STEM           2.2T    4.7T  15.8  2.17×</span>
+<span class="cm"># Math           0.3T    1.6T   5.4  5.28×</span>
+<span class="cm"># Books/Journals 0.6T    0.9T   3.1  1.65×</span>
+<span class="cm"># Web PDFs       2.7T    1.4T   4.7  0.53×</span>
+<span class="cm"># Web text       8.1T    4.5T  14.9  0.55×</span>
+<span class="cm"># Multilingual   8.1T    0.5T   1.6  0.06×</span>
+<span class="cm"># ─────────────────────────────────────────</span>
+<span class="cm"># Total         29.2T   30.0T  100%  1.03×</span>
+
+<span class="cm"># ====== 数据原则 ======</span>
+<span class="cm"># 1. 零 AI 生成数据</span>
+<span class="cm">#    主动检测并移除 AI 生成内容</span>
+<span class="cm">#    不使用任何 LLM-generated 合成数据</span>
+<span class="cm">#</span>
+<span class="cm"># 2. 零开源训练集</span>
+<span class="cm">#    不用 HuggingFace datasets</span>
+<span class="cm">#    排除 huggingface.co 等 ML 站点</span>
+<span class="cm">#</span>
+<span class="cm"># 3. 全 in-house pipeline</span>
+<span class="cm">#    自研爬虫 (遵循 robots.txt)</span>
+<span class="cm">#    HTML/PDF extraction</span>
+<span class="cm">#    3 层去重: exact + fuzzy + semantic</span>
+<span class="cm">#</span>
+<span class="cm"># 4. 评估数据去污染</span>
+<span class="cm">#    从训练数据中排除公共 benchmark</span>
+<span class="cm">#    自建内部评估集 (vendor + internal)</span>
+
+<span class="cm"># ====== Knowledge Cutoff ======</span>
+<span class="cm"># Web HTML:       2025-09</span>
+<span class="cm"># Web PDFs:       2025-12</span>
+<span class="cm"># Public GitHub:  2025-06</span>
+<span class="cm"># Books/Journals: 2026-03</span>
+
+<span class="cm"># ====== Mid-training 偏移 ======</span>
+<span class="cm"># STEM/Math: 15.8% → 35%</span>
+<span class="cm"># Code: 54.6% → 55% (不变)</span>
+<span class="cm"># Background: 剩余 10%</span>
+<span class="cm"># 目的: 为 RL 爬坡建立强推理基础</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 430" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">数据 Pipeline 与混合比例优化</text>
+
+  <!-- Data composition pie-like -->
+  <rect x="15" y="30" width="390" height="100" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="46" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">预训练数据组成 (30T tokens)</text>
+
+  <!-- Bar chart -->
+  <rect x="30" y="55" width="218" height="14" rx="2" fill="#4facfe"/>
+  <text x="140" y="65" text-anchor="middle" fill="#fff" font-size="6">Code 54.6%</text>
+
+  <rect x="30" y="73" width="63" height="14" rx="2" fill="#38d9a9"/>
+  <text x="61" y="83" text-anchor="middle" fill="#fff" font-size="6">STEM 15.8%</text>
+
+  <rect x="95" y="73" width="60" height="14" rx="2" fill="#667eea"/>
+  <text x="125" y="83" text-anchor="middle" fill="#fff" font-size="6">Web 14.9%</text>
+
+  <rect x="30" y="91" width="22" height="14" rx="2" fill="#f7971e"/>
+  <text x="41" y="101" text-anchor="middle" fill="#fff" font-size="5.5">Math 5%</text>
+
+  <rect x="54" y="91" width="19" height="14" rx="2" fill="#c678dd"/>
+  <text x="63" y="101" text-anchor="middle" fill="#fff" font-size="5.5">PDF 5%</text>
+
+  <rect x="75" y="91" width="13" height="14" rx="2" fill="#ff6b6b"/>
+  <text x="81" y="101" text-anchor="middle" fill="#fff" font-size="4.5">3%</text>
+
+  <text x="30" y="122" fill="#888" font-size="6.5">Math epoch 最高 (5.28×) = 高价值小数据集重复利用 | Web 只用 0.55× = 去重后富余</text>
+
+  <!-- Data pipeline -->
+  <rect x="15" y="138" width="390" height="90" rx="8" fill="#38d9a908" stroke="#38d9a944"/>
+  <text x="210" y="154" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">数据处理 Pipeline</text>
+
+  <rect x="25" y="162" width="70" height="22" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="60" y="176" text-anchor="middle" fill="#38d9a9" font-size="6">Raw Source</text>
+
+  <text x="100" y="176" fill="#888" font-size="8">→</text>
+
+  <rect x="107" y="162" width="70" height="22" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="142" y="176" text-anchor="middle" fill="#38d9a9" font-size="6">Extraction</text>
+
+  <text x="182" y="176" fill="#888" font-size="8">→</text>
+
+  <rect x="189" y="162" width="60" height="22" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="219" y="176" text-anchor="middle" fill="#38d9a9" font-size="6">Dedup ×3</text>
+
+  <text x="254" y="176" fill="#888" font-size="8">→</text>
+
+  <rect x="261" y="162" width="60" height="22" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="291" y="176" text-anchor="middle" fill="#38d9a9" font-size="6">Filter</text>
+
+  <text x="326" y="176" fill="#888" font-size="8">→</text>
+
+  <rect x="333" y="162" width="60" height="22" rx="3" fill="#1e1e2e" stroke="#38d9a944"/>
+  <text x="363" y="176" text-anchor="middle" fill="#38d9a9" font-size="6">Categorize</text>
+
+  <text x="30" y="200" fill="#888" font-size="6.5">Dedup 3层: Exact (hash) → Fuzzy (MinHash) → Semantic (Qwen3-Embedding-0.6B clustering)</text>
+  <text x="30" y="214" fill="#888" font-size="6.5">Cross-dataset dedup: 全局 drop-order, 优先保留高排名数据集中的副本</text>
+
+  <!-- Rank non-invariance discovery -->
+  <rect x="15" y="236" width="390" height="95" rx="8" fill="#ff6b6b08" stroke="#ff6b6b44"/>
+  <text x="210" y="252" text-anchor="middle" fill="#ff6b6b" font-size="8" font-weight="bold">关键发现: Rank Non-invariance</text>
+
+  <text x="30" y="272" fill="#a8a8be" font-size="7">实验: stem-heavy-mix vs code-heavy-mix, 在 5B 和 23B 模型上跑 20T tokens</text>
+  <text x="30" y="290" fill="#4facfe" font-size="7">5B 模型: stem-heavy wins (STEM 数据直接帮助小模型)</text>
+  <text x="30" y="305" fill="#ff6b6b" font-size="7">23B 模型: code-heavy wins (STEM 数据多样性不足, 大模型需要更多 diversity)</text>
+  <text x="30" y="322" fill="#38d9a9" font-size="7" font-weight="bold">结论: 必须在目标规模验证数据配比, 小规模实验不可信!</text>
+
+  <!-- STEM RL data pipeline -->
+  <rect x="15" y="340" width="390" height="80" rx="8" fill="#4facfe08" stroke="#4facfe44"/>
+  <text x="210" y="356" text-anchor="middle" fill="#4facfe" font-size="8" font-weight="bold">STEM RL 数据 Pipeline (教科书→QA)</text>
+
+  <text x="30" y="375" fill="#a8a8be" font-size="7">Phase 1: OCR → 层次结构解析 → Q/A 提取</text>
+  <text x="30" y="390" fill="#a8a8be" font-size="7">Phase 2: 标注 (taxonomy, PII, answer leakage) → MCQ/Proof 转 open-ended (3× consensus)</text>
+  <text x="30" y="405" fill="#a8a8be" font-size="7">Phase 3: Pass@k 评分 (4 个 solver tier) → 难度分级 → 过滤错误 ground truth</text>
+  <text x="30" y="417" fill="#888" font-size="6.5">数学 58.5% | 物理 13.2% | 化学 10.9% | 其他工程/CS/生物 &lt; 5% each</text>
+</svg>
+<p class="caption">数据设计: 全 in-house pipeline + Scaling-based 混合优化 + Rank Non-invariance 核心发现</p>
+</div>
+
+<div class="col-caption">
+<h3>数据设计哲学</h3>
+
+<p><strong>为什么不用合成数据？</strong></p>
+<p>"Capabilities should be learned, not inherited." 合成数据 = 蒸馏另一个模型的能力分布。MAI 认为这限制了模型的上界（只能模仿，不能超越数据源模型）。</p>
+
+<p><strong>为什么 Code 占 55%？</strong></p>
+<p>Rank non-invariance 实验表明：在大规模+长训练下，Code 数据因其高多样性（不同语言/框架/范式）对所有能力都有正迁移。包括 STEM 推理能力。</p>
+
+<p><strong>数据混合优化方法：</strong></p>
+<p>1. 定义目标函数：加权 NLL (Code 50% + STEM 17.5% + Math 17.5% + General 10% + Multi 5%)</p>
+<p>2. 训练 183 个小模型在 61 种混合比例上</p>
+<p>3. 找 Pareto frontier</p>
+<p>4. 在目标规模验证 (rank 可能翻转!)</p>
+<p>5. Cap 最大 epoch 为 8 (防过拟合)</p>
+
+<div class="key-point"><strong>Memorization-aware Epoch Capping：</strong>Mid-training 时，对预训练已高度记忆的数据源限制 epoch。检测方式：验证损失下降中"NLL&lt;0.01 的 token 占比"高 = 记忆而非泛化。</div>
+
+<h3>评估去污染</h3>
+<p>公共 benchmark (MMLU, HumanEval 等) 在 GitHub 上被大量复制。MAI 的做法：</p>
+<p>• 从训练数据中排除所有 ML repos</p>
+<p>• 自建内部 NLL 评估集 (vendor + internal)</p>
+<p>• 不在预训练阶段使用 accuracy-based eval</p>
+<p>• NLL eval 更高效、更不受 confounding 影响</p>
+
+<div class="key-point"><strong>Wikipedia 的特殊处理：</strong>直接训练 raw wikitext (而非解析后的纯文本)。虽然 wikitext 体积大 3×，但保留了 infobox、markup 等结构信息，实测效果更好。对高价值小数据源"宁多勿少"。</div>
+</div>
+</div>
+
+<!-- ===== 6. Core Value ===== -->
+<h2>6. 核心价值与启示</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 对行业的启示 ======</span>
+
+<span class="cm"># 1. 蒸馏 vs 从头训练</span>
+<span class="cm">#    蒸馏: 快但不可持续</span>
+<span class="cm">#    从头: 慢但可持续爬坡</span>
+<span class="cm">#    MAI 选择: 100% 从头</span>
+<span class="cm">#    原因: 蒸馏的能力缺乏可控性</span>
+<span class="cm">#          不能支撑长期 log-linear climb</span>
+
+<span class="cm"># 2. Scaling 的正确方式</span>
+<span class="cm">#    不是"train bigger model"</span>
+<span class="cm">#    而是"build better machine"</span>
+<span class="cm">#    机器 = 数据pipeline + RL recipe +</span>
+<span class="cm">#           infra + eval 的闭环系统</span>
+
+<span class="cm"># 3. 透明度的价值</span>
+<span class="cm">#    109 页完整报告</span>
+<span class="cm">#    公开失败经验 (rank non-invariance)</span>
+<span class="cm">#    公开 scaling law 细节</span>
+<span class="cm">#    这本身就是对行业的贡献</span>
+
+<span class="cm"># 4. 工程 = 研究</span>
+<span class="cm">#    Bitwise 确定性 → 科学实验可复现</span>
+<span class="cm">#    Scaling ladder → 每个决策有证据</span>
+<span class="cm">#    EG 指标 → 量化架构优劣</span>
+<span class="cm">#    这不是"工程优化"</span>
+<span class="cm">#    这是"AI 研究的科学方法"</span>
+
+<span class="cm"># 5. 35B active 的战略选择</span>
+<span class="cm">#    不做 400B active 超大模型</span>
+<span class="cm">#    而是做 35B active MoE</span>
+<span class="cm">#    推理成本低 → 可大规模部署</span>
+<span class="cm">#    RL 训练快 → 可快速迭代</span>
+<span class="cm">#    → "climbing machine" 而非</span>
+<span class="cm">#       "one-shot big model"</span></pre>
+</div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">核心价值: 不是模型，是机器</text>
+
+  <!-- Traditional approach -->
+  <rect x="15" y="35" width="185" height="110" rx="8" fill="#ff6b6b08" stroke="#ff6b6b44"/>
+  <text x="107" y="52" text-anchor="middle" fill="#ff6b6b" font-size="8" font-weight="bold">传统路线 (One-shot)</text>
+  <text x="25" y="72" fill="#888" font-size="7">• Train biggest model possible</text>
+  <text x="25" y="87" fill="#888" font-size="7">• Distill from strongest teacher</text>
+  <text x="25" y="102" fill="#888" font-size="7">• Optimize single checkpoint</text>
+  <text x="25" y="117" fill="#888" font-size="7">• Hope for emergent abilities</text>
+  <text x="107" y="138" text-anchor="middle" fill="#ff6b6b" font-size="6.5">结果: 一锤子买卖, 不可复制</text>
+
+  <!-- MAI approach -->
+  <rect x="220" y="35" width="185" height="110" rx="8" fill="#0078d408" stroke="#0078d4" stroke-width="1.5"/>
+  <text x="312" y="52" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">MAI 路线 (Machine)</text>
+  <text x="230" y="72" fill="#888" font-size="7">• Build scalable pipeline</text>
+  <text x="230" y="87" fill="#888" font-size="7">• Learn from scratch (no distill)</text>
+  <text x="230" y="102" fill="#888" font-size="7">• Sustain log-linear RL climb</text>
+  <text x="230" y="117" fill="#888" font-size="7">• Self-distill → iterate → repeat</text>
+  <text x="312" y="138" text-anchor="middle" fill="#0078d4" font-size="6.5">结果: 可持续改进的系统</text>
+
+  <!-- Comparison -->
+  <rect x="15" y="155" width="390" height="70" rx="8" fill="#11111a" stroke="#1e1e30"/>
+  <text x="210" y="172" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">与其他 Reasoning Model 的定位差异</text>
+
+  <text x="30" y="192" fill="#888" font-size="7">DeepSeek-R1: GRPO + 蒸馏到小模型 → 追求成本效率</text>
+  <text x="30" y="207" fill="#888" font-size="7">OpenAI o-series: 闭源, 未公开方法细节</text>
+  <text x="30" y="222" fill="#0078d4" font-size="7" font-weight="bold">MAI-Thinking-1: 从头训练 + 方法论完整公开 → 追求可复现的科学</text>
+
+  <!-- Future direction -->
+  <rect x="15" y="235" width="390" height="95" rx="8" fill="#0078d408" stroke="#0078d433"/>
+  <text x="210" y="253" text-anchor="middle" fill="#0078d4" font-size="8" font-weight="bold">论文结语: "A starting point, not a destination"</text>
+  <text x="30" y="273" fill="#a8a8be" font-size="7">• 扩展到更多模态 (vision, audio)</text>
+  <text x="30" y="288" fill="#a8a8be" font-size="7">• 更大规模 (更多参数, 更多 experts)</text>
+  <text x="30" y="303" fill="#a8a8be" font-size="7">• 更精细的能力 (更好的 tool use, 更长 context)</text>
+  <text x="30" y="318" fill="#a8a8be" font-size="7">• Hill-climbing machine 的每个组件都可独立改进 → 组合爆发</text>
+</svg>
+<p class="caption">MAI-Thinking-1 的核心贡献不是一个模型，而是一套能持续产出更强模型的方法论</p>
+</div>
+
+<div class="col-caption">
+<h3>对我们的启示</h3>
+
+<p><strong>1. RL 爬坡是可预测的</strong></p>
+<p>给定足够的 compute 和稳定的 recipe，RL 性能呈 log-linear 增长。这意味着：更多 GPU 时间 = 更好的模型，且增长是可预测的。这使得模型开发变得像<strong>工程问题</strong>而非<strong>碰运气</strong>。</p>
+
+<p><strong>2. 从头训练不是浪费</strong></p>
+<p>虽然比蒸馏慢很多，但获得的是完全可控的能力。蒸馏的模型在 RL 爬坡中不稳定（缺乏可控性），MAI 的实验验证了这一点。</p>
+
+<p><strong>3. 简单工具 > 复杂工具</strong></p>
+<p>Agentic Climb 只给 bash + string_replace。RL 自己探索出复杂组合。如果给太多工具，搜索空间反而变小（每个工具都是 "提前给定的答案"）。</p>
+
+<div class="key-point"><strong>最大贡献：</strong>这是目前公开的最详尽的推理模型技术报告 (109 页)。完整涵盖架构搜索、数据 pipeline、scaling law、RL recipe、集群部署、失败经验。对整个行业的价值超过模型本身。</div>
+
+<h3>Benchmark 总结</h3>
+<table>
+<tr><th>Benchmark</th><th>MAI</th><th>Sonnet 4.6</th><th>Opus 4.6</th></tr>
+<tr><td>AIME 2025</td><td><strong>97.0</strong></td><td>95.6</td><td>99.8</td></tr>
+<tr><td>AIME 2026</td><td>94.5</td><td>-</td><td>-</td></tr>
+<tr><td>LCB v6</td><td>87.7</td><td>-</td><td>-</td></tr>
+<tr><td>SWE-Bench V</td><td>73.5</td><td>79.6</td><td>80.8</td></tr>
+<tr><td>SWE-Bench Pro</td><td>52.8</td><td>-</td><td>53.4</td></tr>
+<tr><td>GPQA Diamond</td><td>84.2</td><td>89.9</td><td>91.3</td></tr>
+<tr><td>Terminal-Bench</td><td>46.0</td><td>59.1</td><td>65.4</td></tr>
+</table>
 </div>
 </div>
 
 <div class="related-notes">
 <h3>📎 相关笔记</h3>
-<a href="rope_yarn_explained.html" onclick="if(parent.loadPage)parent.loadPage('rope_yarn_explained.html');return false;">RoPE & YaRN</a>
+<a href="rope_yarn_explained.html" onclick="if(parent.loadPage)parent.loadPage('rope_yarn_explained.html');return false;">RoPE & YaRN (位置编码)</a>
 <a href="muse_spark.html" onclick="if(parent.loadPage)parent.loadPage('muse_spark.html');return false;">Muse Spark (Meta MSL)</a>
+<a href="deepseek_v3.html" onclick="if(parent.loadPage)parent.loadPage('deepseek_v3.html');return false;">DeepSeek V3 (对比参考)</a>
 </div>
 
-<footer>Generated 2026.06.04 | MAI-Thinking-1: Building a Hill-Climbing Machine (Microsoft AI, 2025)</footer>
+<footer>Generated 2026.06.04 | MAI-Thinking-1: Building a Hill-Climbing Machine | Microsoft AI, June 2025 (109pp technical report)</footer>
 </div>
 </body>
 </html>
