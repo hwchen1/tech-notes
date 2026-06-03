@@ -23,7 +23,9 @@
             width: 48px; min-width: 48px;
         }
         .sidebar.collapsed .sidebar-content,
-        .sidebar.collapsed .sidebar-header h2 { display: none; }
+        .sidebar.collapsed .sidebar-header h2,
+        .sidebar.collapsed .sidebar-header .toggle-btn:not([onclick*="toggleSidebar"]) { display: none; }
+        .sidebar.collapsed .sidebar-header { justify-content: center; padding: 20px 4px 12px; }
         .sidebar.collapsed .toggle-btn { transform: rotate(180deg); }
 
         .sidebar-header {
