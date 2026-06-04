@@ -547,6 +547,7 @@ function loadLayout() {
 
 function saveLayout(layout) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    localStorage.setItem(STORAGE_KEY + '-ver', String(LAYOUT_VERSION));
 }
 
 function resetLayout() {
