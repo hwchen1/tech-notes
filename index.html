@@ -375,6 +375,7 @@ const DEFAULT_LAYOUT = [
             { page: 'qwen3_lm.html', label: 'Qwen3-235B-A22B 架构', color: '#00f2fe' },
             { page: 'step37_flash.html', label: 'Step 3.7 Flash (196B)', color: '#38bdf8' },
             { page: 'ernie45_vl.html', label: 'ERNIE 4.5 VL (28B-A3B)', color: '#2932e1' },
+            { page: 'gemma4_12b.html', label: 'Gemma 4 12B (Encoder-Free)', color: '#4285f4' },
         ]
     },
     {
@@ -804,6 +805,7 @@ function renderWelcomeCards(layout) {
         'llava.html': '经典 CLIP ViT + MLP Projector, 两阶段训练, AnyRes',
         'vlm_agent_future.html': 'VLM × Code Agent 未来发展方向',
         'mai_thinking.html': 'Microsoft AI 推理模型 — 34.7B/962B MoE + Hill-Climbing RL + NoPE Global Attention, 从头训练无蒸馏',
+        'gemma4_12b.html': 'Google DeepMind Encoder-Free 统一多模态 — 12B Dense, 256K Context, PLE + Shared KV, Apache 2.0',
         'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
         'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
         'vit_clip.html': 'OpenAI 对比学习 dual encoder, ViT-B/L/H, InfoNCE loss',
@@ -838,6 +840,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'gemma4_12b.html',
         'mai_thinking.html',
         'muse_spark.html',
         'conv2d_vs_linear.html',
