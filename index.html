@@ -349,7 +349,7 @@
 
 <script>
 const STORAGE_KEY = 'ai-notes-layout';
-const LAYOUT_VERSION = 11;
+const LAYOUT_VERSION = 12;
 let currentPage = null;
 
 const DEFAULT_LAYOUT = [
@@ -508,9 +508,11 @@ function loadLayout() {
                     section.items = section.items.filter(i => pageToSection[i.page] === section.id || !pageToSection[i.page]);
                     if (section.items.length !== before) {
                         changed = true;
-                        // Reset renderOrder since indices changed
                         delete section.renderOrder;
                     }
+                    // Sync section title/icon from DEFAULT_LAYOUT
+                    const defSec = DEFAULT_LAYOUT.find(s => s.id === section.id);
+                    if (defSec) { section.title = defSec.title; section.icon = defSec.icon; }
                 });
                 // Re-sort sections to match DEFAULT_LAYOUT order
                 parsed.sort((a, b) => {
