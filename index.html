@@ -245,7 +245,6 @@
     <div class="sidebar-header">
         <h2>AI Notes</h2>
         <button class="toggle-btn" style="margin-left:auto;font-size:1.1em;padding:4px 8px;" onclick="showCreateDirModal()" title="新建目录">＋</button>
-        <button class="toggle-btn" style="font-size:0.9em;padding:4px 8px;" onclick="syncLayoutToGitHub()" title="同步布局到 GitHub">⬆</button>
         <button class="toggle-btn" onclick="toggleSidebar()" title="折叠">◀</button>
     </div>
     <div class="sidebar-content" id="sidebar-content">
@@ -355,129 +354,547 @@ let currentPage = null;
 
 const DEFAULT_LAYOUT = [
     {
-        id: 'insights', icon: '💡', title: '行业洞察', open: true,
-        items: [
-            { page: 'mai_thinking.html', label: 'MAI-Thinking-1 (Microsoft)', color: '#0078d4' },
-            { page: 'muse_spark.html', label: 'Muse Spark (Meta MSL)', color: '#39c0ed' },
-            { page: 'vlm_agent_future.html', label: 'VLM × Code Agent 未来', color: '#f093fb' },
-            { page: 'ai_cluster_mindmap.html', label: 'AI集群产业链全景', color: '#6366f1' },
+        "id": "insights",
+        "icon": "💡",
+        "title": "行业洞察",
+        "open": false,
+        "items": [
+            {
+                "page": "vlm_agent_future.html",
+                "label": "VLM × Code Agent 未来",
+                "color": "#f093fb"
+            },
+            {
+                "page": "ai_cluster_mindmap.html",
+                "label": "AI集群产业链全景",
+                "color": "#6366f1"
+            },
+            {
+                "page": "muse_spark.html",
+                "label": "Muse Spark (Meta MSL)",
+                "color": "#0668E1"
+            },
+            {
+                "page": "mai_thinking.html",
+                "label": "MAI-Thinking-1",
+                "color": "#0668E1"
+            }
         ]
     },
     {
-        id: 'distributed', icon: '⚡', title: '分布式训练', open: true,
-        items: [
-            { page: 'megatron_bridge_training_pipeline.html', label: 'CP / EP / SP 与通信模式', color: '#4d96ff' },
+        "id": "distributed",
+        "icon": "⚡",
+        "title": "分布式训练",
+        "open": false,
+        "items": [
+            {
+                "page": "megatron_bridge_training_pipeline.html",
+                "label": "CP / EP / SP 与通信模式",
+                "color": "#4d96ff"
+            }
         ]
     },
     {
-        id: 'longtext', icon: '📜', title: 'Long Text 系列', open: true,
-        items: [
-            { page: 'lt_synthetic_data.html', label: '长文本合成数据方法全景', color: '#f7971e' },
+        "id": "longtext",
+        "icon": "📜",
+        "title": "Long Text 系列",
+        "open": false,
+        "items": [
+            {
+                "page": "lt_synthetic_data.html",
+                "label": "长文本合成数据方法全景",
+                "color": "#f7971e"
+            }
         ]
     },
     {
-        id: 'lm-arch', icon: '🏗️', title: 'LM 架构', open: true,
-        items: [
-            { page: 'deepseek_v3.html', label: 'DeepSeek-V3 架构', color: '#764ba2' },
-            { page: 'qwen3_lm.html', label: 'Qwen3-235B-A22B 架构', color: '#00f2fe' },
-            { page: 'step37_flash.html', label: 'Step 3.7 Flash (196B)', color: '#38bdf8' },
-            { page: 'ernie45_vl.html', label: 'ERNIE 4.5 VL (28B-A3B)', color: '#2932e1' },
-            { page: 'gemma4_12b.html', label: 'Gemma 4 12B (Encoder-Free)', color: '#4285f4' },
+        "id": "lm-arch",
+        "icon": "🏗️",
+        "title": "LM 架构",
+        "open": false,
+        "items": [
+            {
+                "page": "deepseek_v3.html",
+                "label": "DeepSeek-V3 架构",
+                "color": "#764ba2"
+            },
+            {
+                "page": "qwen3_lm.html",
+                "label": "Qwen3-235B-A22B 架构",
+                "color": "#00f2fe"
+            },
+            {
+                "page": "step37_flash.html",
+                "label": "Step 3.7 Flash (196B)",
+                "color": "#38bdf8"
+            },
+            {
+                "page": "ernie45_vl.html",
+                "label": "ERNIE 4.5 VL (28B-A3B)",
+                "color": "#2932e1"
+            },
+            {
+                "page": "gemma4_12b.html",
+                "label": "Gemma 4 12B (Encoder-Free)",
+                "color": "#4285f4"
+            }
         ]
     },
     {
-        id: 'architecture', icon: '🧠', title: '模型架构', open: true,
-        items: [
-            { page: 'activation_functions.html', label: '激活函数对比', color: '#98c379' },
-            { page: 'attention_moe_rope.html', label: 'Attention / MoE / RoPE', color: '#ff6b6b' },
-            { page: 'flash_attention.html', label: 'Flash Attention V1→V3', color: '#4facfe' },
-            { page: 'normalization.html', label: 'Normalization 设计', color: '#e599f7' },
-            { page: 'lora.html', label: 'LoRA 低秩微调', color: '#ffd43b' },
-            { page: 'sparse_attention.html', label: 'Sparse Attention', color: '#06b6d4' },
-            { page: 'multi_token_prediction.html', label: 'Multi-Token Prediction', color: '#ff6b6b' },
-            { page: 'kv_cache.html', label: 'KV Cache 深度解析', color: '#ff6b6b' },
-            { page: 'rope_yarn_explained.html', label: 'RoPE & YaRN 位置编码', color: '#a78bfa' },
+        "id": "architecture",
+        "icon": "🧠",
+        "title": "模型架构",
+        "open": false,
+        "items": [
+            {
+                "page": "activation_functions.html",
+                "label": "激活函数对比",
+                "color": "#98c379"
+            },
+            {
+                "page": "flash_attention.html",
+                "label": "Flash Attention V1→V3",
+                "color": "#4facfe"
+            },
+            {
+                "page": "attention_moe_rope.html",
+                "label": "Attention / MoE / RoPE",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "kv_cache.html",
+                "label": "KV Cache 深度解析",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "sparse_attention.html",
+                "label": "Sparse Attention",
+                "color": "#06b6d4"
+            },
+            {
+                "page": "normalization.html",
+                "label": "Normalization 设计",
+                "color": "#e599f7"
+            },
+            {
+                "page": "rope_yarn_explained.html",
+                "label": "RoPE & YaRN 位置编码",
+                "color": "#a78bfa"
+            },
+            {
+                "page": "multi_token_prediction.html",
+                "label": "Multi-Token Prediction",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "lora.html",
+                "label": "LoRA 低秩微调",
+                "color": "#ffd43b"
+            }
         ]
     },
     {
-        id: 'linear-attn', icon: '🔁', title: 'Linear Attention 系列', open: true,
-        items: [
-            { page: 'linear_attention.html', label: 'Linear Attention 综述', color: '#38d9a9' },
-            { page: 'la_ssm.html', label: 'SSM 基础', color: '#4ecdc4' },
-            { page: 'infini_attention.html', label: 'Infini-attention', color: '#f7971e' },
-            { page: 'la_gla.html', label: 'GLA', color: '#e599f7' },
-            { page: 'la_mamba.html', label: 'Mamba (S6)', color: '#4facfe' },
-            { page: 'la_mamba3.html', label: 'Mamba-3', color: '#4facfe' },
-            { page: 'la_rwkv.html', label: 'RWKV', color: '#f7971e' },
-            { page: 'la_deltanet.html', label: 'DeltaNet', color: '#ff6b6b' },
-            { page: 'la_gated_deltanet.html', label: 'Gated DeltaNet', color: '#38d9a9' },
-            { page: 'la_kimi_linear.html', label: 'Kimi Linear (KDA)', color: '#f7971e' },
-            { page: 'la_gated_deltanet2.html', label: 'Gated DeltaNet-2', color: '#22b8cf' },
-            { page: 'la_mdn.html', label: 'MDN (Momentum DeltaNet)', color: '#c678dd' },
-            { page: 'la_m2rnn.html', label: 'M²RNN', color: '#e06c75' },
-            { page: 'la_titans.html', label: 'Titans (Google)', color: '#667eea' },
-            { page: 'la_atlas.html', label: 'ATLAS (Titans v2)', color: '#845ef7' },
-            { page: 'la_miras.html', label: 'Miras (统一框架)', color: '#a78bfa' },
-            { page: 'la_tnt.html', label: 'TNT (17x 训练加速)', color: '#f06595' },
-            { page: 'la_trellis.html', label: 'Trellis (KV Cache 压缩)', color: '#20c997' },
-            { page: 'la_memory_caching.html', label: 'Memory Caching (Growing Memory)', color: '#fab005' },
-            { page: 'la_fox.html', label: 'FoX (Forgetting Transformer)', color: '#fcc419' },
-            { page: 'la_griffin.html', label: 'Griffin', color: '#06b6d4' },
-            { page: 'la_hymba.html', label: 'Hymba (NVIDIA)', color: '#76b900' },
-            { page: 'la_recurrent_gemma.html', label: 'RecurrentGemma', color: '#ffa94d' },
+        "id": "linear-attn",
+        "icon": "🔁",
+        "title": "Linear Attention",
+        "open": true,
+        "items": [
+            {
+                "page": "la_rwkv.html",
+                "label": "RWKV",
+                "color": "#f7971e"
+            },
+            {
+                "page": "linear_attention.html",
+                "label": "Linear Attention 综述",
+                "color": "#38d9a9"
+            },
+            {
+                "page": "la_ssm.html",
+                "label": "SSM 基础",
+                "color": "#4ecdc4"
+            },
+            {
+                "page": "la_gla.html",
+                "label": "GLA",
+                "color": "#e599f7"
+            },
+            {
+                "page": "la_deltanet.html",
+                "label": "DeltaNet",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "la_gated_deltanet.html",
+                "label": "Gated DeltaNet",
+                "color": "#38d9a9"
+            },
+            {
+                "page": "la_kimi_linear.html",
+                "label": "Kimi Linear (KDA)",
+                "color": "#f7971e"
+            },
+            {
+                "page": "la_gated_deltanet2.html",
+                "label": "Gated DeltaNet-2",
+                "color": "#22b8cf"
+            },
+            {
+                "page": "la_mdn.html",
+                "label": "MDN (Momentum DeltaNet)",
+                "color": "#c678dd"
+            },
+            {
+                "page": "la_m2rnn.html",
+                "label": "M²RNN",
+                "color": "#e06c75"
+            }
+        ],
+        "children": [
+            {
+                "id": "custom-1780452300020",
+                "icon": "🅖",
+                "title": "Griffin",
+                "open": false,
+                "items": [
+                    {
+                        "page": "la_griffin.html",
+                        "label": "Griffin",
+                        "color": "#06b6d4"
+                    },
+                    {
+                        "page": "la_recurrent_gemma.html",
+                        "label": "RecurrentGemma",
+                        "color": "#ffa94d"
+                    },
+                    {
+                        "page": "la_hymba.html",
+                        "label": "Hymba (NVIDIA)",
+                        "color": "#76b900"
+                    }
+                ],
+                "children": [],
+                "renderOrder": [
+                    "i0",
+                    "i1",
+                    "i2"
+                ]
+            },
+            {
+                "id": "custom-1780452535384",
+                "icon": "🅕",
+                "title": "Forget",
+                "open": false,
+                "items": [
+                    {
+                        "page": "la_fox.html",
+                        "label": "FoX (Forgetting Transformer)",
+                        "color": "#fcc419"
+                    }
+                ],
+                "children": [],
+                "renderOrder": [
+                    "i0"
+                ]
+            },
+            {
+                "id": "custom-1780452592741",
+                "icon": "🅣",
+                "title": "Titans",
+                "open": true,
+                "items": [
+                    {
+                        "page": "la_titans.html",
+                        "label": "Titans (Google)",
+                        "color": "#667eea"
+                    },
+                    {
+                        "page": "la_miras.html",
+                        "label": "Miras (统一框架)",
+                        "color": "#a78bfa"
+                    },
+                    {
+                        "page": "la_atlas.html",
+                        "label": "ATLAS (Titans v2)",
+                        "color": "#845ef7"
+                    },
+                    {
+                        "page": "la_trellis.html",
+                        "label": "Trellis (KV Cache 压缩)",
+                        "color": "#20c997"
+                    },
+                    {
+                        "page": "la_tnt.html",
+                        "label": "TNT (17x 训练加速)",
+                        "color": "#f06595"
+                    },
+                    {
+                        "page": "la_memory_caching.html",
+                        "label": "Memory Caching (Growing Memory)",
+                        "color": "#fab005"
+                    },
+                    {
+                        "page": "infini_attention.html",
+                        "label": "Infini-attention",
+                        "color": "#f7971e"
+                    }
+                ],
+                "children": [],
+                "renderOrder": [
+                    "i0",
+                    "i1",
+                    "i2",
+                    "i3",
+                    "i4",
+                    "i5",
+                    "i6"
+                ]
+            },
+            {
+                "id": "custom-1780451694942",
+                "icon": "🅜",
+                "title": "Mamba",
+                "open": false,
+                "items": [
+                    {
+                        "page": "la_mamba.html",
+                        "label": "Mamba (S6)",
+                        "color": "#4facfe"
+                    },
+                    {
+                        "page": "la_mamba3.html",
+                        "label": "Mamba-3",
+                        "color": "#4facfe"
+                    }
+                ],
+                "children": [],
+                "renderOrder": [
+                    "i0",
+                    "i1"
+                ]
+            }
+        ],
+        "renderOrder": [
+            "i1",
+            "i2",
+            "i0",
+            "i3",
+            "i4",
+            "i5",
+            "i6",
+            "i7",
+            "i8",
+            "i9",
+            "c2",
+            "c0",
+            "c3",
+            "c1"
         ]
     },
     {
-        id: 'vlm', icon: '👁️', title: 'VLM 架构', open: true,
-        items: [
-            { page: 'llava.html', label: 'LLaVA', color: '#e599f7' },
-            { page: 'qwen25_vl.html', label: 'Qwen2.5-VL', color: '#ffa94d' },
-            { page: 'qwen3_vl.html', label: 'Qwen3-VL', color: '#38d9a9' },
-            { page: 'qwen35_vl.html', label: 'Qwen3.5-VL', color: '#4facfe' },
-            { page: 'gemma4_vl.html', label: 'Gemma4-VL', color: '#667eea' },
-            { page: 'glm45v.html', label: 'GLM-4.5V', color: '#6bcb77' },
-            { page: 'kimi_k25_vl.html', label: 'Kimi-K2.5-VL', color: '#f5576c' },
-            { page: 'nemotron_nano_vl.html', label: 'Nemotron-Nano-12B-v2-VL', color: '#76b900' },
-            { page: 'qformer.html', label: 'Q-Former (BLIP-2)', color: '#f7971e' },
+        "id": "vlm",
+        "icon": "👁️",
+        "title": "VLM 架构",
+        "open": false,
+        "items": [
+            {
+                "page": "llava.html",
+                "label": "LLaVA",
+                "color": "#e599f7"
+            },
+            {
+                "page": "qwen25_vl.html",
+                "label": "Qwen2.5-VL",
+                "color": "#ffa94d"
+            },
+            {
+                "page": "qwen3_vl.html",
+                "label": "Qwen3-VL",
+                "color": "#38d9a9"
+            },
+            {
+                "page": "qwen35_vl.html",
+                "label": "Qwen3.5-VL",
+                "color": "#4facfe"
+            },
+            {
+                "page": "gemma4_vl.html",
+                "label": "Gemma4-VL",
+                "color": "#667eea"
+            },
+            {
+                "page": "glm45v.html",
+                "label": "GLM-4.5V",
+                "color": "#6bcb77"
+            },
+            {
+                "page": "kimi_k25_vl.html",
+                "label": "Kimi-K2.5-VL",
+                "color": "#f5576c"
+            },
+            {
+                "page": "nemotron_nano_vl.html",
+                "label": "Nemotron-Nano-12B-v2-VL",
+                "color": "#76b900"
+            },
+            {
+                "page": "qformer.html",
+                "label": "Q-Former (BLIP-2)",
+                "color": "#f7971e"
+            }
         ]
     },
     {
-        id: 'vit', icon: '🔬', title: 'ViT 架构', open: true,
-        items: [
-            { page: 'vit_clip.html', label: 'CLIP ViT', color: '#4facfe' },
-            { page: 'vit_siglip.html', label: 'SigLIP', color: '#38d9a9' },
-            { page: 'vit_siglip2.html', label: 'SigLIP2', color: '#00b4d8' },
-            { page: 'vit_radio.html', label: 'RADIO', color: '#f5a623' },
-            { page: 'vit_moonvit3d.html', label: 'MoonViT3d', color: '#c678dd' },
-            { page: 'vit_cogvit.html', label: 'CogViT', color: '#e07766' },
-            { page: 'vit_mae.html', label: 'MAE', color: '#667eea' },
-            { page: 'vit_eva.html', label: 'EVA', color: '#f093fb' },
-            { page: 'vit_dinov2.html', label: 'DINOv2', color: '#00f2fe' },
-            { page: 'vit_sam.html', label: 'SAM ViT', color: '#ff6b6b' },
-            { page: 'cogvit_analysis.html', label: 'CogViT 视觉编码器 (GLM-5V)', color: '#6bcb77' },
-            { page: 'vit_progress_analysis.html', label: 'ViT in VLM 进展分析', color: '#f093fb' },
-            { page: 'vit_techniques_deep_dive.html', label: 'ViT 核心技术详解', color: '#ffa94d' },
-            { page: 'conv2d_vs_linear.html', label: 'Conv2d vs Linear (Patch Embed)', color: '#f093fb' },
+        "id": "vit",
+        "icon": "🔬",
+        "title": "ViT 架构",
+        "open": false,
+        "items": [
+            {
+                "page": "vit_techniques_deep_dive.html",
+                "label": "ViT 核心技术详解",
+                "color": "#ffa94d"
+            },
+            {
+                "page": "vit_progress_analysis.html",
+                "label": "ViT in VLM 进展分析",
+                "color": "#f093fb"
+            },
+            {
+                "page": "vit_clip.html",
+                "label": "CLIP ViT",
+                "color": "#4facfe"
+            },
+            {
+                "page": "vit_siglip.html",
+                "label": "SigLIP",
+                "color": "#38d9a9"
+            },
+            {
+                "page": "vit_radio.html",
+                "label": "RADIO",
+                "color": "#f5a623"
+            },
+            {
+                "page": "vit_moonvit3d.html",
+                "label": "MoonViT3d",
+                "color": "#c678dd"
+            },
+            {
+                "page": "vit_cogvit.html",
+                "label": "CogViT",
+                "color": "#e07766"
+            },
+            {
+                "page": "cogvit_analysis.html",
+                "label": "CogViT 视觉编码器 (GLM-5V)",
+                "color": "#6bcb77"
+            },
+            {
+                "page": "vit_mae.html",
+                "label": "MAE",
+                "color": "#667eea"
+            },
+            {
+                "page": "vit_eva.html",
+                "label": "EVA",
+                "color": "#f093fb"
+            },
+            {
+                "page": "vit_dinov2.html",
+                "label": "DINOv2",
+                "color": "#00f2fe"
+            },
+            {
+                "page": "vit_sam.html",
+                "label": "SAM ViT",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "vit_siglip2.html",
+                "label": "SigLIP2",
+                "color": "#00b4d8"
+            },
+            {
+                "page": "conv2d_vs_linear.html",
+                "label": "Conv2d vs Linear (Patch Embed)",
+                "color": "#f093fb"
+            }
         ]
     },
     {
-        id: 'omni', icon: '🌐', title: 'Omni 多模态', open: true,
-        items: [
-            { page: 'omni_encoder.html', label: 'Omni-Encoder (Hyperbody)', color: '#764ba2' },
-            { page: 'omni_chameleon.html', label: 'Chameleon (Meta)', color: '#f7971e' },
-            { page: 'omni_emu3.html', label: 'Emu3 (智源)', color: '#667eea' },
-            { page: 'omni_janus.html', label: 'Janus (DeepSeek)', color: '#38d9a9' },
-            { page: 'omni_fuyu.html', label: 'Fuyu (Adept)', color: '#ff6b6b' },
-            { page: 'omni_transfusion.html', label: 'Transfusion (Meta)', color: '#4facfe' },
-            { page: 'omni_show_o.html', label: 'Show-o', color: '#f093fb' },
-            { page: 'omni_unified_io2.html', label: 'Unified-IO 2 (AI2)', color: '#00f2fe' },
-            { page: 'omni_minicpm_o.html', label: 'MiniCPM-o (清华)', color: '#e599f7' },
-            { page: 'omni_vita.html', label: 'VITA', color: '#6bcb77' },
-            { page: 'omni_qwen_omni.html', label: 'Qwen2.5-Omni', color: '#ffa94d' },
-            { page: 'omni_mqt.html', label: 'MQT (LLaVA-OneVision)', color: '#a855f7' },
-            { page: 'omni_deepseek_ocr2.html', label: 'DeepSeek-OCR 2', color: '#ff8a00' },
+        "id": "omni",
+        "icon": "🌐",
+        "title": "Omni 多模态",
+        "open": false,
+        "items": [
+            {
+                "page": "omni_encoder.html",
+                "label": "Omni-Encoder (Hyperbody)",
+                "color": "#764ba2"
+            },
+            {
+                "page": "omni_chameleon.html",
+                "label": "Chameleon (Meta)",
+                "color": "#f7971e"
+            },
+            {
+                "page": "omni_emu3.html",
+                "label": "Emu3 (智源)",
+                "color": "#667eea"
+            },
+            {
+                "page": "omni_janus.html",
+                "label": "Janus (DeepSeek)",
+                "color": "#38d9a9"
+            },
+            {
+                "page": "omni_fuyu.html",
+                "label": "Fuyu (Adept)",
+                "color": "#ff6b6b"
+            },
+            {
+                "page": "omni_transfusion.html",
+                "label": "Transfusion (Meta)",
+                "color": "#4facfe"
+            },
+            {
+                "page": "omni_show_o.html",
+                "label": "Show-o",
+                "color": "#f093fb"
+            },
+            {
+                "page": "omni_unified_io2.html",
+                "label": "Unified-IO 2 (AI2)",
+                "color": "#00f2fe"
+            },
+            {
+                "page": "omni_minicpm_o.html",
+                "label": "MiniCPM-o (清华)",
+                "color": "#e599f7"
+            },
+            {
+                "page": "omni_vita.html",
+                "label": "VITA",
+                "color": "#6bcb77"
+            },
+            {
+                "page": "omni_qwen_omni.html",
+                "label": "Qwen2.5-Omni",
+                "color": "#ffa94d"
+            },
+            {
+                "page": "omni_mqt.html",
+                "label": "MQT (LLaVA-OneVision)",
+                "color": "#a855f7"
+            },
+            {
+                "page": "omni_deepseek_ocr2.html",
+                "label": "DeepSeek-OCR 2",
+                "color": "#ff8a00"
+            }
         ]
-    },
+    }
 ];
 
 // --- State Management ---
@@ -550,6 +967,7 @@ function loadLayout() {
 function saveLayout(layout) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
     localStorage.setItem(STORAGE_KEY + '-ver', String(LAYOUT_VERSION));
+    fetch('/api/save-layout', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(layout) }).catch(()=>{});
 }
 
 function resetLayout() {
@@ -558,48 +976,6 @@ function resetLayout() {
     localStorage.removeItem(STORAGE_KEY + '-ver');
     renderSidebar(loadLayout());
     renderWelcomeCards(loadLayout());
-}
-
-// --- GitHub Sync ---
-const GH_REPO = 'hwchen1/tech-notes';
-const GH_FILE = 'layout.json';
-const GH_TOKEN_KEY = 'ai-notes-gh-token';
-
-function getGHToken() {
-    let token = localStorage.getItem(GH_TOKEN_KEY);
-    if (!token) {
-        token = prompt('输入 GitHub Token (只需一次，保存在本地):');
-        if (token) localStorage.setItem(GH_TOKEN_KEY, token);
-    }
-    return token;
-}
-
-async function syncLayoutToGitHub() {
-    const token = getGHToken();
-    if (!token) return;
-    const layout = loadLayout();
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(layout, null, 2))));
-    try {
-        const existing = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
-            headers: { Authorization: `token ${token}` }
-        }).then(r => r.ok ? r.json() : null);
-        const body = { message: 'sync: update layout from browser', content };
-        if (existing && existing.sha) body.sha = existing.sha;
-        const res = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
-            method: 'PUT', headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        if (res.ok) alert('布局已同步到 GitHub ✓');
-        else alert('同步失败: ' + (await res.text()));
-    } catch(e) { alert('同步失败: ' + e.message); }
-}
-
-async function loadLayoutFromGitHub() {
-    try {
-        const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/main/${GH_FILE}?t=${Date.now()}`);
-        if (!res.ok) return null;
-        return await res.json();
-    } catch(e) { return null; }
 }
 
 // --- Render ---
@@ -1467,13 +1843,8 @@ function goHome() {
 }
 
 // --- Init ---
-window.addEventListener('load', async () => {
-    let layout;
-    if (!localStorage.getItem(STORAGE_KEY)) {
-        const remote = await loadLayoutFromGitHub();
-        if (remote) { saveLayout(remote); layout = remote; }
-    }
-    if (!layout) layout = loadLayout();
+window.addEventListener('load', () => {
+    const layout = loadLayout();
     renderSidebar(layout);
     renderWelcomeCards(layout);
     const hash = window.location.hash.slice(1);
