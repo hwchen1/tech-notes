@@ -245,6 +245,7 @@
     <div class="sidebar-header">
         <h2>AI Notes</h2>
         <button class="toggle-btn" style="margin-left:auto;font-size:1.1em;padding:4px 8px;" onclick="showCreateDirModal()" title="新建目录">＋</button>
+        <button class="toggle-btn" style="font-size:0.9em;padding:4px 8px;" onclick="syncLayoutToGitHub()" title="同步布局到 GitHub">⬆</button>
         <button class="toggle-btn" onclick="toggleSidebar()" title="折叠">◀</button>
     </div>
     <div class="sidebar-content" id="sidebar-content">
@@ -480,6 +481,7 @@ const DEFAULT_LAYOUT = [
 ];
 
 // --- State Management ---
+let _layoutLoaded = false;
 function loadLayout() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -556,6 +558,48 @@ function resetLayout() {
     localStorage.removeItem(STORAGE_KEY + '-ver');
     renderSidebar(loadLayout());
     renderWelcomeCards(loadLayout());
+}
+
+// --- GitHub Sync ---
+const GH_REPO = 'hwchen1/tech-notes';
+const GH_FILE = 'layout.json';
+const GH_TOKEN_KEY = 'ai-notes-gh-token';
+
+function getGHToken() {
+    let token = localStorage.getItem(GH_TOKEN_KEY);
+    if (!token) {
+        token = prompt('输入 GitHub Token (只需一次，保存在本地):');
+        if (token) localStorage.setItem(GH_TOKEN_KEY, token);
+    }
+    return token;
+}
+
+async function syncLayoutToGitHub() {
+    const token = getGHToken();
+    if (!token) return;
+    const layout = loadLayout();
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(layout, null, 2))));
+    try {
+        const existing = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+            headers: { Authorization: `token ${token}` }
+        }).then(r => r.ok ? r.json() : null);
+        const body = { message: 'sync: update layout from browser', content };
+        if (existing && existing.sha) body.sha = existing.sha;
+        const res = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+            method: 'PUT', headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (res.ok) alert('布局已同步到 GitHub ✓');
+        else alert('同步失败: ' + (await res.text()));
+    } catch(e) { alert('同步失败: ' + e.message); }
+}
+
+async function loadLayoutFromGitHub() {
+    try {
+        const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/main/${GH_FILE}?t=${Date.now()}`);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch(e) { return null; }
 }
 
 // --- Render ---
@@ -1423,8 +1467,13 @@ function goHome() {
 }
 
 // --- Init ---
-window.addEventListener('load', () => {
-    const layout = loadLayout();
+window.addEventListener('load', async () => {
+    let layout;
+    if (!localStorage.getItem(STORAGE_KEY)) {
+        const remote = await loadLayoutFromGitHub();
+        if (remote) { saveLayout(remote); layout = remote; }
+    }
+    if (!layout) layout = loadLayout();
     renderSidebar(layout);
     renderWelcomeCards(layout);
     const hash = window.location.hash.slice(1);
