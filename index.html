@@ -481,111 +481,16 @@ const DEFAULT_LAYOUT = [
 
 // --- State Management ---
 function loadLayout() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-        try {
-            const parsed = JSON.parse(saved);
-            const defaultIds = DEFAULT_LAYOUT.map(s => s.id);
-            const savedIds = parsed.map(s => s.id);
-            let changed = false;
-            // Merge missing sections
-            const missing = defaultIds.filter(id => !savedIds.includes(id));
-            if (missing.length > 0) {
-                missing.forEach(id => {
-                    const section = DEFAULT_LAYOUT.find(s => s.id === id);
-                    if (section) parsed.push(JSON.parse(JSON.stringify(section)));
-                });
-                changed = true;
-            }
-            // One-time sync when layout version changes (items moved between groups)
-            const savedVer = parseInt(localStorage.getItem(STORAGE_KEY + '-ver') || '0');
-            if (savedVer < LAYOUT_VERSION) {
-                const pageToSection = {};
-                DEFAULT_LAYOUT.forEach(s => { if (s.items) s.items.forEach(i => { pageToSection[i.page] = s.id; }); });
-                parsed.forEach(section => {
-                    if (!section.items) section.items = [];
-                    const before = section.items.length;
-                    section.items = section.items.filter(i => pageToSection[i.page] === section.id || !pageToSection[i.page]);
-                    if (section.items.length !== before) {
-                        changed = true;
-                        delete section.renderOrder;
-                    }
-                    // Sync section title/icon from DEFAULT_LAYOUT
-                    const defSec = DEFAULT_LAYOUT.find(s => s.id === section.id);
-                    if (defSec) { section.title = defSec.title; section.icon = defSec.icon; }
-                });
-                // Re-sort sections to match DEFAULT_LAYOUT order
-                parsed.sort((a, b) => {
-                    const ai = defaultIds.indexOf(a.id);
-                    const bi = defaultIds.indexOf(b.id);
-                    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-                });
-                changed = true;
-                localStorage.setItem(STORAGE_KEY + '-ver', String(LAYOUT_VERSION));
-            }
-            // Merge missing items within existing sections
-            const allSavedPages = new Set();
-            function collectSavedPages(sections) {
-                sections.forEach(s => {
-                    if (s.items) s.items.forEach(i => allSavedPages.add(i.page));
-                    if (s.children) collectSavedPages(s.children);
-                });
-            }
-            collectSavedPages(parsed);
-            parsed.forEach(section => {
-                const defSection = DEFAULT_LAYOUT.find(s => s.id === section.id);
-                if (defSection) {
-                    defSection.items.forEach(item => {
-                        if (!allSavedPages.has(item.page)) {
-                            if (!section.items) section.items = [];
-                            section.items.push(JSON.parse(JSON.stringify(item)));
-                            // Also add to renderOrder if present
-                            if (section.renderOrder) {
-                                section.renderOrder.push('i' + (section.items.length - 1));
-                            }
-                            allSavedPages.add(item.page);
-                            changed = true;
-                        }
-                    });
-                }
-            });
-            // Sanitize renderOrder: ensure all items/children are in renderOrder
-            function sanitizeRenderOrder(sections) {
-                sections.forEach(s => {
-                    if (s.renderOrder) {
-                        const validKeys = new Set();
-                        if (s.items) s.items.forEach((_, i) => validKeys.add('i' + i));
-                        if (s.children) s.children.forEach((_, i) => validKeys.add('c' + i));
-                        // Remove keys that point to non-existent entries
-                        s.renderOrder = s.renderOrder.filter(k => validKeys.has(k));
-                        // Add missing keys
-                        validKeys.forEach(k => {
-                            if (!s.renderOrder.includes(k)) {
-                                s.renderOrder.push(k);
-                                changed = true;
-                            }
-                        });
-                    }
-                    if (s.children) sanitizeRenderOrder(s.children);
-                });
-            }
-            sanitizeRenderOrder(parsed);
-            if (changed) saveLayout(parsed);
-            return parsed;
-        } catch(e) {}
-    }
     return JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
 }
 
 function saveLayout(layout) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    // No-op: layout is always derived from DEFAULT_LAYOUT in code
 }
 
 function resetLayout() {
-    if (!confirm('重置布局将恢复默认分组，确认？')) return;
-    localStorage.removeItem(STORAGE_KEY);
-    renderSidebar(DEFAULT_LAYOUT);
-    renderWelcomeCards(DEFAULT_LAYOUT);
+    renderSidebar(loadLayout());
+    renderWelcomeCards(loadLayout());
 }
 
 // --- Render ---
