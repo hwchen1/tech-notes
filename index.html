@@ -369,6 +369,12 @@ const DEFAULT_LAYOUT = [
         ]
     },
     {
+        id: 'longtext', icon: '📜', title: 'Long Text 系列', open: true,
+        items: [
+            { page: 'lt_synthetic_data.html', label: '长文本合成数据方法全景', color: '#f7971e' },
+        ]
+    },
+    {
         id: 'lm-arch', icon: '🏗️', title: 'LM 架构', open: true,
         items: [
             { page: 'deepseek_v3.html', label: 'DeepSeek-V3 架构', color: '#764ba2' },
@@ -806,6 +812,7 @@ function renderWelcomeCards(layout) {
         'vlm_agent_future.html': 'VLM × Code Agent 未来发展方向',
         'mai_thinking.html': 'Microsoft AI 推理模型 — 34.7B/962B MoE + Hill-Climbing RL + NoPE Global Attention, 从头训练无蒸馏',
         'gemma4_12b.html': 'Google DeepMind Encoder-Free 统一多模态 — 12B Dense, 256K Context, PLE + Shared KV, Apache 2.0',
+        'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
         'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
         'vit_clip.html': 'OpenAI 对比学习 dual encoder, ViT-B/L/H, InfoNCE loss',
@@ -840,6 +847,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'lt_synthetic_data.html',
         'gemma4_12b.html',
         'mai_thinking.html',
         'muse_spark.html',

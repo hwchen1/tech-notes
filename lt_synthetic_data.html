@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长文本合成数据方法全景 (2024-2026)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f7971e, #ffd200); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f7971e; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f7971e0a; border: 1px solid #f7971e22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f7971e; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #f7971e; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>长文本合成数据方法全景</h1>
+<p class="subtitle">2024-2026 年长上下文训练数据合成方法综述 — 从文档拼接到多跳证据散布 + RL</p>
+
+<!-- ===== 1. 全景分类 ===== -->
+<h2>1. 方法全景：四大合成范式</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 长文本合成数据的核心挑战 ======</span>
+<span class="cm"># 真实长文本数据稀缺且标注昂贵</span>
+<span class="cm"># 需要合成数据来训练长上下文能力</span>
+<span class="cm">#</span>
+<span class="cm"># ====== 四大范式 ======</span>
+<span class="cm">#</span>
+<span class="cm"># 范式 1: 文档拼接/聚合</span>
+<span class="cm">#   多篇短文档 → 按相关性拼接成长文档</span>
+<span class="cm">#   代表: Quest, LongAlign</span>
+<span class="cm">#</span>
+<span class="cm"># 范式 2: Self-Synthesis / Agent 生成</span>
+<span class="cm">#   LLM 自动生成长上下文指令数据</span>
+<span class="cm">#   代表: BYOCL, LongMagpie, WildLong</span>
+<span class="cm">#</span>
+<span class="cm"># 范式 3: 证据散布 + 多跳推理</span>
+<span class="cm">#   关键证据分散插入 + 复杂 query</span>
+<span class="cm">#   代表: IN2, KeyChain, LongTraceRL</span>
+<span class="cm">#</span>
+<span class="cm"># 范式 4: 层次化 / 模块化框架</span>
+<span class="cm">#   可组合模块生成超长序列</span>
+<span class="cm">#   代表: Hierarchical SDG, Modular</span>
+<span class="cm">#</span>
+<span class="cm"># ====== 趋势 ======</span>
+<span class="cm"># 2024 初: 简单拼接为主</span>
+<span class="cm"># 2024 下: 多跳 + 证据散布兴起</span>
+<span class="cm"># 2025:    RL + Agent 轨迹成为主流</span>
+<span class="cm"># 2026:    模块化框架 + 百万 token</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 380" xmlns="http://www.w3.org/2000/svg">
+<defs><linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f7971e"/><stop offset="100%" stop-color="#ffd200"/></linearGradient></defs>
+<text x="210" y="20" text-anchor="middle" fill="#6b6b80" font-size="11">四大合成范式</text>
+<!-- Quadrant layout -->
+<line x1="210" y1="35" x2="210" y2="365" stroke="#222" stroke-width="1"/>
+<line x1="20" y1="195" x2="400" y2="195" stroke="#222" stroke-width="1"/>
+<!-- Q1: 文档拼接 -->
+<rect x="30" y="45" width="165" height="140" rx="8" fill="#1a1a2e" stroke="#4facfe44"/>
+<text x="112" y="65" text-anchor="middle" fill="#4facfe" font-size="11" font-weight="bold">文档拼接/聚合</text>
+<text x="112" y="85" text-anchor="middle" fill="#888" font-size="9">短文档 → 按相关性拼接</text>
+<text x="50" y="108" fill="#666" font-size="8">• Quest (query-centric)</text>
+<text x="50" y="123" fill="#666" font-size="8">• LongAlign (self-instruct)</text>
+<text x="50" y="138" fill="#666" font-size="8">• 无长文档训练 (短文拼接)</text>
+<text x="50" y="158" fill="#555" font-size="8">简单 → 难度低</text>
+<text x="50" y="172" fill="#555" font-size="8">2024.01 - 2025.01</text>
+<!-- Q2: Self-Synthesis -->
+<rect x="225" y="45" width="170" height="140" rx="8" fill="#1a1a2e" stroke="#34a85344"/>
+<text x="310" y="65" text-anchor="middle" fill="#34a853" font-size="11" font-weight="bold">Self-Synthesis</text>
+<text x="310" y="85" text-anchor="middle" fill="#888" font-size="9">LLM 自动生成指令数据</text>
+<text x="240" y="108" fill="#666" font-size="8">• BYOCL (agent workflow)</text>
+<text x="240" y="123" fill="#666" font-size="8">• LongMagpie (self-synth)</text>
+<text x="240" y="138" fill="#666" font-size="8">• WildLong (realistic)</text>
+<text x="240" y="153" fill="#666" font-size="8">• Self-Lengthen (iterative)</text>
+<text x="240" y="172" fill="#555" font-size="8">2024.10 - 2025.05</text>
+<!-- Q3: 证据散布+多跳 -->
+<rect x="30" y="205" width="165" height="150" rx="8" fill="#1a1a2e" stroke="#f7971e44"/>
+<text x="112" y="225" text-anchor="middle" fill="#f7971e" font-size="11" font-weight="bold">证据散布+多跳</text>
+<text x="112" y="245" text-anchor="middle" fill="#888" font-size="9">分散证据 + 复杂 query</text>
+<text x="50" y="268" fill="#666" font-size="8">• IN2 (NeurIPS 2024)</text>
+<text x="50" y="283" fill="#666" font-size="8">• KeyChain/LoongRL</text>
+<text x="50" y="298" fill="#666" font-size="8">• LongTraceRL (tiered)</text>
+<text x="50" y="313" fill="#666" font-size="8">• LONGBLOCKS</text>
+<text x="50" y="328" fill="#666" font-size="8">• ACC (agent trajectory)</text>
+<text x="50" y="348" fill="#f7971e" font-size="8">★ 面向长程推理的核心方法</text>
+<!-- Q4: 层次化 -->
+<rect x="225" y="205" width="170" height="150" rx="8" fill="#1a1a2e" stroke="#667eea44"/>
+<text x="310" y="225" text-anchor="middle" fill="#667eea" font-size="11" font-weight="bold">层次化/模块化</text>
+<text x="310" y="245" text-anchor="middle" fill="#888" font-size="9">可组合模块 → 超长序列</text>
+<text x="240" y="268" fill="#666" font-size="8">• Hierarchical SDG (1M tok)</text>
+<text x="240" y="283" fill="#666" font-size="8">• Modular Techniques</text>
+<text x="240" y="298" fill="#666" font-size="8">• Resource-Efficient</text>
+<text x="240" y="313" fill="#666" font-size="8">• ProLong (recipe)</text>
+<text x="240" y="348" fill="#555" font-size="8">2025.04 - 2025.09</text>
+</svg>
+</div>
+<p class="caption">四大范式: 从简单拼接到证据散布+RL，合成难度和训练效果递增</p>
+</div>
+<div class="col-caption">
+<h3>核心问题</h3>
+<p>长上下文能力训练需要大量高质量长文本数据，但真实标注极为昂贵。合成数据是唯一可扩展路径。</p>
+<h3>趋势演进</h3>
+<p><strong>2024 初</strong>: 以文档拼接为主 (LongAlign), 简单有效但难度有限。</p>
+<p><strong>2024 下半年</strong>: 多跳证据散布兴起 (IN2), 开始关注"定位多处分散信息"能力。</p>
+<p><strong>2025</strong>: RL 驱动 (LoongRL, LongTraceRL) + Agent 轨迹编译 (ACC) 成为主流，训练信号更强。</p>
+<p><strong>2026</strong>: 模块化框架支持百万 token 级合成。</p>
+</div>
+</div>
+
+<!-- ===== 2. 文档拼接 + Self-Synthesis ===== -->
+<h2>2. 范式 A/B：文档拼接 & Self-Synthesis</h2>
+
+<div class="three-col">
+<div class="col-code">
+<table>
+<tr><th>方法</th><th>时间</th><th>核心思路</th></tr>
+<tr><td><strong>LongAlign</strong></td><td>2024.01</td><td>Self-Instruct 生成长上下文指令 + packing 策略 + loss 加权对齐</td></tr>
+<tr><td><strong>Quest</strong></td><td>2024.05</td><td>Query-centric: 用相似 query 检索多篇相关低冗余文档拼接成长上下文 QA</td></tr>
+<tr><td><strong>Self-Lengthen</strong></td><td>2024.10</td><td>Generator + Extender 双模块, LLM 自我延长输出并迭代训练</td></tr>
+<tr><td><strong>ProLong</strong></td><td>2024.10</td><td>Data + training recipe: 仅 5% token 量超越 Llama-3.1-8B, 有效扩展至 512K</td></tr>
+<tr><td><strong>BYOCL</strong></td><td>2024.12</td><td>Bootstrap Your Own Context Length: agent workflow 合成多样长上下文 SFT 数据</td></tr>
+<tr><td><strong>无长文档训练</strong></td><td>2025.01</td><td>纯短文档拼接 + 结构化关联, 无需真实长文档即可训练长上下文</td></tr>
+<tr><td><strong>WildLong</strong></td><td>2025.02</td><td>合成真实场景长上下文指令, 增强复杂推理泛化</td></tr>
+<tr><td><strong>LongMagpie</strong></td><td>2025.05</td><td>Self-synthesis: 已对齐的长上下文 LLM 自动产出大规模长上下文指令数据</td></tr>
+</table>
+<div class="key-point">
+<strong>文档拼接局限</strong>: 虽然简单有效, 但拼接的文档间缺乏真正的跨文档推理需求, 模型可能只学到"长输入容忍"而非"长程推理"。
+</div>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+<text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">文档拼接 vs Self-Synthesis 流程</text>
+<!-- 文档拼接 -->
+<text x="100" y="45" text-anchor="middle" fill="#4facfe" font-size="10" font-weight="bold">文档拼接 (Quest)</text>
+<rect x="20" y="55" width="45" height="30" rx="3" fill="#1a1a2e" stroke="#4facfe55"/>
+<text x="43" y="74" text-anchor="middle" fill="#4facfe" font-size="8">Doc A</text>
+<rect x="70" y="55" width="45" height="30" rx="3" fill="#1a1a2e" stroke="#4facfe55"/>
+<text x="93" y="74" text-anchor="middle" fill="#4facfe" font-size="8">Doc B</text>
+<rect x="120" y="55" width="45" height="30" rx="3" fill="#1a1a2e" stroke="#4facfe55"/>
+<text x="143" y="74" text-anchor="middle" fill="#4facfe" font-size="8">Doc C</text>
+<text x="100" y="100" text-anchor="middle" fill="#666" font-size="8">↓ query 相关性排序拼接</text>
+<rect x="25" y="110" width="155" height="25" rx="4" fill="#4facfe11" stroke="#4facfe44"/>
+<text x="100" y="127" text-anchor="middle" fill="#4facfe" font-size="8">[Doc A + Doc B + Doc C] → Long Context</text>
+<text x="100" y="150" text-anchor="middle" fill="#666" font-size="8">↓ 生成 QA pair</text>
+<rect x="40" y="158" width="120" height="20" rx="3" fill="#12121c" stroke="#333"/>
+<text x="100" y="172" text-anchor="middle" fill="#888" font-size="8">Q: ... → A: ...</text>
+<!-- Self-Synthesis -->
+<text x="310" y="45" text-anchor="middle" fill="#34a853" font-size="10" font-weight="bold">Self-Synthesis (LongMagpie)</text>
+<rect x="260" y="55" width="100" height="30" rx="4" fill="#1a1a2e" stroke="#34a85355"/>
+<text x="310" y="74" text-anchor="middle" fill="#34a853" font-size="8">Aligned Long-Ctx LLM</text>
+<text x="310" y="100" text-anchor="middle" fill="#666" font-size="8">↓ 给定长文档, 自动生成指令</text>
+<rect x="250" y="110" width="120" height="25" rx="4" fill="#34a85311" stroke="#34a85344"/>
+<text x="310" y="127" text-anchor="middle" fill="#34a853" font-size="8">Long Doc → Self-Instruct</text>
+<text x="310" y="150" text-anchor="middle" fill="#666" font-size="8">↓ 多样化 task 生成</text>
+<rect x="250" y="158" width="120" height="20" rx="3" fill="#12121c" stroke="#333"/>
+<text x="310" y="172" text-anchor="middle" fill="#888" font-size="8">Summarize / QA / Extract</text>
+<!-- Comparison -->
+<text x="200" y="210" text-anchor="middle" fill="#6b6b80" font-size="10">对比</text>
+<rect x="30" y="220" width="160" height="65" rx="6" fill="#0f0f1a" stroke="#4facfe33"/>
+<text x="110" y="238" text-anchor="middle" fill="#4facfe" font-size="8">拼接类</text>
+<text x="110" y="253" text-anchor="middle" fill="#666" font-size="8">✓ 简单, 可控长度</text>
+<text x="110" y="268" text-anchor="middle" fill="#666" font-size="8">✗ 缺跨文档推理需求</text>
+<text x="110" y="283" text-anchor="middle" fill="#666" font-size="8">✗ 模型可能只学"容忍"</text>
+<rect x="210" y="220" width="170" height="65" rx="6" fill="#0f0f1a" stroke="#34a85333"/>
+<text x="295" y="238" text-anchor="middle" fill="#34a853" font-size="8">Self-Synthesis 类</text>
+<text x="295" y="253" text-anchor="middle" fill="#666" font-size="8">✓ 多样性高, 任务丰富</text>
+<text x="295" y="268" text-anchor="middle" fill="#666" font-size="8">✓ 贴近真实使用场景</text>
+<text x="295" y="283" text-anchor="middle" fill="#666" font-size="8">✗ 质量依赖种子模型</text>
+</svg>
+</div>
+<p class="caption">拼接类适合冷启动; Self-Synthesis 适合规模化生成多样数据</p>
+</div>
+<div class="col-caption">
+<h3>LongAlign (清华, EMNLP 2024)</h3>
+<p>首个系统化长上下文对齐方案: Self-Instruct 生成 10K 长指令样本, packing 训练 + sorted batching + loss 加权避免长序列被短序列稀释。</p>
+<h3>Quest (2024.05)</h3>
+<p>核心洞察: 相似 query 检索的文档天然相关但低冗余。按 query 相似度聚合文档, 生成需要整合多文档信息的 QA。</p>
+<h3>ProLong (ACL 2025)</h3>
+<p>关键发现: 长上下文训练的数据质量 >> 数据量。精心构造的合成数据只需真实数据 5% 的 token 量就能超越 Llama-3.1-8B。</p>
+<h3>BYOCL (2024.12)</h3>
+<p>Agent workflow: 多步骤自动构造长上下文场景 + 对应任务, 无需人工标注。</p>
+</div>
+</div>
+
+<!-- ===== 3. 证据散布+多跳 (核心) ===== -->
+<h2>3. 范式 C：证据散布 + 多跳推理（面向长程任务）</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 核心目标 ======</span>
+<span class="cm"># 给定长上下文, 构造需要定位</span>
+<span class="cm"># 多处分散证据才能回答的 query</span>
+<span class="cm"># → 训练模型的"主动搜索+整合"能力</span>
+
+<span class="cm"># ====== IN2 (NeurIPS 2024) ======</span>
+<span class="cm"># "Make Your LLM Fully Utilize Context"</span>
+<span class="cm"># 合成方式:</span>
+<span class="cm">#   1. 选取关键证据段 (~128 tok)</span>
+<span class="cm">#   2. 随机插入长文档不同位置</span>
+<span class="cm">#   3. 生成需 多处证据 才能回答的 Q</span>
+<span class="cm">#   4. 文档长度: 4K → 32K tokens</span>
+<span class="cm"># 效果: 显著提升 lost-in-the-middle</span>
+
+<span class="cm"># ====== KeyChain / LoongRL (2025.10) ======</span>
+<span class="cm"># 合成方式:</span>
+<span class="cm">#   1. 短 multi-hop QA 作为种子</span>
+<span class="cm">#   2. 为每个 hop 生成 UUID chain</span>
+<span class="cm">#      fact_1 → UUID_A → fact_2 → UUID_B</span>
+<span class="cm">#   3. 将 facts+UUID 分散嵌入干扰文档</span>
+<span class="cm">#   4. 用 RL 训练: 奖励 = 正确回答</span>
+<span class="cm"># 难度可控: hop 数 / 干扰量 / 距离</span>
+
+<span class="cm"># ====== LongTraceRL (2025.06) ======</span>
+<span class="cm"># Tiered Distractor Construction:</span>
+<span class="cm">#   Level 1: 主题高度相关干扰</span>
+<span class="cm">#   Level 2: 部分相关干扰</span>
+<span class="cm">#   Level 3: 完全无关干扰</span>
+<span class="cm"># + Rubric Reward: 分步骤给分</span>
+<span class="cm"># + Search Agent 轨迹作为训练信号</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 400" xmlns="http://www.w3.org/2000/svg">
+<text x="210" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">证据散布合成流程 (KeyChain 为例)</text>
+<!-- Step 1: Seed QA -->
+<rect x="130" y="30" width="160" height="35" rx="5" fill="#1a1a2e" stroke="#f7971e"/>
+<text x="210" y="52" text-anchor="middle" fill="#f7971e" font-size="9">种子: 短 Multi-hop QA (3-5 hop)</text>
+<line x1="210" y1="65" x2="210" y2="80" stroke="#f7971e" stroke-width="1"/>
+<!-- Step 2: UUID chain -->
+<rect x="80" y="80" width="260" height="50" rx="5" fill="#12121c" stroke="#f7971e55"/>
+<text x="210" y="97" text-anchor="middle" fill="#ffd200" font-size="9">生成 UUID Chain 连接各 hop</text>
+<text x="90" y="118" fill="#888" font-size="8">Fact₁ →</text>
+<rect x="130" y="108" width="40" height="16" rx="2" fill="#f7971e22" stroke="#f7971e44"/>
+<text x="150" y="119" text-anchor="middle" fill="#f7971e" font-size="7">UUID_A</text>
+<text x="175" y="118" fill="#888" font-size="8">→ Fact₂ →</text>
+<rect x="225" y="108" width="40" height="16" rx="2" fill="#f7971e22" stroke="#f7971e44"/>
+<text x="245" y="119" text-anchor="middle" fill="#f7971e" font-size="7">UUID_B</text>
+<text x="270" y="118" fill="#888" font-size="8">→ Fact₃ → Answer</text>
+<line x1="210" y1="130" x2="210" y2="145" stroke="#f7971e" stroke-width="1"/>
+<!-- Step 3: Scatter into distractors -->
+<text x="210" y="158" text-anchor="middle" fill="#6b6b80" font-size="9">散布到干扰文档中</text>
+<rect x="20" y="168" width="380" height="100" rx="8" fill="#0f0f1a" stroke="#333"/>
+<!-- Distractor blocks -->
+<rect x="30" y="178" width="55" height="22" rx="3" fill="#33333a"/><text x="58" y="193" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 1</text>
+<rect x="90" y="178" width="55" height="22" rx="3" fill="#f7971e18" stroke="#f7971e55"/><text x="118" y="193" text-anchor="middle" fill="#f7971e" font-size="7">Fact₁+UUID_A</text>
+<rect x="150" y="178" width="55" height="22" rx="3" fill="#33333a"/><text x="178" y="193" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 2</text>
+<rect x="210" y="178" width="55" height="22" rx="3" fill="#33333a"/><text x="238" y="193" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 3</text>
+<rect x="270" y="178" width="55" height="22" rx="3" fill="#f7971e18" stroke="#f7971e55"/><text x="298" y="193" text-anchor="middle" fill="#f7971e" font-size="7">Fact₂+UUID_B</text>
+<rect x="330" y="178" width="60" height="22" rx="3" fill="#33333a"/><text x="360" y="193" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 4</text>
+<rect x="30" y="208" width="55" height="22" rx="3" fill="#33333a"/><text x="58" y="223" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 5</text>
+<rect x="90" y="208" width="55" height="22" rx="3" fill="#33333a"/><text x="118" y="223" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 6</text>
+<rect x="150" y="208" width="55" height="22" rx="3" fill="#f7971e18" stroke="#f7971e55"/><text x="178" y="223" text-anchor="middle" fill="#f7971e" font-size="7">Fact₃</text>
+<rect x="210" y="208" width="55" height="22" rx="3" fill="#33333a"/><text x="238" y="223" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 7</text>
+<rect x="270" y="208" width="55" height="22" rx="3" fill="#33333a"/><text x="298" y="223" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 8</text>
+<rect x="330" y="208" width="60" height="22" rx="3" fill="#33333a"/><text x="360" y="223" text-anchor="middle" fill="#555" font-size="7">干扰 Doc 9</text>
+<text x="210" y="255" text-anchor="middle" fill="#666" font-size="8">长上下文 (32K-128K tokens)</text>
+<!-- Step 4: Query -->
+<line x1="210" y1="262" x2="210" y2="278" stroke="#f7971e" stroke-width="1"/>
+<rect x="100" y="278" width="220" height="30" rx="5" fill="#1a1a2e" stroke="#ffd200"/>
+<text x="210" y="297" text-anchor="middle" fill="#ffd200" font-size="9">Complex Query (需 Fact₁+₂+₃ 整合才能答)</text>
+<!-- Step 5: RL Training -->
+<line x1="210" y1="308" x2="210" y2="325" stroke="#ffd200" stroke-width="1"/>
+<rect x="120" y="325" width="180" height="30" rx="5" fill="#f7971e11" stroke="#f7971e"/>
+<text x="210" y="344" text-anchor="middle" fill="#f7971e" font-size="10" font-weight="bold">RL 训练 (reward = 正确答案)</text>
+<!-- Difficulty knobs -->
+<text x="210" y="380" text-anchor="middle" fill="#666" font-size="8">难度旋钮: hop数 ↑ | 干扰量 ↑ | 证据间距 ↑ | 干扰相关度 ↑</text>
+</svg>
+</div>
+<p class="caption">KeyChain: 短多跳 QA → UUID 链 → 散布干扰文档 → RL 训练长程推理</p>
+</div>
+<div class="col-caption">
+<h3>IN2 (NeurIPS 2024)</h3>
+<p>"Make Your LLM Fully Utilize the Context" — 首个系统性解决 lost-in-the-middle 问题的合成方法。证据随机插入，强迫模型全文搜索。</p>
+<h3>KeyChain / LoongRL</h3>
+<p>UUID chain 是巧妙设计: 模型必须先找到 Fact₁ 中的 UUID_A，再用 UUID_A 定位 Fact₂，逐步跳转。难度可精确控制。</p>
+<h3>LongTraceRL</h3>
+<p><strong>Tiered Distractors</strong> 是关键创新: 高相关干扰比随机干扰难得多。分层构造让模型学会在"看起来相关但不是答案"的噪声中精准定位。</p>
+<h3>LONGBLOCKS</h3>
+<p>覆盖三类任务: multi-hop reasoning + contextual grounding + long-form generation。证据分散在不同 blocks。</p>
+<h3>ACC (Agent Trajectory)</h3>
+<p>将搜索 agent 的多步定位轨迹编译为直接监督信号。模型学到的不只是答案，还有"如何搜索"。</p>
+<h3>最佳实践 (2024.09 论文)</h3>
+<p>关键发现: 3-5 hop 最优, 证据位置要均匀分散, hard negatives (主题相关但无答案) 远比 random negatives 有效。</p>
+</div>
+</div>
+
+<!-- ===== 4. 时间线 + 总结 ===== -->
+<h2>4. 方法时间线与选型指南</h2>
+
+<div class="three-col">
+<div class="col-code">
+<table>
+<tr><th>时间</th><th>方法</th><th>范式</th><th>关键贡献</th></tr>
+<tr><td>2024.01</td><td>LongAlign</td><td>拼接</td><td>首个系统化长上下文对齐</td></tr>
+<tr><td>2024.05</td><td>Quest</td><td>拼接</td><td>Query-centric 文档聚合</td></tr>
+<tr><td>2024.09</td><td>Multi-Hop 最佳实践</td><td>散布</td><td>3-5 hop + hard negatives</td></tr>
+<tr><td>2024.10</td><td>IN2</td><td>散布</td><td>证据随机插入解决 lost-in-middle</td></tr>
+<tr><td>2024.10</td><td>ProLong</td><td>Recipe</td><td>5% token 超越 Llama-3.1-8B</td></tr>
+<tr><td>2024.10</td><td>Self-Lengthen</td><td>Self</td><td>Generator+Extender 迭代延长</td></tr>
+<tr><td>2024.12</td><td>BYOCL</td><td>Self</td><td>Agent workflow 无标注合成</td></tr>
+<tr><td>2025.01</td><td>无长文档训练</td><td>拼接</td><td>纯短文档可训练长上下文</td></tr>
+<tr><td>2025.02</td><td>WildLong</td><td>Self</td><td>真实场景指令合成</td></tr>
+<tr><td>2025.04</td><td>Hierarchical SDG</td><td>层次</td><td>百万 token 级合成</td></tr>
+<tr><td>2025.05</td><td>LongMagpie</td><td>Self</td><td>Self-synthesis 框架</td></tr>
+<tr><td>2025.06</td><td>LongTraceRL</td><td>散布+RL</td><td>Tiered distractors + rubric reward</td></tr>
+<tr><td>2025.06</td><td>LONGBLOCKS</td><td>散布</td><td>Multi-hop + grounding + generation</td></tr>
+<tr><td>2025.06</td><td>ACC</td><td>Agent</td><td>Agent 轨迹编译为 SFT 数据</td></tr>
+<tr><td>2025.09</td><td>Modular Techniques</td><td>层次</td><td>可复用模块化框架</td></tr>
+<tr><td>2025.10</td><td>LoongRL/KeyChain</td><td>散布+RL</td><td>UUID chain + RL 训练多跳</td></tr>
+</table>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg">
+<text x="200" y="18" text-anchor="middle" fill="#6b6b80" font-size="11">选型决策树</text>
+<!-- Root -->
+<rect x="130" y="30" width="140" height="28" rx="5" fill="#1a1a2e" stroke="url(#g1)"/>
+<text x="200" y="48" text-anchor="middle" fill="#f7971e" font-size="9">你的训练目标是什么?</text>
+<!-- Branch 1 -->
+<line x1="130" y1="58" x2="80" y2="80" stroke="#4facfe" stroke-width="1"/>
+<rect x="20" y="80" width="120" height="24" rx="4" fill="#1a1a2e" stroke="#4facfe55"/>
+<text x="80" y="96" text-anchor="middle" fill="#4facfe" font-size="8">基础长上下文容忍</text>
+<line x1="80" y1="104" x2="80" y2="120" stroke="#4facfe" stroke-width="1" stroke-dasharray="2"/>
+<text x="80" y="132" text-anchor="middle" fill="#4facfe" font-size="8">→ 文档拼接</text>
+<text x="80" y="147" text-anchor="middle" fill="#666" font-size="7">LongAlign / Quest</text>
+<!-- Branch 2 -->
+<line x1="200" y1="58" x2="200" y2="80" stroke="#34a853" stroke-width="1"/>
+<rect x="140" y="80" width="120" height="24" rx="4" fill="#1a1a2e" stroke="#34a85355"/>
+<text x="200" y="96" text-anchor="middle" fill="#34a853" font-size="8">多样化长文本任务</text>
+<line x1="200" y1="104" x2="200" y2="120" stroke="#34a853" stroke-width="1" stroke-dasharray="2"/>
+<text x="200" y="132" text-anchor="middle" fill="#34a853" font-size="8">→ Self-Synthesis</text>
+<text x="200" y="147" text-anchor="middle" fill="#666" font-size="7">LongMagpie / BYOCL</text>
+<!-- Branch 3 -->
+<line x1="270" y1="58" x2="330" y2="80" stroke="#f7971e" stroke-width="1"/>
+<rect x="265" y="80" width="125" height="24" rx="4" fill="#1a1a2e" stroke="#f7971e55"/>
+<text x="328" y="96" text-anchor="middle" fill="#f7971e" font-size="8">长程推理/多跳定位</text>
+<line x1="328" y1="104" x2="328" y2="120" stroke="#f7971e" stroke-width="1" stroke-dasharray="2"/>
+<text x="328" y="132" text-anchor="middle" fill="#f7971e" font-size="8">→ 证据散布 + RL</text>
+<text x="328" y="147" text-anchor="middle" fill="#666" font-size="7">KeyChain / IN2 / ACC</text>
+<!-- Difficulty scale -->
+<text x="200" y="180" text-anchor="middle" fill="#6b6b80" font-size="10">合成数据质量 vs 生成成本</text>
+<rect x="40" y="195" width="320" height="20" rx="10" fill="#12121c" stroke="#333"/>
+<rect x="40" y="195" width="80" height="20" rx="10" fill="#4facfe33"/>
+<rect x="120" y="195" width="100" height="20" rx="0" fill="#34a85333"/>
+<rect x="220" y="195" width="140" height="20" rx="10" fill="#f7971e33"/>
+<text x="80" y="209" text-anchor="middle" fill="#4facfe" font-size="8">低成本</text>
+<text x="170" y="209" text-anchor="middle" fill="#34a853" font-size="8">中等</text>
+<text x="290" y="209" text-anchor="middle" fill="#f7971e" font-size="8">高成本高质量</text>
+<!-- Bottom recommendation -->
+<rect x="50" y="235" width="300" height="50" rx="8" fill="#f7971e08" stroke="#f7971e33"/>
+<text x="200" y="253" text-anchor="middle" fill="#f7971e" font-size="9" font-weight="bold">推荐组合策略</text>
+<text x="200" y="270" text-anchor="middle" fill="#888" font-size="8">Phase 1: 文档拼接冷启动 (便宜, 大量)</text>
+<text x="200" y="283" text-anchor="middle" fill="#888" font-size="8">Phase 2: 证据散布+RL 精调 (昂贵, 少量, 效果好)</text>
+</svg>
+</div>
+<p class="caption">选型: 基础容忍用拼接, 多样化用 Self-Synthesis, 长程推理用证据散布+RL</p>
+</div>
+<div class="col-caption">
+<h3>选型建议</h3>
+<p><strong>如果目标是"让模型接受长输入"</strong>: 文档拼接足够，成本低，适合冷启动。</p>
+<p><strong>如果目标是"长文本上的多样任务"</strong>: Self-Synthesis (LongMagpie, BYOCL)，需要一个强种子模型。</p>
+<p><strong>如果目标是"跨位置定位多证据推理"</strong>: 证据散布 + RL (KeyChain, LongTraceRL, IN2)，效果最好但构造成本高。</p>
+<h3>组合策略 (推荐)</h3>
+<p>1. Phase 1: 大量拼接数据做 continual pretraining 扩展 ctx window</p>
+<p>2. Phase 2: Self-Synthesis 做 SFT 教会模型处理多样任务</p>
+<p>3. Phase 3: 证据散布+RL 做精细化训练, 强化长程推理</p>
+<h3>关键论文链接</h3>
+<p>IN2: NeurIPS 2024<br>LoongRL: arXiv 2510.19363<br>LongTraceRL: arXiv 2605.31584<br>ACC: arXiv 2605.21850<br>LONGBLOCKS: arXiv 2605.12227<br>LongAlign: EMNLP 2024<br>ProLong: ACL 2025</p>
+</div>
+</div>
+
+<footer>Generated 2026.06.04 | 长文本合成数据方法全景 2024-2026 | Long-Context Synthetic Data Survey</footer>
+
+</div>
+</body>
+</html>
