@@ -41,46 +41,53 @@ footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; col
 <div class="container">
 
 <h1>Nemotron-3-Ultra — 550B MoE Agent Orchestrator</h1>
-<p class="subtitle">NVIDIA | 550B Total / 55B Active | Hybrid Mamba-Transformer | LatentMoE | NVFP4 | Multi-Token Prediction | MOPD Training | 1M Context | 2026.06</p>
+<p class="subtitle">NVIDIA | 550B Total / 55B Active | 108 Layers | Hybrid Mamba-2 + Attention | LatentMoE (512 Experts, Top-22) | NVFP4 Pretrained on 20T Tokens | 2-head MTP | MOPD (10+ Teachers) | 1M Context | 2026.06.04</p>
 
 <!-- ===== Section 1: Architecture ===== -->
-<h2>1. 模型架构 — Hybrid Mamba-Transformer + LatentMoE</h2>
+<h2>1. 模型架构 — Hybrid Mamba-2 + Attention + LatentMoE</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># Nemotron-3-Ultra 架构概览</span>
-<span class="cm"># 550B 总参数, 55B 激活参数 (MoE)</span>
+<pre><span class="cm"># Nemotron-3-Ultra 精确架构参数 (Table 1)</span>
 
-<span class="cm"># 核心设计: Hybrid Mamba-Transformer</span>
-<span class="cm"># 交替层: Mamba (长序列效率) + Transformer (精确 recall)</span>
+config = {
+    <span class="st">"total_layers"</span>:        <span class="num">108</span>,
+    <span class="st">"model_dim"</span>:           <span class="num">8192</span>,
+    <span class="st">"q_heads"</span>:             <span class="num">64</span>,
+    <span class="st">"kv_heads"</span>:            <span class="num">2</span>,   <span class="cm"># GQA 64Q/2KV</span>
+    <span class="st">"head_dim"</span>:            <span class="num">128</span>,
+    <span class="st">"mamba_state_dim"</span>:     <span class="num">128</span>,
+    <span class="st">"mamba_groups"</span>:        <span class="num">8</span>,
+    <span class="st">"mamba_heads"</span>:         <span class="num">256</span>,
+    <span class="st">"mamba_head_dim"</span>:      <span class="num">64</span>,
+    <span class="st">"expert_hidden_dim"</span>:   <span class="num">5120</span>,
+    <span class="st">"shared_expert_ffn"</span>:   <span class="num">10240</span>,
+    <span class="st">"total_experts"</span>:       <span class="num">512</span>,
+    <span class="st">"top_k"</span>:              <span class="num">22</span>,   <span class="cm"># 每 token 激活 22 个</span>
+    <span class="st">"moe_latent_size"</span>:    <span class="num">2048</span>,
+    <span class="st">"mtp_heads"</span>:          <span class="num">2</span>,   <span class="cm"># 共享权重</span>
+}
 
-<span class="kw">class</span> <span class="fn">NemotronUltraBlock</span>:
-    <span class="cm"># 偶数层: Mamba (SSM)</span>
-    <span class="cm"># - 处理长上下文高效 O(N)</span>
-    <span class="cm"># - 降低 1M context 的计算开销</span>
-    mamba_layer = MambaLayer(d_model=<span class="num">?</span>)
+<span class="cm"># Layer Pattern (Figure 2):</span>
+<span class="cm"># ┌─ Mamba-2 + LatentMoE ×3 ─┐</span>
+<span class="cm"># │ Mamba-2 + LatentMoE       │</span>
+<span class="cm"># │ Attention + LatentMoE     │ ← 精确 recall</span>
+<span class="cm"># │ Mamba-2 + LatentMoE ×4   │</span>
+<span class="cm"># │ Mamba-2                   │</span>
+<span class="cm"># │ Attention + LatentMoE     │</span>
+<span class="cm"># │ Mamba-2 + LatentMoE ×3   │</span>
+<span class="cm"># │ Mamba-2                   │</span>
+<span class="cm"># │ Attention + LatentMoE     │</span>
+<span class="cm"># │ Mamba-2 + LatentMoE ×2   │</span>
+<span class="cm"># └── Repeat pattern ×N ─────┘</span>
 
-    <span class="cm"># 奇数层: Transformer + LatentMoE</span>
-    <span class="cm"># - 精确 recall 特定事实</span>
-    <span class="cm"># - 专家路由支持多领域推理</span>
-    attn_layer = TransformerLayer(
-        attention=<span class="st">"multi-head"</span>,
-        moe=LatentMoE(
-            num_experts=<span class="num">?</span>,
-            active_experts=<span class="num">?</span>,
-            <span class="cm"># LatentMoE: 潜在空间路由</span>
-            <span class="cm"># 比标准 Top-K 更高效</span>
-        )
-    )
+<span class="cm"># MTP: 2 个共享权重的预测头</span>
+<span class="cm"># 每个 MTP head = 1 Attention + 1 MoE</span>
+<span class="cm"># 推理时做 autoregressive drafting</span>
 
-<span class="cm"># Multi-Token Prediction (MTP)</span>
-<span class="cm"># 单次前向传播预测多个 token</span>
-<span class="cm"># 大幅提升长输出 & 多轮对话吞吐</span>
-<span class="kw">class</span> <span class="fn">MTPHead</span>:
-    <span class="cm"># 并行预测 N 个 future tokens</span>
-    <span class="cm"># 训练时: teacher forcing 所有位置</span>
-    <span class="cm"># 推理时: speculative decoding 加速</span>
-    num_predict = <span class="num">4</span>  <span class="cm"># 典型值</span>
+<span class="cm"># NVFP4 预训练: E2M1 + 2D block quant</span>
+<span class="cm"># 后 15% 层 (16层) 保持高精度</span>
+<span class="cm"># 总训练: 20T tokens</span>
 </pre>
 </div>
 <div class="col-svg">
@@ -143,62 +150,81 @@ footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; col
 </div>
 <div class="col-caption">
 <h3>架构设计哲学</h3>
-<p><strong>Hybrid 动机:</strong> 纯 Transformer 在 1M context 下计算爆炸；纯 Mamba 精确 recall 不足。交替使用两者互补。</p>
-<p><strong>LatentMoE:</strong> 与标准 Top-K MoE 不同，在潜在空间中做路由决策，支持推理/代码/工具调用/领域逻辑间灵活切换。</p>
-<p><strong>MTP:</strong> 训练时预测多个 future tokens（类似 DeepSeek-V3），推理时做 speculative decoding，对多轮 agent 对话特别有效。</p>
-<p><strong>NVFP4:</strong> 同一 checkpoint 跨 Ampere/Hopper/Blackwell 运行，BF16 → NVFP4 在 Blackwell 上 5× 吞吐。</p>
+<p><strong>Layer Pattern:</strong> 非均匀交替 — Mamba-2 层占主导（降 KV cache），少量 Attention 层穿插（保精确 recall）。每层配 LatentMoE（512 experts, top-22）。</p>
+<p><strong>LatentMoE:</strong> 在 2048 维潜在空间做路由决策，比标准 Granular MoE 更好的 accuracy/param ratio。</p>
+<p><strong>MTP:</strong> 2 个共享权重的预测头，每个由 1 Attention + 1 MoE 层组成。训练时 aux loss 0.1；推理时做 native speculative decoding。</p>
+<p><strong>NVFP4 预训练:</strong> E2M1 格式 + 2D block quantization + Random Hadamard + Stochastic Rounding。后 15% 网络 (16 层) + 嵌入层保高精度。BF16 vs NVFP4 loss gap \lt 0.4%。</p>
+<p><strong>预训练:</strong> 20T tokens (Phase 1: 15T 多样性 → Phase 2: 5T 高质量)。WSD 学习率调度。</p>
 
 <table>
 <tr><th>参数</th><th>数值</th></tr>
-<tr><td>总参数</td><td>550B</td></tr>
-<tr><td>激活参数</td><td>55B</td></tr>
-<tr><td>激活比例</td><td>~10%</td></tr>
+<tr><td>Total Layers</td><td>108</td></tr>
+<tr><td>Model Dim</td><td>8192</td></tr>
+<tr><td>Q/KV Heads</td><td>64 / 2 (GQA)</td></tr>
+<tr><td>Experts / Top-K</td><td>512 / 22</td></tr>
+<tr><td>MoE Latent</td><td>2048</td></tr>
+<tr><td>Mamba Heads</td><td>256 (dim=64)</td></tr>
+<tr><td>Total / Active</td><td>550B / 55B</td></tr>
 <tr><td>Context</td><td>1M tokens</td></tr>
-<tr><td>量化</td><td>NVFP4</td></tr>
-<tr><td>GPU 支持</td><td>Ampere/Hopper/Blackwell</td></tr>
+<tr><td>Pretraining</td><td>20T tokens, NVFP4</td></tr>
 </table>
 </div>
 </div>
 
 <!-- ===== Section 2: Training — MOPD ===== -->
-<h2>2. 训练方法 — Multi-Teacher On-Policy Distillation (MOPD)</h2>
+<h2>2. 后训练 Pipeline — SFT → RLVR → MOPD Warmup → MOPD ×2 → MTP Boosting</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># MOPD: Multi-Teacher On-Policy Distillation</span>
-<span class="cm"># 核心: 10+ teacher 模型各司其职, 联合蒸馏到 student</span>
+<pre><span class="cm"># 完整后训练流水线 (Figure 9)</span>
+<span class="cm"># Base → SFT → RLVR → MOPD Warmup → MOPD → MTP Boost</span>
 
-<span class="cm"># Step 1: 训练多个领域专用 Teacher</span>
-teachers = {
-    <span class="st">"math"</span>: train_teacher(domain=<span class="st">"math"</span>),
-    <span class="st">"code"</span>: train_teacher(domain=<span class="st">"code"</span>),
-    <span class="st">"legal"</span>: train_teacher(domain=<span class="st">"legal"</span>),
-    <span class="st">"science"</span>: train_teacher(domain=<span class="st">"science"</span>),
-    <span class="st">"agent"</span>: train_teacher(domain=<span class="st">"agent_tool_use"</span>),
-    <span class="cm"># ... 10+ specialized teachers</span>
+<span class="cm"># ═══ Stage 1: SFT (两阶段) ═══</span>
+sft_stage1 = {
+    <span class="st">"seq_len"</span>: <span class="num">294912</span>,
+    <span class="st">"batch"</span>: <span class="num">64</span>,
+    <span class="st">"samples"</span>: <span class="num">204800</span>,
+    <span class="st">"lr_peak"</span>: <span class="num">1.5e-5</span>,
+}
+sft_stage2 = {
+    <span class="st">"seq_len"</span>: <span class="num">515000</span>,  <span class="cm"># 扩展到 512K 长上下文</span>
+    <span class="st">"batch"</span>: <span class="num">64</span>,
+    <span class="st">"samples"</span>: <span class="num">19200</span>,
+    <span class="st">"lr_peak"</span>: <span class="num">1e-5</span>,
+}
+<span class="cm"># MTP aux loss = 0.1, 保留预训练 MTP 目标</span>
+
+<span class="cm"># ═══ Stage 2: RLVR (统一多环境 RL) ═══</span>
+rlvr = {
+    <span class="st">"algorithm"</span>: <span class="st">"Async GRPO"</span>,
+    <span class="st">"batch_size"</span>: <span class="num">8192</span>,
+    <span class="st">"rollouts_per_sample"</span>: <span class="num">16</span>,
+    <span class="st">"max_gen_len"</span>: <span class="num">64000</span>,  <span class="cm"># 48K→64K 递增</span>
+    <span class="st">"environments"</span>: [
+        <span class="st">"terminal"</span>, <span class="st">"office"</span>, <span class="st">"swe"</span>,
+        <span class="st">"search"</span>, <span class="st">"tool_call"</span>, <span class="st">"math"</span>,
+        <span class="st">"code"</span>, <span class="st">"stem"</span>, <span class="st">"safety"</span>,
+        <span class="st">"chat"</span>, <span class="st">"IF"</span>, <span class="st">"long_ctx"</span>,
+    ],
 }
 
-<span class="cm"># Step 2: Student 生成 On-Policy Rollout</span>
-<span class="kw">for</span> task <span class="kw">in</span> multi_domain_tasks:
-    rollout = student.generate(task.prompt)
+<span class="cm"># ═══ Stage 3: MOPD (2 iterations) ═══</span>
+mopd = {
+    <span class="st">"max_gen_len"</span>: <span class="num">192000</span>,  <span class="cm"># 192K!</span>
+    <span class="st">"batch_prompts"</span>: <span class="num">1024</span>,
+    <span class="st">"rollouts_per_prompt"</span>: <span class="num">1</span>,
+    <span class="st">"iterations"</span>: <span class="num">2</span>,
+    <span class="st">"objective"</span>: <span class="st">"reverse-KL + PPO clip"</span>,
+}
 
-    <span class="cm"># Step 3: 对应 Teacher 打分</span>
-    domain = classify_domain(task)
-    reward = teachers[domain].score(rollout)
-
-    <span class="cm"># Step 4: RL 优化 (GRPO-style)</span>
-    student.update(rollout, reward)
-
-<span class="cm"># 关键: 异步 Pipeline</span>
-<span class="cm"># Student Rollout | Teacher Scoring | Student Update</span>
-<span class="cm"># 三者全流水线并行, 最大化 GPU 利用</span>
-
-<span class="cm"># Step 5: 迭代 Co-Evolution</span>
-<span class="cm"># 每轮 MOPD 后:</span>
-<span class="cm"># - Teacher 从更新后的 Student 初始化</span>
-<span class="cm"># - Teacher 在各自领域继续训练</span>
-<span class="cm"># - 新一轮 MOPD → 更强的 Student</span>
-<span class="cm"># 学生和老师共同进化!</span>
+<span class="cm"># 10+ 专用 Teacher 列表:</span>
+teachers_iter1 = [
+    <span class="st">"STEM"</span>, <span class="st">"Chat"</span>, <span class="st">"IF"</span>,
+    <span class="st">"Terminal-use"</span>, <span class="st">"Conv-tool-use"</span>,
+    <span class="st">"SWE"</span>, <span class="st">"Search"</span>, <span class="st">"Office"</span>,
+    <span class="st">"Usability"</span>, <span class="st">"Agentic-Safety"</span>,
+]
+<span class="cm"># Iter 2: + Coding, Chat2, SWE2, Office2...</span>
 </pre>
 </div>
 <div class="col-svg">
@@ -278,66 +304,87 @@ teachers = {
 <p class="caption">MOPD: Student 生成 → Teachers 评分 → RL 优化 → 迭代进化</p>
 </div>
 <div class="col-caption">
-<h3>MOPD 关键创新</h3>
-<p><strong>vs 标准蒸馏:</strong> 传统蒸馏用单一 teacher 的 logits；MOPD 用 10+ teachers 的 reward signal，在 student 自己的 on-policy 轨迹上学习。</p>
-<p><strong>异步流水线:</strong> Rollout 生成、Teacher 打分、Student 更新三阶段完全 pipeline 并行，最大化训练效率。</p>
-<p><strong>Co-Evolution:</strong> 每轮结束后 teacher 从新 student 初始化再特化训练，两者共同进步，避免 teacher 水平成为上限。</p>
+<h3>MOPD 核心机制</h3>
+<p><strong>目标函数:</strong> Minimize reverse-KL: \(\text{KL}(\pi_\theta(\cdot|y_{\lt t}) \| \pi_{T_d}(\cdot|y_{\lt t}))\)。Teacher 对 student 生成的轨迹做 dense token-level scoring，不是 sparse reward。</p>
+<p><strong>异步解耦:</strong> 行为策略 π_behav (生成 rollout) 与近端策略 π_prox (trust region 中心) 分离。PPO-clip 应用在 π_prox 上。使用 IcePop token-level masking。</p>
+<p><strong>MOPD Warmup:</strong> 发现分布不匹配时 teacher 信号质量差。先对 student 做轻量 SFT 对齐 teacher 分布，显著提升 agentic 域效果（GDPVal: 35.3→46.7）。</p>
+<p><strong>Co-Evolution:</strong> Iter 2 从 MOPD1 的 student 初始化新 teachers，同时复用 Iter 1 teachers。</p>
 
-<h3>预训练数据</h3>
+<h3>Teacher 训练细节</h3>
+<p><strong>SWE Teacher:</strong> 3 阶段 — Agentic SFT → PivotRL (单步环境) → 端到端 SWE-RL (192K gen, 200 turns)。防作弊：删除 future commits + 封锁 git remote。</p>
+<p><strong>Search Teacher:</strong> 训练 context-management — discard-all resets + summary compression，超越官方 context 限制。</p>
+<p><strong>Terminal Teacher:</strong> 长超时设置 (up to 1 hour)，PivotRL 迭代 + re-profiling。</p>
+<p><strong>STEM Teacher:</strong> 40B token SFT (58.75% science + 23.63% math + 10.13% coding + 7.5% general) → RL。超越 DeepSeek V4 Pro。</p>
+
+<h3>MOPD 效果 (Table 5)</h3>
 <table>
-<tr><th>阶段</th><th>数据量</th></tr>
-<tr><td>基础预训练</td><td>10T tokens</td></tr>
-<tr><td>+ 合成法律</td><td>4B tokens</td></tr>
-<tr><td>+ Wiki 合成</td><td>35B tokens</td></tr>
-<tr><td>+ GitHub 代码</td><td>173B tokens</td></tr>
-<tr><td>SFT 样本</td><td>50M 总计</td></tr>
-<tr><td>RL 任务</td><td>2M 总计</td></tr>
-<tr><td>RL 环境</td><td>55 个</td></tr>
+<tr><th>Benchmark</th><th>SFT</th><th>RLVR</th><th>MOPD2</th><th>Teacher</th></tr>
+<tr><td>Terminal Bench</td><td>34.5</td><td>44.5</td><td>54.0</td><td>50.0</td></tr>
+<tr><td>SWE-Bench Verified</td><td>63.5</td><td>65.8</td><td>71.7</td><td>72.5</td></tr>
+<tr><td>TauBench Telecom</td><td>55.7</td><td>82.7</td><td>92.9</td><td>94.0</td></tr>
+<tr><td>BrowseComp</td><td>14.3</td><td>31.0</td><td>44.4</td><td>51.0</td></tr>
+<tr><td>IFBench</td><td>62.3</td><td>78.4</td><td>81.7</td><td>83.0</td></tr>
+<tr><td>LiveCodeBench v6</td><td>85.5</td><td>87.4</td><td>89.0</td><td>92.4</td></tr>
 </table>
+<div class="key-point"><strong>发现:</strong> MOPD 在 agentic 域 recovery 率高达 86-173%（甚至超越 teacher），但在纯推理 (HLE) 只有 17%。原因：HLE 的 teacher 优势来自额外 off-policy 数据，student 采样不到那些推理路径。</div>
 </div>
 </div>
 
 <!-- ===== Section 3: Benchmarks ===== -->
-<h2>3. Benchmark 表现 — Agent 场景全面对比</h2>
+<h2>3. Benchmark — Agentic + 推理 + 长上下文 + 吞吐</h2>
 
 <div class="three-col">
 <div class="col-code">
-<pre><span class="cm"># Nemotron-3-Ultra 核心定位: Agent Orchestrator</span>
-<span class="cm"># 关键指标对比 (2026.06)</span>
+<pre><span class="cm"># 精确 Benchmark 数据 (Figure 1, Paper)</span>
+<span class="cm"># 对比: GLM-5.1(744B-A40B), Kimi-K2.6(1T-A32B), Qwen3.5(397B-17B)</span>
 
-<span class="cm"># 1. Agent 生产力 — PinchBench</span>
-nemotron_ultra = <span class="num">91</span>%  <span class="cm"># 并列第一</span>
-kimi_k26       = <span class="num">91</span>%
-qwen35         = <span class="num">89</span>%
-glm51          = <span class="num">84</span>%
-
-<span class="cm"># 2. 长上下文 — Ruler@1M</span>
-nemotron_ultra = <span class="num">95</span>%  <span class="cm"># 最佳 (1M)</span>
-qwen35         = <span class="num">90</span>%  <span class="cm"># (max 256K?)</span>
-glm51          = <span class="st">"N/A"</span>  <span class="cm"># max 256K</span>
-kimi_k26       = <span class="st">"N/A"</span>  <span class="cm"># max 256K</span>
-
-<span class="cm"># 3. 效率优势</span>
-throughput_vs_open = <span class="st">"5x faster"</span>
-cost_reduction    = <span class="st">"30% fewer tokens"</span>
-<span class="cm"># 完成同等任务用更少 token/turn</span>
-
-<span class="cm"># 4. SWE-bench Verified (跨框架一致)</span>
-frameworks = {
-    <span class="st">"Pi"</span>:          <span class="num">65</span>-<span class="num">70</span>,
-    <span class="st">"OpenHands"</span>:   <span class="num">65</span>-<span class="num">70</span>,
-    <span class="st">"Hermes"</span>:      <span class="num">65</span>-<span class="num">70</span>,
-    <span class="st">"OpenCode"</span>:    <span class="num">65</span>-<span class="num">70</span>,
-    <span class="st">"MiniSWEAgent"</span>: <span class="num">65</span>-<span class="num">70.4</span>,
+<span class="cm"># === Agentic Benchmarks ===</span>
+agentic = {
+    <span class="st">"Terminal Bench 2.1"</span>: {
+        <span class="st">"N3 Ultra BF16"</span>: <span class="num">56.4</span>,
+        <span class="st">"N3 Ultra NVFP4"</span>: <span class="num">53.9</span>,
+        <span class="st">"GLM"</span>: <span class="num">59.3</span>, <span class="st">"Kimi"</span>: <span class="num">67.2</span>, <span class="st">"Qwen"</span>: <span class="num">49.9</span>,
+    },
+    <span class="st">"SWE-Bench Verified"</span>: {
+        <span class="st">"N3 Ultra BF16"</span>: <span class="num">71.9</span>,
+        <span class="st">"N3 Ultra NVFP4"</span>: <span class="num">69.7</span>,
+        <span class="st">"GLM"</span>: <span class="num">73.8</span>, <span class="st">"Kimi"</span>: <span class="num">69.5</span>, <span class="st">"Qwen"</span>: <span class="num">69.9</span>,
+    },
+    <span class="st">"SWE-Bench Multilingual"</span>: {
+        <span class="st">"N3 Ultra BF16"</span>: <span class="num">67.7</span>,
+        <span class="st">"N3 Ultra NVFP4"</span>: <span class="num">65.8</span>,
+        <span class="st">"GLM"</span>: <span class="num">73.8</span>, <span class="st">"Kimi"</span>: <span class="num">65.9</span>, <span class="st">"Qwen"</span>: <span class="num">67.7</span>,
+    },
+    <span class="st">"TauBench V3"</span>: {
+        <span class="st">"N3 Ultra"</span>: <span class="num">70.9</span>,
+        <span class="st">"GLM"</span>: <span class="num">69.7</span>, <span class="st">"Kimi"</span>: <span class="num">72.4</span>, <span class="st">"Qwen"</span>: <span class="num">71.0</span>,
+    },
+    <span class="st">"PinchBench"</span>: {
+        <span class="st">"N3 Ultra"</span>: <span class="num">90.0</span>,
+        <span class="st">"GLM"</span>: <span class="num">81.2</span>, <span class="st">"Kimi"</span>: <span class="num">90.2</span>, <span class="st">"Qwen"</span>: <span class="num">86.6</span>,
+    },
 }
-<span class="cm"># 关键: 跨 harness 一致性!</span>
-<span class="cm"># 不像其他模型只针对特定框架优化</span>
 
-<span class="cm"># 5. 指令遵循 — IFBench</span>
-nemotron_ultra = <span class="num">82</span>%  <span class="cm"># 最佳</span>
-glm51          = <span class="num">77</span>%
-qwen35         = <span class="num">78</span>%
-kimi_k26       = <span class="num">74</span>%
+<span class="cm"># === Long Context & Reasoning ===</span>
+<span class="st">"Ruler @ 1M"</span>: {
+    <span class="st">"N3 Ultra BF16"</span>: <span class="num">94.7</span>,
+    <span class="st">"N3 Ultra NVFP4"</span>: <span class="num">94.0</span>,
+    <span class="st">"Qwen"</span>: <span class="num">90.1</span>,  <span class="cm"># GLM/Kimi N/A (max 256K)</span>
+}
+<span class="st">"IOI 2025 (Score/600)"</span>: {
+    <span class="st">"N3 Ultra"</span>: <span class="num">95.0</span>,
+    <span class="st">"GLM"</span>: <span class="num">76.1</span>, <span class="st">"Kimi"</span>: <span class="num">97.5</span>, <span class="st">"Qwen"</span>: <span class="num">73.6</span>,
+}
+
+<span class="cm"># === Throughput (8K in / 64K out, GB200) ===</span>
+throughput_relative = {
+    <span class="st">"N3 Ultra NVFP4"</span>: <span class="num">5.9</span>,  <span class="cm"># 基准</span>
+    <span class="st">"GLM"</span>: <span class="num">1.0</span>,
+    <span class="st">"Kimi"</span>: <span class="num">1.2</span>,
+    <span class="st">"Qwen"</span>: <span class="num">3.7</span>,
+}
+<span class="cm"># N3 Ultra: TRT-LLM + speculative decoding</span>
+<span class="cm"># Others: vLLM best config</span>
 </pre>
 </div>
 <div class="col-svg">
@@ -423,19 +470,20 @@ kimi_k26       = <span class="num">74</span>%
 </div>
 <div class="col-caption">
 <h3>核心竞争力</h3>
-<p><strong>Agent 一致性:</strong> 跨 5 个 agent 框架（Pi/OpenHands/Hermes/OpenCode/MiniSWE）保持 65-70% SWE-bench，不针对特定 harness 过拟合。</p>
-<p><strong>1M 长上下文:</strong> Ruler@1M 达 95%，竞品多数止步 256K。Mamba 层保证长序列计算可控。</p>
-<p><strong>效率:</strong> 550B 总参但仅 55B 激活 + NVFP4 量化 = 5× 推理吞吐；完成任务 token 用量少 30%。</p>
+<p><strong>吞吐碾压:</strong> 8K/64K 场景下比 GLM-5.1 快 5.9×，比 Kimi-K2.6 快 4.8×，比 Qwen3.5 快 1.6×。归因于 Mamba-2 降 KV cache + MoE 降计算 + MTP speculative decoding + NVFP4。</p>
+<p><strong>Agentic 全面:</strong> SWE-Bench 71.9%（BF16最佳），PinchBench 90%，TauBench V3 70.9%。跨 5+ agent 框架一致。</p>
+<p><strong>1M 长上下文:</strong> Ruler@1M 达 94.7%（BF16），是唯一支持 1M 的同级开源模型。</p>
 
-<h3>弱项</h3>
-<p><strong>Coding:</strong> Terminal-Bench 2.0 只有 54%，低于 GLM 5.1 (64%) 和 Kimi K2.6 (67%)。</p>
-<p><strong>规划:</strong> EnterpriseOps-Gym 33%，低于 GLM 5.1 (40%)。</p>
+<h3>vs 竞品分析</h3>
+<p><strong>vs GLM-5.1 (744B-A40B):</strong> 参数量小 26% 但吞吐 5.9× 快。Agentic 多数平手，Terminal 稍弱 (56.4 vs 59.3)。</p>
+<p><strong>vs Kimi-K2.6 (1T-A32B):</strong> 参数少 45% 但吞吐 4.8× 快。Coding/Terminal 弱 (56.4 vs 67.2)，但长上下文和 agent 强。</p>
+<p><strong>vs Qwen3.5 (397B-17B):</strong> 吞吐 1.6× 快。Agent 全面超越，Ruler@1M 领先 4.6 分。</p>
 
-<h3>部署生态</h3>
-<p>权重完全开放 (OpenMDW-1.1)。支持 NIM、vLLM、SGLang、TRT-LLM。有 SFT/LoRA/GRPO/MOPD 官方 recipe。</p>
+<h3>Reasoning Budget Control</h3>
+<p>支持推理时动态调节 thinking token 预算 — 简单子任务快速完成，复杂规划分配更多算力。SFT 阶段已训练 medium-effort 模式。</p>
 
 <div class="key-point">
-<strong>总结:</strong> Nemotron-3-Ultra 是目前最激进的开源 agent 模型 — 用 Mamba 降长上下文成本、MoE 降推理算力、MOPD 蒸馏多领域能力、MTP 提吞吐，在 agent 生产力和长上下文上达到 frontier，代价是纯 coding 稍弱。
+<strong>定位总结:</strong> Nemotron-3-Ultra 核心优势是 accuracy-per-FLOP — 在同等质量下推理吞吐远超竞品。设计哲学是"agent 任务不需要每个 token 都全力推理"，通过 Mamba 降 attention 成本 + MoE 稀疏激活 + NVFP4 + MTP，把单位 GPU 产出最大化。弱点在纯 coding 领域。
 </div>
 </div>
 </div>
