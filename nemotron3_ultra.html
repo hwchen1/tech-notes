@@ -488,7 +488,171 @@ throughput_relative = {
 </div>
 </div>
 
-<footer>Generated 2026.06.05 · Source: NVIDIA Developer Blog · Nemotron-3-Ultra Technical Report</footer>
+<!-- ===== Section 4: Long-Horizon Agent Capability ===== -->
+<h2>4. Long-Horizon 能力构建 — 从架构到数据到训练的系统工程</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Long-Horizon Agent 能力构建的 4 层设计</span>
+
+<span class="cm"># ═══ Layer 1: 架构层 — 降低长序列成本 ═══</span>
+<span class="cm"># Mamba-2 层: O(N) 复杂度处理 1M context</span>
+<span class="cm"># 避免 Transformer O(N²) 在长 session 中爆炸</span>
+<span class="cm"># GQA 64Q/2KV: 极小 KV cache footprint</span>
+<span class="cm"># → Agent 200+ turns 对话不会 OOM</span>
+
+<span class="cm"># ═══ Layer 2: 预训练长上下文扩展 ═══</span>
+<span class="cm"># Phase 1: 标准预训练 (seq_len ~ 8K-32K)</span>
+<span class="cm"># Phase 2: 长上下文扩展到 1M tokens</span>
+<span class="cm"># 使用 RoPE 频率外推 + 渐进拉长</span>
+
+<span class="cm"># ═══ Layer 3: SFT 长上下文数据 ═══</span>
+sft_long_ctx = {
+    <span class="st">"stage2_seq_len"</span>: <span class="num">515000</span>,  <span class="cm"># 512K 训练</span>
+    <span class="st">"capabilities"</span>: [
+        <span class="st">"multi-document reasoning"</span>,
+        <span class="st">"sequential scanning"</span>,
+        <span class="st">"synthetic table querying"</span>,
+    ],
+}
+
+<span class="cm"># ═══ Layer 4: RLVR 长程 Agent 环境 ═══</span>
+long_horizon_envs = {
+    <span class="cm"># SWE-RL: 200 agent turns, 192K gen</span>
+    <span class="st">"swe_rl"</span>: {
+        <span class="st">"max_turns"</span>: <span class="num">200</span>,
+        <span class="st">"max_gen"</span>: <span class="num">192000</span>,
+        <span class="st">"actions"</span>: [<span class="st">"bash"</span>, <span class="st">"tool_call"</span>, <span class="st">"edit"</span>],
+        <span class="st">"reward"</span>: <span class="st">"binary (hidden tests)"</span>,
+        <span class="cm"># 防作弊: 删 future commits + 封锁 git remote</span>
+    },
+    <span class="cm"># Terminal: 任务可运行 1 小时</span>
+    <span class="st">"terminal"</span>: {
+        <span class="st">"timeout"</span>: <span class="st">"1 hour"</span>,
+        <span class="st">"data"</span>: <span class="st">"370K multi-turn conversations"</span>,
+        <span class="st">"skills"</span>: [<span class="st">"adaptive planning"</span>,
+                   <span class="st">"error recovery"</span>,
+                   <span class="st">"tool use"</span>],
+    },
+    <span class="cm"># Search: 超长交互 + context management</span>
+    <span class="st">"search"</span>: {
+        <span class="st">"queries_per_task"</span>: <span class="st">"50-100 searches"</span>,
+        <span class="st">"context_mgmt"</span>: [
+            <span class="st">"discard-all resets"</span>,
+            <span class="st">"summary compression"</span>,
+        ],
+        <span class="cm"># 突破官方 context 限制!</span>
+    },
+    <span class="cm"># Office/GDPVal: 文件分析 + 专业报告</span>
+    <span class="st">"office"</span>: {
+        <span class="st">"tasks"</span>: <span class="st">"file-grounded reasoning"</span>,
+        <span class="st">"teacher"</span>: <span class="st">"AfterQuery trajectories"</span>,
+    },
+    <span class="cm"># Conv tool-use: 防止过早终止</span>
+    <span class="st">"conv_tool_use"</span>: {
+        <span class="st">"focus"</span>: <span class="st">"sequential dependent actions"</span>,
+        <span class="cm"># 训练数据强调不能中途放弃</span>
+    },
+}
+
+<span class="cm"># ═══ Layer 5: MOPD 长程信号 ═══</span>
+<span class="cm"># MOPD gen_len = 192K tokens</span>
+<span class="cm"># Teacher 提供 dense token-level 信号</span>
+<span class="cm"># 而非只有 final sparse reward</span>
+<span class="cm"># → 解决 long-horizon credit assignment</span>
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowD" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#76b900"/></marker>
+  </defs>
+
+  <text x="210" y="20" text-anchor="middle" fill="#76b900" font-size="13" font-weight="bold">Long-Horizon 能力的系统构建</text>
+
+  <!-- Level 1: Architecture -->
+  <rect x="40" y="40" width="340" height="70" rx="10" fill="#0d1a0d" stroke="#76b900" stroke-width="1.5"/>
+  <text x="60" y="60" fill="#76b900" font-size="11" font-weight="bold">L1: 架构 — 1M Context 可行性</text>
+  <text x="60" y="78" fill="#8a8" font-size="9">Mamba-2: O(N) 长序列, 无 KV cache 爆炸</text>
+  <text x="60" y="93" fill="#8a8" font-size="9">GQA 64Q/2KV: 极小 KV cache (vs 64Q/64KV)</text>
+  <text x="60" y="105" fill="#666" font-size="8">→ 200+ turns agent 对话在单卡内可行</text>
+
+  <line x1="210" y1="110" x2="210" y2="130" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrowD)"/>
+
+  <!-- Level 2: Context Extension -->
+  <rect x="40" y="135" width="340" height="55" rx="10" fill="#0d0d1a" stroke="#4facfe" stroke-width="1.5"/>
+  <text x="60" y="155" fill="#4facfe" font-size="11" font-weight="bold">L2: 预训练长上下文扩展 → 1M</text>
+  <text x="60" y="173" fill="#88a" font-size="9">20T tokens 预训练 → RoPE 频率外推 → 1M context</text>
+  <text x="60" y="185" fill="#666" font-size="8">Ruler@1M: 94.7% (唯一 1M 的同级开源模型)</text>
+
+  <line x1="210" y1="190" x2="210" y2="210" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrowD)"/>
+
+  <!-- Level 3: SFT Long -->
+  <rect x="40" y="215" width="340" height="55" rx="10" fill="#1a1a0d" stroke="#f7971e" stroke-width="1.5"/>
+  <text x="60" y="235" fill="#f7971e" font-size="11" font-weight="bold">L3: SFT 长上下文能力注入</text>
+  <text x="60" y="253" fill="#aa8" font-size="9">Stage 2: 515K seq_len, 长文档推理 + 表格扫描</text>
+  <text x="60" y="265" fill="#666" font-size="8">Reasoning budget control: 训练 medium-effort 模式</text>
+
+  <line x1="210" y1="270" x2="210" y2="290" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrowD)"/>
+
+  <!-- Level 4: RLVR Long-Horizon Environments -->
+  <rect x="40" y="295" width="340" height="105" rx="10" fill="#1a0d0d" stroke="#ff6b6b" stroke-width="1.5"/>
+  <text x="60" y="315" fill="#ff6b6b" font-size="11" font-weight="bold">L4: RLVR 长程 Agent 环境</text>
+  <text x="60" y="335" fill="#c88" font-size="9">SWE-RL: 200 turns × 192K gen, 端到端 patch 生成</text>
+  <text x="60" y="350" fill="#c88" font-size="9">Terminal: 1 hour timeout, 370K multi-turn 对话</text>
+  <text x="60" y="365" fill="#c88" font-size="9">Search: 50-100 queries + context discard/compress</text>
+  <text x="60" y="380" fill="#c88" font-size="9">Conv Tool-Use: sequential dependent actions</text>
+  <text x="60" y="395" fill="#666" font-size="8">训练信号: GRPO (batch=8192, 16 rollouts, verifiable reward)</text>
+
+  <line x1="210" y1="400" x2="210" y2="420" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrowD)"/>
+
+  <!-- Level 5: MOPD Dense Signal -->
+  <rect x="40" y="425" width="340" height="70" rx="10" fill="#0d0d1a" stroke="#c678dd" stroke-width="1.5"/>
+  <text x="60" y="445" fill="#c678dd" font-size="11" font-weight="bold">L5: MOPD 长程 Dense Supervision</text>
+  <text x="60" y="463" fill="#a8a" font-size="9">Gen 192K tokens, teacher 逐 token 打分</text>
+  <text x="60" y="478" fill="#a8a" font-size="9">解决 sparse reward 的 credit assignment 问题</text>
+  <text x="60" y="490" fill="#666" font-size="8">Loss mask unfinished trajectories + penalize malformed calls</text>
+
+  <!-- Final result -->
+  <line x1="210" y1="495" x2="210" y2="515" stroke="#76b900" stroke-width="1.5" marker-end="url(#arrowD)"/>
+  <rect x="100" y="520" width="220" height="30" rx="8" fill="#1a2a1a" stroke="#76b900" stroke-width="2"/>
+  <text x="210" y="540" text-anchor="middle" fill="#76b900" font-size="11" font-weight="bold">Long-Running Agent Orchestrator</text>
+</svg>
+</div>
+<p class="caption">5 层设计: 架构 → 预训练 → SFT → RLVR 环境 → MOPD dense signal</p>
+</div>
+<div class="col-caption">
+<h3>为什么能 Long-Horizon</h3>
+<p><strong>问题:</strong> 传统 RL 在长 session 中面临：(1) KV cache 内存爆炸 (2) sparse reward credit assignment (3) goal drift (4) error accumulation。</p>
+
+<h3>逐层解决</h3>
+<p><strong>架构层:</strong> Mamba-2 O(N) + GQA 2KV → 物理上支撑 200+ turn 不 OOM。比纯 Transformer (O(N²) + full KV) 节省 10×+ 内存。</p>
+<p><strong>RLVR 环境设计:</strong> 不是短 prompt→response，而是真实的多轮 agent loop (最多 200 turns)。模型在训练时就经历长 session 的全部挑战。</p>
+<p><strong>Context Management:</strong> Search teacher 专门训练 discard-all + summary compression 策略，让模型在 context 快满时主动管理信息，而不是被动截断。</p>
+<p><strong>Anti-Shortcut:</strong> Conv tool-use 数据专门解决"过早终止"问题 — 训练强调必须完成 sequential dependent actions 不能半途放弃。</p>
+
+<h3>MOPD 解决 Credit Assignment</h3>
+<p><strong>核心洞察:</strong> 长 session 的 sparse final reward（任务成功/失败）无法告诉模型哪一步出了问题。MOPD 的 teacher 提供 <em>每个 token</em> 的 dense signal（reverse-KL），相当于对整个轨迹做精细纠错。</p>
+<p><strong>配合措施:</strong> (1) Mask unfinished trajectories (timeout/max turns 不给 reward) (2) Penalize malformed reasoning/tool calls 的 specific tokens with negative advantage (3) 防作弊机制确保 reward 信号可信。</p>
+
+<h3>关键数据</h3>
+<table>
+<tr><th>维度</th><th>数值</th></tr>
+<tr><td>最长训练 gen</td><td>192K tokens</td></tr>
+<tr><td>SWE-RL max turns</td><td>200</td></tr>
+<tr><td>Terminal timeout</td><td>1 hour</td></tr>
+<tr><td>Search queries/task</td><td>50-100</td></tr>
+<tr><td>Terminal SFT data</td><td>370K conversations</td></tr>
+<tr><td>支持 context</td><td>1M tokens</td></tr>
+<tr><td>Reasoning budget</td><td>动态可控</td></tr>
+</table>
+
+<div class="key-point"><strong>设计哲学:</strong> Long-horizon 不是单点技术，是从底层架构 (Mamba降成本) → 数据 (真实长session) → 训练算法 (MOPD dense signal) → 推理控制 (budget control) 的全栈系统工程。每层解决一个具体瓶颈。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.05 · Source: NVIDIA Nemotron-3-Ultra Technical Report (65 pages)</footer>
 
 </div>
 </body>
