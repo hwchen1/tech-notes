@@ -437,6 +437,11 @@ const DEFAULT_LAYOUT = [
                 "page": "gemma4_12b.html",
                 "label": "Gemma 4 12B (Encoder-Free)",
                 "color": "#4285f4"
+            },
+            {
+                "page": "nemotron3_ultra.html",
+                "label": "Nemotron-3-Ultra (550B MoE)",
+                "color": "#76b900"
             }
         ]
     },
@@ -1204,6 +1209,7 @@ function renderWelcomeCards(layout) {
         'vlm_agent_future.html': 'VLM × Code Agent 未来发展方向',
         'mai_thinking.html': 'Microsoft AI 推理模型 — 34.7B/962B MoE + Hill-Climbing RL + NoPE Global Attention, 从头训练无蒸馏',
         'gemma4_12b.html': 'Google DeepMind Encoder-Free 统一多模态 — 12B Dense, 256K Context, PLE + Shared KV, Apache 2.0',
+        'nemotron3_ultra.html': 'NVIDIA 550B MoE (55B Active) — Hybrid Mamba-Transformer, LatentMoE, MOPD 多教师蒸馏, 1M Context, 5× 吞吐',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
         'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
@@ -1239,6 +1245,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'nemotron3_ultra.html',
         'lt_synthetic_data.html',
         'gemma4_12b.html',
         'mai_thinking.html',
