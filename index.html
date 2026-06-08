@@ -408,8 +408,28 @@ const DEFAULT_LAYOUT = [
             },
             {
                 "page": "lt_longtracerl.html",
-                "label": "LongTraceRL (128K Agent RL)",
+                "label": "证据散布 Pipeline (LongTraceRL/ACC/LONGBLOCKS)",
                 "color": "#ffd200"
+            },
+            {
+                "page": "lt_long_align.html",
+                "label": "长上下文对齐 (LongAlign/LongLoRA)",
+                "color": "#4facfe"
+            },
+            {
+                "page": "lt_long_synthesis.html",
+                "label": "长文档合成 (LongPack/NExtLong/Hierarchical)",
+                "color": "#34a853"
+            },
+            {
+                "page": "lt_long_qa.html",
+                "label": "可验证长QA (LongCite/LongFaith/MIMG)",
+                "color": "#667eea"
+            },
+            {
+                "page": "lt_long_output.html",
+                "label": "长输出生成 (LongWriter/LongWriter-Zero)",
+                "color": "#ff6b6b"
             }
         ]
     },
@@ -1218,6 +1238,10 @@ function renderWelcomeCards(layout) {
         'nemotron3_ultra.html': 'NVIDIA 550B MoE (55B Active) — Hybrid Mamba-Transformer, LatentMoE, MOPD 多教师蒸馏, 1M Context, 5× 吞吐',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'lt_longtracerl.html': '证据散布三大Pipeline — LongTraceRL(分层干扰128K+GRPO) / ACC(Agent轨迹编译SFT) / LONGBLOCKS(三类任务统一框架)',
+        'lt_long_align.html': '长上下文对齐入门 — LongAlign(Self-Instruct+Packing+Loss加权) + LongLoRA(S²-Attn+LoRA扩展4K→100K)',
+        'lt_long_synthesis.html': '长文档合成方法 — LongPack(语义拼接) / NExtLong(Dense硬负样本) / LiteLong(规则化) / Hierarchical SDG(百万级)',
+        'lt_long_qa.html': '可验证长QA — LongCite(精确引用) / LongFaith(忠实度) / MIMG(多粒度) / LongMIT(多轮保持)',
+        'lt_long_output.html': '长输出生成 — LongWriter(AgentWrite+SFT突破2K) / LongGenBench(评测) / LongWriter-Zero(纯RL零样本10K+)',
         'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
         'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
         'vit_clip.html': 'OpenAI 对比学习 dual encoder, ViT-B/L/H, InfoNCE loss',
@@ -1252,6 +1276,10 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'lt_long_align.html',
+        'lt_long_synthesis.html',
+        'lt_long_qa.html',
+        'lt_long_output.html',
         'lt_longtracerl.html',
         'nemotron3_ultra.html',
         'lt_synthetic_data.html',

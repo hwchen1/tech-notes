@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长输出生成 — LongWriter / LongGenBench / LongWriter-Zero</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #ff6b6b, #ffa94d); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #ff6b6b; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 520px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #ff6b6b0a; border: 1px solid #ff6b6b22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #ff6b6b; }
+.key-point-blue { background: #4facfe0a; border: 1px solid #4facfe22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point-blue strong { color: #4facfe; }
+.key-point-green { background: #34a8530a; border: 1px solid #34a85322; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point-green strong { color: #34a853; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #ff6b6b; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>长输出生成 — LongWriter / LongGenBench / LongWriter-Zero</h1>
+<p class="subtitle">突破 LLM 输出长度瓶颈: 从 2K 到 10K+ tokens 连贯生成 | 2024-2025</p>
+
+<!-- ===== Section 1: LongWriter ===== -->
+<h2>1. LongWriter — AgentWrite 数据合成 + SFT (清华 GLM, 2024)</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 核心问题 ======</span>
+<span class="cm"># 即使模型能处理 128K 输入上下文,</span>
+<span class="cm"># 输出通常限制在 ~2K tokens</span>
+<span class="cm"># 原因: 训练数据中几乎没有长输出样本</span>
+<span class="cm"># → 模型学到的"正常输出"就是短回复</span>
+<span class="cm">#</span>
+<span class="cm"># ====== AgentWrite Pipeline ======</span>
+<span class="cm"># 核心思路: 用 agent 分步生成长文本</span>
+<span class="cm"># 再用生成的长文本做 SFT 训练数据</span>
+
+<span class="cm"># Step 1: Plan (生成大纲)</span>
+<span class="kw">def</span> <span class="fn">agent_plan</span>(task, target_length):
+    <span class="cm"># 输入: 写作任务 + 目标长度</span>
+    <span class="cm"># 输出: 分段大纲 (section titles + lengths)</span>
+    outline = llm.generate(
+        f<span class="st">"Plan a {target_length}-token article:\n"</span>
+        f<span class="st">"Task: {task}\n"</span>
+        f<span class="st">"Output: numbered sections with word counts"</span>
+    )
+    <span class="kw">return</span> parse_outline(outline)
+
+<span class="cm"># Step 2: Write (逐段生成)</span>
+<span class="kw">def</span> <span class="fn">agent_write</span>(outline):
+    sections = []
+    <span class="kw">for</span> section <span class="kw">in</span> outline:
+        <span class="cm"># 每段 200-1000 tokens (模型擅长的范围)</span>
+        text = llm.generate(
+            f<span class="st">"Write section: {section.title}\n"</span>
+            f<span class="st">"Length: {section.target_len} words\n"</span>
+            f<span class="st">"Context: {sections[-1] if sections else ''}"</span>
+        )
+        sections.append(text)
+    <span class="kw">return</span> sections
+
+<span class="cm"># Step 3: Merge (合并 + 连贯性修正)</span>
+<span class="kw">def</span> <span class="fn">agent_merge</span>(sections):
+    full_text = <span class="st">"\n\n"</span>.join(sections)
+    <span class="cm"># 修正段间过渡和重复</span>
+    <span class="kw">return</span> llm.refine(full_text)
+
+<span class="cm"># ====== 训练流程 ======</span>
+<span class="cm"># 1. AgentWrite 生成 6000 条长输出数据</span>
+<span class="cm">#    (LongWriter-6K, 每条 2K-10K+ tokens)</span>
+<span class="cm"># 2. 用 LongWriter-6K 对基座模型做 SFT</span>
+<span class="cm"># 3. SFT 后模型直接生成长文本</span>
+<span class="cm">#    (不再需要 agent pipeline)</span>
+<span class="cm">#</span>
+<span class="cm"># 开源: GLM-4-9B-LongWriter</span>
+<span class="cm"># 评测: LongBench-Write</span>
+<span class="cm"># 效果: 支持 10K+ token 连贯输出</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 420" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#ff6b6b"/></marker></defs>
+<text x="200" y="20" fill="#ff6b6b" font-size="12" text-anchor="middle" font-weight="bold">AgentWrite Pipeline + SFT Training</text>
+
+<!-- Input -->
+<rect x="120" y="40" width="160" height="30" rx="6" fill="#1a1a2e" stroke="#ffa94d"/>
+<text x="200" y="59" fill="#ffa94d" font-size="10" text-anchor="middle">Task: "Write 8000-word essay"</text>
+
+<line x1="200" y1="70" x2="200" y2="90" stroke="#ff6b6b" marker-end="url(#ah1)"/>
+
+<!-- Plan -->
+<rect x="80" y="92" width="240" height="50" rx="8" fill="#0f0f1a" stroke="#ff6b6b66"/>
+<text x="100" y="110" fill="#ff6b6b" font-size="10" font-weight="bold">Step 1: Plan</text>
+<text x="100" y="126" fill="#a8a8be" font-size="8">LLM generates outline: 8 sections x ~1000 tokens</text>
+<text x="100" y="138" fill="#6b6b80" font-size="7">Section 1 (800w) | Section 2 (1200w) | ...</text>
+
+<line x1="200" y1="142" x2="200" y2="162" stroke="#ff6b6b" marker-end="url(#ah1)"/>
+
+<!-- Write -->
+<rect x="80" y="164" width="240" height="60" rx="8" fill="#0f0f1a" stroke="#4facfe66"/>
+<text x="100" y="182" fill="#4facfe" font-size="10" font-weight="bold">Step 2: Write (per section)</text>
+<rect x="95" y="190" width="50" height="20" rx="3" fill="#4facfe11" stroke="#4facfe44"/>
+<text x="120" y="204" fill="#4facfe" font-size="7" text-anchor="middle">Sec 1</text>
+<rect x="150" y="190" width="50" height="20" rx="3" fill="#4facfe11" stroke="#4facfe44"/>
+<text x="175" y="204" fill="#4facfe" font-size="7" text-anchor="middle">Sec 2</text>
+<rect x="205" y="190" width="50" height="20" rx="3" fill="#4facfe11" stroke="#4facfe44"/>
+<text x="230" y="204" fill="#4facfe" font-size="7" text-anchor="middle">Sec 3</text>
+<rect x="260" y="190" width="50" height="20" rx="3" fill="#4facfe11" stroke="#4facfe44"/>
+<text x="285" y="204" fill="#4facfe" font-size="7" text-anchor="middle">...</text>
+<text x="100" y="220" fill="#6b6b80" font-size="7">Each section: 200-1000 tokens (LLM comfort zone)</text>
+
+<line x1="200" y1="224" x2="200" y2="244" stroke="#ff6b6b" marker-end="url(#ah1)"/>
+
+<!-- Merge -->
+<rect x="80" y="246" width="240" height="40" rx="8" fill="#0f0f1a" stroke="#34a85366"/>
+<text x="100" y="264" fill="#34a853" font-size="10" font-weight="bold">Step 3: Merge + Coherence Fix</text>
+<text x="100" y="278" fill="#a8a8be" font-size="8">Concatenate + fix transitions + remove repeats</text>
+
+<line x1="200" y1="286" x2="200" y2="306" stroke="#ff6b6b" marker-end="url(#ah1)"/>
+
+<!-- Output: Training Data -->
+<rect x="60" y="308" width="280" height="35" rx="8" fill="#ff6b6b11" stroke="#ff6b6b66"/>
+<text x="200" y="325" fill="#ff6b6b" font-size="10" text-anchor="middle" font-weight="bold">LongWriter-6K: 6000 samples (2K-10K+ tokens each)</text>
+<text x="200" y="338" fill="#6b6b80" font-size="7" text-anchor="middle">AgentWrite output becomes SFT training data</text>
+
+<line x1="200" y1="343" x2="200" y2="363" stroke="#ffa94d" marker-end="url(#ah1)"/>
+
+<!-- SFT -->
+<rect x="100" y="365" width="200" height="40" rx="8" fill="#ffa94d11" stroke="#ffa94d66"/>
+<text x="200" y="382" fill="#ffa94d" font-size="10" text-anchor="middle" font-weight="bold">SFT on Base Model (GLM-4-9B)</text>
+<text x="200" y="398" fill="#a8a8be" font-size="8" text-anchor="middle">Result: direct 10K+ output without agent</text>
+</svg>
+</div>
+<p class="caption">AgentWrite 将长文本任务分解为 plan-write-merge 三步, 生成的长输出直接作为 SFT 训练数据</p>
+</div>
+<div class="col-caption">
+<h3>Key Insights</h3>
+<div class="key-point">
+<strong>Root Cause:</strong> 输出长度瓶颈不是模型能力问题, 而是训练数据偏差 -- 几乎所有 SFT 数据都是短回复 (&lt;2K tokens)
+</div>
+<div class="key-point">
+<strong>AgentWrite 核心:</strong> 把"一次性写长文"转化为"分段写短文再合并", 绕过单次生成长度限制
+</div>
+<div class="key-point-blue">
+<strong>数据效率:</strong> 仅 6000 条 AgentWrite 生成的样本就能解锁 10K+ 输出能力, 说明模型本身有长输出潜力
+</div>
+<div class="key-point-green">
+<strong>Self-Bootstrapping:</strong> 用当前模型的 agent 模式生成数据 → SFT 后模型不再需要 agent → 蒸馏了 agent 能力到单次生成
+</div>
+<h3>LongBench-Write 评测</h3>
+<p>输出质量评分 + 长度达标率</p>
+<p>GLM-4-9B-LongWriter 在 10K 目标长度下达标率 &gt;85%, 对比 GPT-4 仅 ~50%</p>
+</div>
+</div>
+
+<!-- ===== Section 2: LongGenBench ===== -->
+<h2>2. LongGenBench — 长输出质量评测基准</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== LongGenBench 评测维度 ======</span>
+<span class="cm"># 专门评测 LLM 长输出质量的 benchmark</span>
+<span class="cm"># (区别于长输入理解评测如 RULER/HELMET)</span>
+
+<span class="cm"># 维度 1: Length Compliance</span>
+<span class="cm"># 输出是否达到要求长度?</span>
+<span class="cm"># metric: |actual_len - target_len| / target_len</span>
+<span class="cm"># 失败模式: 模型提前停止 / 反复说"总结"</span>
+
+<span class="cm"># 维度 2: Coherence</span>
+<span class="cm"># 长文本前后是否连贯?</span>
+<span class="cm"># 检测: 重复段落 / 前后矛盾 / 话题漂移</span>
+<span class="cm"># 评估: sliding window 相似度 + LLM judge</span>
+
+<span class="cm"># 维度 3: Factuality</span>
+<span class="cm"># 长文本中的事实是否准确?</span>
+<span class="cm"># 越长 → 越容易出现 hallucination</span>
+<span class="cm"># 尤其在技术报告/综述类任务中关键</span>
+
+<span class="cm"># 维度 4: Structure</span>
+<span class="cm"># 是否有合理的组织结构?</span>
+<span class="cm"># 检测: 段落层次 / 章节过渡 / 逻辑链条</span>
+<span class="cm"># 4K+ 时结构崩坏是最常见失败</span>
+
+<span class="cm"># 维度 5: Instruction Following</span>
+<span class="cm"># 是否满足具体格式要求?</span>
+<span class="cm"># 例: "写 5 章, 每章含代码示例"</span>
+<span class="cm"># 长输出时格式遵从率显著下降</span>
+
+<span class="cm"># ====== 任务类型 ======</span>
+<span class="cm"># - 长故事 (creative writing, 5K-20K)</span>
+<span class="cm"># - 技术报告 (structured, 3K-10K)</span>
+<span class="cm"># - 综述文章 (survey, 5K-15K)</span>
+<span class="cm"># - 代码文件 (code gen, 2K-8K)</span>
+
+<span class="cm"># ====== 核心发现 ======</span>
+<span class="cm"># 大部分模型在 4K+ 输出时质量急剧下降</span>
+<span class="cm"># 典型失败模式:</span>
+<span class="cm">#   1. Repetition cliff: 4K 后开始循环</span>
+<span class="cm">#   2. Topic drift: 逐渐偏离原始指令</span>
+<span class="cm">#   3. Structure collapse: 段落边界消失</span>
+<span class="cm">#   4. Quality fade: 后半段信息密度骤降</span>
+<span class="cm">#   5. Premature stop: 突然结束 + "总结"</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg">
+<text x="200" y="20" fill="#ff6b6b" font-size="11" text-anchor="middle" font-weight="bold">Output Quality vs. Length (LongGenBench)</text>
+
+<!-- Axes -->
+<line x1="60" y1="290" x2="370" y2="290" stroke="#3a3a50" stroke-width="1"/>
+<line x1="60" y1="290" x2="60" y2="45" stroke="#3a3a50" stroke-width="1"/>
+
+<!-- Y axis labels -->
+<text x="50" y="60" fill="#6b6b80" font-size="8" text-anchor="end">100%</text>
+<text x="50" y="118" fill="#6b6b80" font-size="8" text-anchor="end">80%</text>
+<text x="50" y="175" fill="#6b6b80" font-size="8" text-anchor="end">60%</text>
+<text x="50" y="233" fill="#6b6b80" font-size="8" text-anchor="end">40%</text>
+<text x="50" y="290" fill="#6b6b80" font-size="8" text-anchor="end">20%</text>
+<text x="20" y="175" fill="#a8a8be" font-size="9" text-anchor="middle" transform="rotate(-90 20 175)">Quality Score</text>
+
+<!-- X axis labels -->
+<text x="60" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">0</text>
+<text x="122" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">1K</text>
+<text x="184" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">2K</text>
+<text x="246" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">4K</text>
+<text x="308" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">8K</text>
+<text x="370" y="305" fill="#6b6b80" font-size="8" text-anchor="middle">10K+</text>
+<text x="215" y="325" fill="#a8a8be" font-size="9" text-anchor="middle">Output Tokens</text>
+
+<!-- Grid lines -->
+<line x1="60" y1="118" x2="370" y2="118" stroke="#1e1e30" stroke-dasharray="3,3"/>
+<line x1="60" y1="175" x2="370" y2="175" stroke="#1e1e30" stroke-dasharray="3,3"/>
+<line x1="60" y1="233" x2="370" y2="233" stroke="#1e1e30" stroke-dasharray="3,3"/>
+
+<!-- 4K cliff marker -->
+<line x1="246" y1="45" x2="246" y2="290" stroke="#ff6b6b33" stroke-dasharray="4,4"/>
+<text x="246" y="40" fill="#ff6b6b" font-size="8" text-anchor="middle">4K Cliff</text>
+
+<!-- Curve: Standard LLM (drops sharply at 4K) -->
+<path d="M60,65 C90,68 122,72 150,78 C170,84 200,95 220,120 C235,145 246,190 270,240 C290,260 330,272 370,275" fill="none" stroke="#ffa94d" stroke-width="2"/>
+<circle cx="246" cy="190" r="3" fill="#ffa94d"/>
+<text x="360" y="268" fill="#ffa94d" font-size="8">Standard LLM</text>
+
+<!-- Curve: LongWriter (degrades gracefully) -->
+<path d="M60,60 C90,62 122,65 150,70 C170,74 200,80 220,88 C235,95 246,105 270,125 C290,140 330,155 370,165" fill="none" stroke="#34a853" stroke-width="2"/>
+<circle cx="246" cy="105" r="3" fill="#34a853"/>
+<text x="360" y="158" fill="#34a853" font-size="8">LongWriter</text>
+
+<!-- Annotations -->
+<rect x="250" y="195" width="120" height="55" rx="4" fill="#0f0f1a" stroke="#ff6b6b44"/>
+<text x="260" y="210" fill="#ff6b6b" font-size="7" font-weight="bold">Failure Modes &gt;4K:</text>
+<text x="260" y="222" fill="#a8a8be" font-size="7">1. Repetition loops</text>
+<text x="260" y="234" fill="#a8a8be" font-size="7">2. Topic drift</text>
+<text x="260" y="246" fill="#a8a8be" font-size="7">3. Structure collapse</text>
+</svg>
+</div>
+<p class="caption">标准 LLM 在 4K tokens 后输出质量急剧下降 (重复/离题/结构崩坏), LongWriter 系列模型显著延缓退化曲线</p>
+</div>
+<div class="col-caption">
+<h3>评测维度总结</h3>
+<div class="key-point">
+<strong>Length Compliance:</strong> 模型是否能输出到目标长度, 还是提前截断? 大部分模型在 4K 后开始"强行总结"
+</div>
+<div class="key-point-blue">
+<strong>Coherence:</strong> 滑动窗口检测重复 + LLM judge 评估连贯性. 重复是最普遍的失败模式
+</div>
+<div class="key-point-green">
+<strong>Structure:</strong> 长文本需要清晰的章节/段落/过渡结构. 4K+ 时结构崩坏最为显著
+</div>
+<h3>模型排名 (典型)</h3>
+<p>GPT-4o: 2K 内优秀, 4K+ 急速下降</p>
+<p>Claude: 较好的长输出连贯性</p>
+<p>GLM-4-LongWriter: 10K 仍保持可用质量</p>
+<p>开源 7B 模型: 普遍在 2K 后崩坏</p>
+<h3>Key Insight</h3>
+<div class="key-point">
+<strong>4K Cliff:</strong> 几乎所有未经专门长输出训练的模型, 在 4K tokens 输出后都出现质量断崖. 这是 SFT 数据长度分布的直接反映
+</div>
+</div>
+</div>
+
+<!-- ===== Section 3: LongWriter-Zero ===== -->
+<h2>3. LongWriter-Zero — 零样本长输出 (纯 RL 路线)</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ====== 核心思路 ======</span>
+<span class="cm"># 不需要长输出训练数据!</span>
+<span class="cm"># 纯 RL 驱动突破输出长度限制</span>
+<span class="cm"># 证明: 长输出能力已存在, 只是被压制</span>
+
+<span class="cm"># ====== 与 LongWriter 的区别 ======</span>
+<span class="cm"># LongWriter:  AgentWrite 合成数据 → SFT</span>
+<span class="cm"># LongWriter-Zero: RL reward → 直接引导</span>
+<span class="cm">#   无需任何长输出训练样本!</span>
+
+<span class="cm"># ====== Reward Design ======</span>
+<span class="kw">def</span> <span class="fn">compute_reward</span>(output, instruction):
+    <span class="cm"># 联合 reward: 长度 + 质量</span>
+
+    <span class="cm"># 1. Length Reward</span>
+    <span class="cm"># 鼓励输出更长, 但有上限防退化</span>
+    target_len = extract_target(instruction)
+    len_ratio = len(output) / target_len
+    <span class="kw">if</span> len_ratio <span class="num">&lt;</span> <span class="num">1.0</span>:
+        length_r = len_ratio  <span class="cm"># 线性奖励</span>
+    <span class="kw">else</span>:
+        length_r = <span class="num">1.0</span>  <span class="cm"># 达标即满分, 不鼓励过长</span>
+
+    <span class="cm"># 2. Quality Reward</span>
+    <span class="cm"># Judge model 评估连贯性 + 相关性</span>
+    quality_r = judge_model.score(
+        output, instruction,
+        criteria=[<span class="st">"coherence"</span>, <span class="st">"relevance"</span>,
+                  <span class="st">"no_repetition"</span>, <span class="st">"structure"</span>]
+    )  <span class="cm"># score in [0, 1]</span>
+
+    <span class="cm"># 联合 reward (防止只长不好)</span>
+    <span class="kw">return</span> length_r * <span class="num">0.4</span> + quality_r * <span class="num">0.6</span>
+
+<span class="cm"># ====== RL Training ======</span>
+<span class="cm"># Algorithm: GRPO (Group Relative Policy Opt)</span>
+<span class="cm"># 也可用 PPO, 但 GRPO 更稳定</span>
+<span class="cm">#</span>
+<span class="cm"># 训练过程:</span>
+<span class="cm"># 1. 给模型长输出任务指令</span>
+<span class="cm"># 2. 模型尝试生成 (初始很短)</span>
+<span class="cm"># 3. Reward 信号: 越长且质量好 → 越高分</span>
+<span class="cm"># 4. 模型逐渐学会"长且好"的策略</span>
+<span class="cm">#</span>
+<span class="cm"># 关键发现:</span>
+<span class="cm"># - 输出长度随 RL 步数 monotonically 增长</span>
+<span class="cm"># - 从 ~2K 逐步扩展到 10K+</span>
+<span class="cm"># - 质量不降反升 (RL 同时优化质量)</span>
+<span class="cm"># - 证明: 模型"已有能力, 只是被 SFT 压制"</span>
+<span class="cm">#</span>
+<span class="cm"># ====== 意义 ======</span>
+<span class="cm"># RL 可以零样本解锁"被压制"的长输出能力</span>
+<span class="cm"># 无需构造任何长输出数据</span>
+<span class="cm"># 类比: DeepSeek-R1 用 RL 解锁思维链</span>
+<span class="cm">#       LongWriter-Zero 用 RL 解锁长输出</span></pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah3" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#ff6b6b"/></marker></defs>
+<text x="200" y="20" fill="#ff6b6b" font-size="11" text-anchor="middle" font-weight="bold">LongWriter-Zero: RL Loop</text>
+
+<!-- RL Loop -->
+<rect x="40" y="40" width="320" height="200" rx="12" fill="#0f0f1a" stroke="#ff6b6b33"/>
+<text x="60" y="62" fill="#ff6b6b" font-size="9" font-weight="bold">RL Training Loop (GRPO)</text>
+
+<!-- Model -->
+<rect x="70" y="80" width="100" height="35" rx="6" fill="#1a1a2e" stroke="#4facfe66"/>
+<text x="120" y="95" fill="#4facfe" font-size="9" text-anchor="middle">LLM Policy</text>
+<text x="120" y="108" fill="#6b6b80" font-size="7" text-anchor="middle">(initially short output)</text>
+
+<!-- Arrow to output -->
+<line x1="170" y1="97" x2="210" y2="97" stroke="#4facfe" marker-end="url(#ah3)"/>
+
+<!-- Generated Output -->
+<rect x="215" y="80" width="120" height="35" rx="6" fill="#1a1a2e" stroke="#ffa94d66"/>
+<text x="275" y="95" fill="#ffa94d" font-size="9" text-anchor="middle">Generated Output</text>
+<text x="275" y="108" fill="#6b6b80" font-size="7" text-anchor="middle">(getting longer...)</text>
+
+<!-- Arrow to reward -->
+<line x1="275" y1="115" x2="275" y2="140" stroke="#ffa94d" marker-end="url(#ah3)"/>
+
+<!-- Reward -->
+<rect x="150" y="145" width="200" height="60" rx="6" fill="#1a1a2e" stroke="#34a85366"/>
+<text x="250" y="163" fill="#34a853" font-size="9" text-anchor="middle" font-weight="bold">Reward Function</text>
+<text x="180" y="180" fill="#a8a8be" font-size="8">length_r: len/target</text>
+<text x="180" y="194" fill="#a8a8be" font-size="8">quality_r: judge score</text>
+<text x="300" y="180" fill="#ffa94d" font-size="8">0.4</text>
+<text x="300" y="194" fill="#ffa94d" font-size="8">0.6</text>
+
+<!-- Arrow back to model -->
+<path d="M150,175 C80,175 60,150 60,120 C60,100 65,95 70,95" fill="none" stroke="#34a853" stroke-dasharray="4,2" marker-end="url(#ah3)"/>
+<text x="50" y="140" fill="#34a853" font-size="7">Update</text>
+
+<!-- Progress Chart -->
+<rect x="40" y="255" width="320" height="110" rx="8" fill="#11111a" stroke="#1e1e30"/>
+<text x="200" y="275" fill="#a8a8be" font-size="9" text-anchor="middle">Output Length vs. RL Steps</text>
+
+<!-- Mini chart -->
+<line x1="70" y1="350" x2="330" y2="350" stroke="#3a3a50"/>
+<line x1="70" y1="350" x2="70" y2="285" stroke="#3a3a50"/>
+<text x="65" y="290" fill="#6b6b80" font-size="6" text-anchor="end">10K</text>
+<text x="65" y="320" fill="#6b6b80" font-size="6" text-anchor="end">5K</text>
+<text x="65" y="348" fill="#6b6b80" font-size="6" text-anchor="end">2K</text>
+<text x="70" y="362" fill="#6b6b80" font-size="6">0</text>
+<text x="200" y="362" fill="#6b6b80" font-size="6" text-anchor="middle">RL Steps</text>
+<text x="330" y="362" fill="#6b6b80" font-size="6" text-anchor="end">3000</text>
+
+<!-- Monotonic growth curve -->
+<path d="M70,348 C100,345 130,340 160,330 C190,315 220,300 250,295 C280,290 310,288 330,287" fill="none" stroke="#ff6b6b" stroke-width="2"/>
+<circle cx="70" cy="348" r="2" fill="#ff6b6b"/>
+<circle cx="330" cy="287" r="2" fill="#ff6b6b"/>
+<text x="85" y="343" fill="#ff6b6b" font-size="7">~2K start</text>
+<text x="295" y="282" fill="#ff6b6b" font-size="7">10K+ end</text>
+</svg>
+</div>
+<p class="caption">LongWriter-Zero 通过 RL reward (长度+质量) 逐步引导模型从 2K 扩展到 10K+, 输出长度随训练步数单调增长</p>
+</div>
+<div class="col-caption">
+<h3>LongWriter vs. LongWriter-Zero</h3>
+<div class="key-point">
+<strong>LongWriter (SFT 路线):</strong> 需要 AgentWrite 合成 6000 条长输出数据, 然后 SFT. 数据构造成本高
+</div>
+<div class="key-point-blue">
+<strong>LongWriter-Zero (RL 路线):</strong> 零长输出训练样本! 纯粹靠 reward 信号引导模型自主发现长输出策略
+</div>
+<div class="key-point-green">
+<strong>Deep Insight:</strong> 模型的长输出能力并非不存在, 而是被 SFT 阶段的短回复数据"压制". RL 可以重新释放这种潜力
+</div>
+<h3>类比</h3>
+<p>DeepSeek-R1: RL 解锁思维链</p>
+<p>LongWriter-Zero: RL 解锁长输出</p>
+<p>共同点: 都是用 RL 释放模型"已有但被 SFT 压制"的能力</p>
+<h3>Reward 设计要点</h3>
+<p>纯长度 reward → 退化为重复填充</p>
+<p>纯质量 reward → 不会变长</p>
+<p>联合 reward → 长且好</p>
+</div>
+</div>
+
+<!-- ===== 对比总结 ===== -->
+<h2>4. 方法对比总结</h2>
+
+<table>
+<tr><th>方法</th><th>路线</th><th>数据需求</th><th>输出长度</th><th>核心机制</th></tr>
+<tr><td><strong>LongWriter</strong></td><td>SFT (AgentWrite 数据)</td><td>6K 长输出样本</td><td>10K+</td><td>Agent 分段写作 → 合成训练数据 → SFT</td></tr>
+<tr><td><strong>LongGenBench</strong></td><td>评测基准</td><td>---</td><td>---</td><td>5 维度评测长输出质量退化曲线</td></tr>
+<tr><td><strong>LongWriter-Zero</strong></td><td>RL (无数据)</td><td>0 长输出样本</td><td>10K+</td><td>Length + Quality reward → GRPO</td></tr>
+</table>
+
+<div class="key-point">
+<strong>Key Takeaway:</strong> LongWriter 证明"数据是瓶颈" -- 有了长输出数据就能 SFT 解锁. LongWriter-Zero 证明"RL 能零样本解锁" -- 模型本身有长输出能力, 只是被 SFT 短回复数据压制. 两者从不同角度验证了同一个假设: <em>输出长度限制是训练偏差, 不是模型能力瓶颈</em>.
+</div>
+
+<div class="key-point-blue">
+<strong>实践建议:</strong> 如果有计算资源做 RL → LongWriter-Zero 更优雅 (无数据依赖). 如果只能 SFT → LongWriter AgentWrite pipeline 是成熟方案. LongGenBench 用于评估任何长输出模型的质量.
+</div>
+
+<footer>Generated 2026.06.08 | LongWriter (Tsinghua GLM, 2024) &middot; LongGenBench (2024) &middot; LongWriter-Zero (2025)</footer>
+
+</div>
+</body>
+</html>
