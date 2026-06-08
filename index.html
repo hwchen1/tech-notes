@@ -1818,14 +1818,19 @@ function openInNewTab() {
 }
 
 function copyPageName() {
-    if (currentPage) {
-        navigator.clipboard.writeText(currentPage).then(() => {
-            const btn = event.target;
-            const orig = btn.textContent;
-            btn.textContent = '已复制 ✓';
-            setTimeout(() => btn.textContent = orig, 1200);
-        });
-    }
+    if (!currentPage) return;
+    const ta = document.createElement('textarea');
+    ta.value = currentPage;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.querySelector('[onclick="copyPageName()"]');
+    const orig = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(() => btn.textContent = orig, 1200);
 }
 
 function refreshFrame() {
