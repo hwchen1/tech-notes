@@ -263,6 +263,7 @@
             <span id="breadcrumb-section">-</span> / <span id="breadcrumb-page">-</span>
         </div>
         <div class="actions">
+            <button onclick="copyPageName()">复制文件名 📋</button>
             <button onclick="refreshFrame()">刷新 ↻</button>
             <button onclick="goToPrev()">← 上一篇</button>
             <button onclick="goToNext()">下一篇 →</button>
@@ -1814,6 +1815,17 @@ function loadPageByUrl(url) {
 
 function openInNewTab() {
     if (currentPage) window.open(currentPage, '_blank');
+}
+
+function copyPageName() {
+    if (currentPage) {
+        navigator.clipboard.writeText(currentPage).then(() => {
+            const btn = event.target;
+            const orig = btn.textContent;
+            btn.textContent = '已复制 ✓';
+            setTimeout(() => btn.textContent = orig, 1200);
+        });
+    }
 }
 
 function refreshFrame() {
