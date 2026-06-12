@@ -430,6 +430,11 @@ const DEFAULT_LAYOUT = [
                 "page": "lt_long_output.html",
                 "label": "长输出生成 (LongWriter/LongWriter-Zero)",
                 "color": "#ff6b6b"
+            },
+            {
+                "page": "lt_context_parallel.html",
+                "label": "Context Parallel 三种 Attention CP 难点",
+                "color": "#06b6d4"
             }
         ]
     },
@@ -1242,6 +1247,7 @@ function renderWelcomeCards(layout) {
         'lt_long_synthesis.html': '长文档合成方法 — LongPack(语义拼接) / NExtLong(Dense硬负样本) / LiteLong(规则化) / Hierarchical SDG(百万级)',
         'lt_long_qa.html': '可验证长QA — LongCite(精确引用) / LongFaith(忠实度) / MIMG(多粒度) / LongMIT(多轮保持)',
         'lt_long_output.html': '长输出生成 — LongWriter(AgentWrite+SFT突破2K) / LongGenBench(评测) / LongWriter-Zero(纯RL零样本10K+)',
+        'lt_context_parallel.html': 'Context Parallel 工作原理 — Ring Attention + Online Softmax, Full/SWA/Linear Attention 三种 CP 难点对比',
         'muse_spark.html': 'Meta Superintelligence Labs 首款模型 — 三轴 Scaling (Pretrain/RL/Test-Time) + Contemplating Mode',
         'ai_cluster_mindmap.html': 'AI训练/推理集群上下游供应链全景图，GPU/HBM/光模块/整机/IDC',
         'vit_clip.html': 'OpenAI 对比学习 dual encoder, ViT-B/L/H, InfoNCE loss',
@@ -1276,6 +1282,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'lt_context_parallel.html',
         'lt_long_align.html',
         'lt_long_synthesis.html',
         'lt_long_qa.html',
