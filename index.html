@@ -379,6 +379,11 @@ const DEFAULT_LAYOUT = [
                 "page": "mai_thinking.html",
                 "label": "MAI-Thinking-1",
                 "color": "#0668E1"
+            },
+            {
+                "page": "agi_to_asi.html",
+                "label": "From AGI to ASI (DeepMind)",
+                "color": "#667eea"
             }
         ]
     },
@@ -1266,6 +1271,7 @@ function renderWelcomeCards(layout) {
         'vit_eva.html': 'BAAI MIM+CLIP 联合预训练, EVA-02 加入 RoPE+SwiGLU, 十亿参数级',
         'vit_dinov2.html': 'Meta 自蒸馏+iBOT, 无需文本配对, 通用视觉特征 foundation model',
         'vit_sam.html': 'Meta 1024² 高分辨率, Window+Global Attention, 分割专用 ViT',
+        'agi_to_asi.html': 'Google DeepMind — AGI→ASI 四条路径 (Scaling/范式转换/递归改进/Multi-Agent) + 六大摩擦 + 抽象屏障',
     };
     const sectionIcons = {};
     function mapIcons(sections) {
@@ -1288,6 +1294,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'agi_to_asi.html',
         'glm5_1.html',
         'lt_context_parallel.html',
         'lt_long_align.html',
