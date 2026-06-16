@@ -384,6 +384,11 @@ const DEFAULT_LAYOUT = [
                 "page": "agi_to_asi.html",
                 "label": "From AGI to ASI (DeepMind)",
                 "color": "#667eea"
+            },
+            {
+                "page": "800v_hvdc.html",
+                "label": "800V HVDC × 涡轮发电",
+                "color": "#f59e0b"
             }
         ]
     },
@@ -1272,6 +1277,7 @@ function renderWelcomeCards(layout) {
         'vit_dinov2.html': 'Meta 自蒸馏+iBOT, 无需文本配对, 通用视觉特征 foundation model',
         'vit_sam.html': 'Meta 1024² 高分辨率, Window+Global Attention, 分割专用 ViT',
         'agi_to_asi.html': 'Google DeepMind — AGI→ASI 四条路径 (Scaling/范式转换/递归改进/Multi-Agent) + 六大摩擦 + 抽象屏障',
+        '800v_hvdc.html': 'NVIDIA 800V HVDC 数据中心电力架构 — 涡轮/燃料电池→800V DC 母线→GPU, 四层供应链全景 (GEV/SU/VRT/2308/IFX/TXN)',
     };
     const sectionIcons = {};
     function mapIcons(sections) {
@@ -1294,6 +1300,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        '800v_hvdc.html',
         'agi_to_asi.html',
         'glm5_1.html',
         'lt_context_parallel.html',
