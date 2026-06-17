@@ -162,7 +162,248 @@ swa_num_key_value_heads: <span class="num">4</span>
 </div>
 
 <!-- Section 2 -->
-<h2>2. Triton Kernel — Block Score 计算 + Sparse Flash Attention</h2>
+<h2>2. 机制图解 — DSA Indexer vs HySparse Block TopK</h2>
+
+<p>两种稀疏注意力都解决同一个问题：<strong>长序列下，让每个 Query 只关注最相关的一部分 KV，而不是全部 N 个 token</strong>。核心差异在于 <em>"如何决定哪些 KV 相关"</em>（选择机制）以及 <em>"这个决策的成本与精度"</em>。下面分别图解。</p>
+
+<h3>2.1 DSA — 轻量 Indexer 网络预测相关位置</h3>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm"># DeepseekV32Indexer.forward (简化)</span>
+<span class="cm"># 一个独立的"打分小网络", 与主</span>
+<span class="cm"># attention 并行, 维度极小 (head_dim≈128)</span>
+
+<span class="cm"># ① Query: 复用主 MLA 的压缩表示</span>
+q = self.wq_b(q_compressed)   <span class="cm"># q_lora_rank→n_heads·d</span>
+q = q.view(b, s, n_heads, head_dim)
+q_pe, q_nope = split(q, [rope_d, nope_d])
+q_pe = apply_rope(q_pe, cos, sin)
+q = rotate_activation(cat(q_pe, q_nope))  <span class="cm"># Hadamard</span>
+
+<span class="cm"># ② Key: 从 hidden 单独投影 (单 head!)</span>
+k = self.wk(hidden_states)    <span class="cm"># hidden→head_dim</span>
+k = self.k_norm(k)            <span class="cm"># fp32 norm</span>
+k_pe, k_nope = split(k, [rope_d, nope_d])
+k_pe = apply_rope(k_pe, cos, sin)
+k = rotate_activation(cat(k_pe, k_nope))
+
+<span class="cm"># ③ 每 head 权重 (fp32 投影)</span>
+weights = self.weights_proj(hidden.float())
+weights *= n_heads**-0.5 * softmax_scale
+
+<span class="cm"># ④ 打分 → ReLU → 加权聚合 head</span>
+scores = einsum(<span class="st">'bshd,btd->bsht'</span>, q, k)
+scores = relu(scores)
+index_score = (scores * weights).sum(<span class="num">2</span>)
+<span class="cm"># index_score: (b, s, kv_len)</span>
+
+<span class="cm"># ⑤ 选 top-k 位置 (index_topk≈2048)</span>
+topk_indices = index_score.topk(
+    index_topk, dim=-<span class="num">1</span>)[<span class="num">1</span>]
+<span class="cm"># 主 attention 只对这些位置算</span>
+</pre></div>
+<div class="col-svg"><div class="svg-block">
+<svg viewBox="0 0 560 470" xmlns="http://www.w3.org/2000/svg">
+<rect width="560" height="470" fill="#11111a"/>
+<text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">DSA — 学习式 Indexer 预测 TopK 位置</text>
+
+<!-- hidden states input -->
+<rect x="200" y="38" width="160" height="26" rx="5" fill="#1a1a2e" stroke="#a78bfa" stroke-width="1"/>
+<text x="280" y="55" text-anchor="middle" fill="#a78bfa" font-size="9">hidden_states (b, s, d_model)</text>
+
+<!-- two branches: main attn vs indexer -->
+<path d="M240 64 L150 90" stroke="#555" stroke-width="1" marker-end="url(#arrA)"/>
+<path d="M320 64 L420 90" stroke="#f59e0b" stroke-width="1.2" marker-end="url(#arrA)"/>
+
+<!-- Main MLA (gray, context) -->
+<rect x="40" y="92" width="220" height="50" rx="6" fill="#0d0d18" stroke="#444" stroke-width="1"/>
+<text x="150" y="110" text-anchor="middle" fill="#999" font-size="9" font-weight="bold">主 MLA Attention (重)</text>
+<text x="150" y="125" text-anchor="middle" fill="#777" font-size="7">q_compressed / 完整 K,V 投影</text>
+<text x="150" y="137" text-anchor="middle" fill="#777" font-size="7">只在 topk_indices 位置上计算</text>
+
+<!-- Indexer (orange, focus) -->
+<rect x="300" y="92" width="230" height="180" rx="6" fill="#0d0d18" stroke="#f59e0b" stroke-width="1.3"/>
+<text x="415" y="110" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="bold">DeepseekV32Indexer (轻量)</text>
+
+<rect x="315" y="120" width="95" height="34" rx="4" fill="#1a1a2e" stroke="#3b82f6" stroke-width="0.7"/>
+<text x="362" y="134" text-anchor="middle" fill="#3b82f6" font-size="7">wq_b · q_compr</text>
+<text x="362" y="147" text-anchor="middle" fill="#888" font-size="6">RoPE + Hadamard</text>
+
+<rect x="420" y="120" width="95" height="34" rx="4" fill="#1a1a2e" stroke="#22c55e" stroke-width="0.7"/>
+<text x="467" y="134" text-anchor="middle" fill="#22c55e" font-size="7">wk · hidden</text>
+<text x="467" y="147" text-anchor="middle" fill="#888" font-size="6">k_norm(fp32)+RoPE</text>
+
+<text x="362" y="170" text-anchor="middle" fill="#888" font-size="7">q: n_heads×d</text>
+<text x="467" y="170" text-anchor="middle" fill="#888" font-size="7">k: 单 head d</text>
+
+<!-- score op -->
+<rect x="320" y="178" width="190" height="40" rx="4" fill="#1a1a2e" stroke="#f59e0b" stroke-width="0.8"/>
+<text x="415" y="193" text-anchor="middle" fill="#f59e0b" font-size="7">scores = ReLU(einsum(q, k))</text>
+<text x="415" y="207" text-anchor="middle" fill="#888" font-size="7">index_score = Σ_h (scores·weights)</text>
+
+<!-- topk -->
+<rect x="335" y="226" width="160" height="34" rx="4" fill="#ef4444" opacity="0.18" stroke="#ef4444" stroke-width="0.9"/>
+<text x="415" y="240" text-anchor="middle" fill="#ef4444" font-size="8" font-weight="bold">topk(index_score, k=index_topk)</text>
+<text x="415" y="252" text-anchor="middle" fill="#aaa" font-size="6">→ topk_indices (b, s, 2048)</text>
+
+<!-- arrow indexer -> main -->
+<path d="M335 243 Q150 250 150 144" stroke="#ef4444" stroke-width="1" stroke-dasharray="4" fill="none" marker-end="url(#arrA)"/>
+<text x="170" y="240" fill="#ef4444" font-size="7">告诉主 attention 看哪些位置</text>
+
+<!-- KL distillation loss -->
+<rect x="40" y="292" width="490" height="90" rx="8" fill="#0d0d18" stroke="#06b6d433" stroke-width="1"/>
+<text x="285" y="310" text-anchor="middle" fill="#06b6d4" font-size="9" font-weight="bold">训练: Indexer 蒸馏对齐 (KL Loss)</text>
+<text x="60" y="330" fill="#888" font-size="7.5">target = 真实主 attention 概率分布 (Σ_h softmax(QKᵀ), 全位置)</text>
+<text x="60" y="346" fill="#888" font-size="7.5">pred   = indexer 的 softmax(index_score)</text>
+<text x="60" y="362" fill="#aaa" font-size="7.5">L = KL(target ‖ pred) · coeff — 让轻量 indexer 学会模仿真 attention 的排序</text>
+<text x="60" y="377" fill="#f59e0b" font-size="7.5">⚠ indexer 是"代理模型": 选择精度依赖这个 KL loss 学得好不好</text>
+
+<!-- layer sharing -->
+<rect x="40" y="394" width="490" height="64" rx="8" fill="#0d0d18" stroke="#a78bfa33" stroke-width="1"/>
+<text x="285" y="412" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="bold">层间共享: indexer_types = [full, shared, shared, shared]</text>
+<text x="60" y="430" fill="#888" font-size="7.5">每 4 层 1 个 "full" indexer 重新打分, 后 3 层 "shared" 复用其 topk_indices</text>
+<text x="60" y="446" fill="#aaa" font-size="7.5">→ 与 HySparse 的 1 Full : 3 Sparse 共享模式本质相同, 但 DSA 用小网络而非真 attention</text>
+
+<defs><marker id="arrA" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#888" stroke-width="1"/></marker></defs>
+</svg>
+</div></div>
+<div class="col-caption">
+<h3>DSA 的核心:学习式索引</h3>
+<p>DSA 不直接用主 attention 的分数选 KV，而是<strong>额外训练一个超轻量的 Indexer 网络</strong>专门负责"打分排序"。</p>
+<div class="key-point"><strong>为什么轻:</strong> Indexer 的 Key 是<em>单 head</em> 投影 (\(d_{index}\approx128\))，Query 复用主 MLA 已压缩的 <code>q_compressed</code>。打分是 \(O(N^2 \cdot d_{index})\)，但 \(d_{index}\) 远小于 \(d_{model}\)，且无需 V、无需输出投影。</div>
+<div class="key-point"><strong>为什么需要 KL loss:</strong> Indexer 是<em>代理模型</em>，它的 \(\text{softmax}(\text{index\_score})\) 必须逼近真实主 attention 的概率分布。训练时用 \(\text{KL}(\text{真分布}\,\|\,\text{indexer分布})\) 蒸馏。若学不好 → 漏选高分位置 → 主 attention 看错地方。</div>
+<div class="key-point"><strong>数值细节 (AMFP patch):</strong> RoPE 顺序 PE-first/NOPE-last；<code>k_norm</code> 用 fp32；<code>rotate_activation</code> 前 cast bf16；SFT 时 KL loss 只统计 response token (<code>DSALossMaskHolder</code>)。</div>
+<p><strong>选择粒度:</strong> token 级 (每个 KV token 单独打分)，topk_indices 直接是 token 下标，不分块。</p>
+</div>
+</div>
+
+<h3>2.2 HySparse — 用真实 Attention Score 做 Block-Max TopK</h3>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm"># Full 层: 真 attention + 额外算 block 分</span>
+<span class="cm"># (无代理网络, 直接复用真实 QKᵀ)</span>
+
+<span class="cm"># ① 正常 full attention 输出</span>
+out = flash_attn(Q, K, V)        <span class="cm"># O(N²)</span>
+
+<span class="cm"># ② block_attn_scores_group (Triton)</span>
+<span class="cm">#    把 K 按 block_size=64 分块</span>
+<span class="cm">#    每个 Q 对每个 block 取 max 分</span>
+block_scores = block_attn_scores_group(
+    Q, K, block_size=<span class="num">64</span>)
+<span class="cm"># block_scores: (b, Sq, Hkv, n_blocks)</span>
+<span class="cm"># GQA group 内所有 Q head 取 max</span>
+
+<span class="cm"># ③ 选 TopK 个 block</span>
+<span class="cm">#    topk_tokens=1024 / block_size=64 = 16</span>
+topk_blk = block_scores.topk(<span class="num">16</span>, -<span class="num">1</span>)[<span class="num">1</span>]
+
+<span class="cm"># ④ 缓存给后续 3 个 Sparse 层</span>
+kv_manager.store(layer, K, V, topk_blk)
+
+<span class="cm"># ───────── Sparse 层 (复用) ─────────</span>
+K, V, topk_blk = kv_manager.retrieve(layer)
+<span class="cm"># 双分支并行:</span>
+swa  = swa_attn(Q, K_swa, V_swa)   <span class="cm"># 局部窗口</span>
+spar = sparse_flash_attention(      <span class="cm"># 全局稀疏</span>
+    Q, K, V, topk_blk)              <span class="cm"># 只算选中 block</span>
+<span class="cm"># 门控融合</span>
+out = linear_proj(swa) + \
+      sparse_linear_proj(spar)
+</pre></div>
+<div class="col-svg"><div class="svg-block">
+<svg viewBox="0 0 560 470" xmlns="http://www.w3.org/2000/svg">
+<rect width="560" height="470" fill="#11111a"/>
+<text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">HySparse — Full 层真分数选 Block, Sparse 层复用</text>
+
+<!-- Full layer box -->
+<rect x="30" y="36" width="500" height="158" rx="8" fill="#0d0d18" stroke="#22c55e" stroke-width="1.3"/>
+<text x="280" y="54" text-anchor="middle" fill="#22c55e" font-size="9" font-weight="bold">Full Attention 层 (真实 QKᵀ, O(N²))</text>
+
+<rect x="50" y="64" width="120" height="30" rx="4" fill="#1a1a2e" stroke="#3b82f6" stroke-width="0.8"/>
+<text x="110" y="83" text-anchor="middle" fill="#3b82f6" font-size="8">flash_attn(Q,K,V)</text>
+
+<text x="180" y="83" fill="#666" font-size="7">→ 层输出 (正常)</text>
+
+<!-- block max scores -->
+<text x="50" y="116" fill="#888" font-size="8">额外: 把 K 分成 blocks (64 tokens), Q 对每个 block 取 max 分:</text>
+<rect x="50" y="124" width="460" height="22" rx="3" fill="#1a1a2e"/>
+<rect x="50" y="124" width="57" height="22" fill="#f59e0b" opacity="0.55"/>
+<rect x="107" y="124" width="57" height="22" fill="#f59e0b" opacity="0.15"/>
+<rect x="164" y="124" width="57" height="22" fill="#f59e0b" opacity="0.7"/>
+<rect x="221" y="124" width="57" height="22" fill="#f59e0b" opacity="0.1"/>
+<rect x="278" y="124" width="57" height="22" fill="#f59e0b" opacity="0.4"/>
+<rect x="335" y="124" width="58" height="22" fill="#f59e0b" opacity="0.08"/>
+<rect x="393" y="124" width="58" height="22" fill="#f59e0b" opacity="0.6"/>
+<rect x="451" y="124" width="59" height="22" fill="#f59e0b" opacity="0.12"/>
+<text x="280" y="139" text-anchor="middle" fill="#000" font-size="7" font-weight="bold">block_scores — 颜色深浅=真实 max attention 分数</text>
+
+<!-- topk pick -->
+<text x="50" y="166" fill="#888" font-size="8">TopK=16 选最亮的 block (精确, 来自真分数):</text>
+<rect x="50" y="172" width="460" height="16" rx="3" fill="#1a1a2e"/>
+<rect x="50" y="172" width="57" height="16" fill="#ef4444" opacity="0.6"/>
+<rect x="164" y="172" width="57" height="16" fill="#ef4444" opacity="0.6"/>
+<rect x="278" y="172" width="57" height="16" fill="#ef4444" opacity="0.6"/>
+<rect x="393" y="172" width="58" height="16" fill="#ef4444" opacity="0.6"/>
+<text x="490" y="184" text-anchor="end" fill="#ef4444" font-size="6">选中=红</text>
+
+<!-- store -->
+<path d="M280 194 L280 214" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arrH)"/>
+<rect x="180" y="216" width="200" height="24" rx="4" fill="#f59e0b" opacity="0.15" stroke="#f59e0b" stroke-width="1"/>
+<text x="280" y="232" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="bold">kv_manager.store(K, V, topk_blk)</text>
+
+<!-- Sparse layers reuse -->
+<path d="M280 240 L280 256" stroke="#ef4444" stroke-width="1.2" marker-end="url(#arrH)"/>
+<rect x="30" y="258" width="500" height="155" rx="8" fill="#0d0d18" stroke="#ef4444" stroke-width="1.2"/>
+<text x="280" y="276" text-anchor="middle" fill="#ef4444" font-size="9" font-weight="bold">Sparse 层 ×3 (复用 K,V,topk_blk — 零重算)</text>
+
+<!-- dual branch -->
+<rect x="50" y="286" width="210" height="62" rx="5" fill="#1a1a2e" stroke="#3b82f6" stroke-width="0.9"/>
+<text x="155" y="303" text-anchor="middle" fill="#3b82f6" font-size="8" font-weight="bold">SWA 分支 (独立 K/V)</text>
+<text x="155" y="319" text-anchor="middle" fill="#888" font-size="7">滑动窗口 window=4096</text>
+<text x="155" y="333" text-anchor="middle" fill="#888" font-size="7">精确覆盖近距离 token</text>
+<text x="155" y="345" text-anchor="middle" fill="#666" font-size="6.5">→ linear_proj</text>
+
+<rect x="300" y="286" width="210" height="62" rx="5" fill="#1a1a2e" stroke="#f59e0b" stroke-width="0.9"/>
+<text x="405" y="303" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="bold">Block Sparse 分支 (复用 K/V)</text>
+<text x="405" y="319" text-anchor="middle" fill="#888" font-size="7">sparse_flash_attention</text>
+<text x="405" y="333" text-anchor="middle" fill="#888" font-size="7">只算 16 个选中 block (远距离)</text>
+<text x="405" y="345" text-anchor="middle" fill="#666" font-size="6.5">→ sparse_linear_proj</text>
+
+<!-- gate fusion -->
+<path d="M155 348 L230 372" stroke="#3b82f6" stroke-width="1" marker-end="url(#arrH)"/>
+<path d="M405 348 L330 372" stroke="#f59e0b" stroke-width="1" marker-end="url(#arrH)"/>
+<rect x="180" y="374" width="200" height="26" rx="5" fill="#1a1a2e" stroke="#a78bfa" stroke-width="1"/>
+<text x="280" y="391" text-anchor="middle" fill="#a78bfa" font-size="8" font-weight="bold">门控融合 (SWA + Sparse)</text>
+
+<text x="280" y="409" text-anchor="middle" fill="#aaa" font-size="7">局部精确 + 全局稀疏 互补</text>
+
+<!-- bottom note -->
+<text x="280" y="435" text-anchor="middle" fill="#22c55e" font-size="8">✓ 选择来自真实 attention 分数 → 精确, 零额外训练</text>
+<text x="280" y="452" text-anchor="middle" fill="#f59e0b" font-size="8">⚠ Full 层是 O(N²) 瓶颈 + 层间依赖 (Sparse 必须等 Full)</text>
+
+<defs><marker id="arrH" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#f59e0b" stroke-width="1"/></marker></defs>
+</svg>
+</div></div>
+<div class="col-caption">
+<h3>HySparse 的核心:真分数选块</h3>
+<p>HySparse <strong>不训练任何代理网络</strong>。它让 Full 层在做正常 attention 的同时，"顺手" 用真实的 \(\text{softmax}(QK^T)\) 分数对 KV block 排序。</p>
+<div class="key-point"><strong>为什么精确:</strong> 选择依据是<em>真实 attention 分数</em>本身，不是学出来的近似。高分 block 一定被选中，不存在"代理网络学不好导致漏选"的问题，也无需 KL loss。</div>
+<div class="key-point"><strong>为什么用 block:</strong> 以 64 token 为一块，对 block 取 max 分再 TopK (选 16 块 = 1024 token)。块粒度让 Triton kernel 能连续读 K/V，对显存带宽友好；token 级反而难高效实现。</div>
+<div class="key-point"><strong>双分支互补:</strong> Block Sparse 覆盖<em>全局远距离</em>的重要块；但块粒度可能漏掉窗口内的精确近邻，于是再并联一条 <em>SWA 滑动窗口</em>分支专管局部，两者门控融合。这是 DSA(单分支) 没有的设计。</div>
+<div class="key-point"><strong>代价:</strong> Full 层必须真的算完 \(O(N^2)\) attention 才能拿到分数（虽然只占 25% 层）；且 Sparse 层有<em>数据依赖</em>，必须等同组 Full 层完成 → PP 流水并行受限。</div>
+<p><strong>选择粒度:</strong> block 级 (64 token/块)，缓存的是 block_indices。</p>
+</div>
+</div>
+
+<h3>2.3 一句话对比</h3>
+<div class="key-point"><strong>同:</strong> 都是 "1 个决策层 : 3 个复用层" 的共享模式，都把"全局 attention 该看哪里"的信息传给后续层复用。</div>
+<div class="key-point"><strong>异:</strong> DSA 用<em>学习式轻量 Indexer</em>（小网络 + KL 蒸馏）做 token 级近似选择，决策成本低但需训练且可能漏选；HySparse 用<em>真实 attention 分数</em>做 block 级精确选择，零训练成本且不漏选，但决策层是 \(O(N^2)\) 瓶颈且引入层间依赖。一句话: <strong>DSA 用"便宜的近似"，HySparse 用"昂贵的精确"</strong>。</div>
+
+<!-- Section 3 -->
+<h2>3. Triton Kernel — Block Score 计算 + Sparse Flash Attention</h2>
 
 <div class="three-col">
 <div class="col-code"><pre>
@@ -275,8 +516,8 @@ swa_num_key_value_heads: <span class="num">4</span>
 </div>
 </div>
 
-<!-- Section 3 -->
-<h2>3. 工程实现 — KVBlockManager + Bypass MLP + 训练配置</h2>
+<!-- Section 4 -->
+<h2>4. 工程实现 — KVBlockManager + Bypass MLP + 训练配置</h2>
 
 <div class="three-col">
 <div class="col-code"><pre>
