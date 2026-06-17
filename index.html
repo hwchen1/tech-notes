@@ -528,6 +528,11 @@ const DEFAULT_LAYOUT = [
                 "color": "#06b6d4"
             },
             {
+                "page": "hysparse.html",
+                "label": "HySparse 混合块稀疏",
+                "color": "#f59e0b"
+            },
+            {
                 "page": "normalization.html",
                 "label": "Normalization 设计",
                 "color": "#e599f7"
@@ -1227,6 +1232,7 @@ function renderWelcomeCards(layout) {
         'la_hymba.html': '并行混合头 — 同层 Attention+SSM head 拼接 + Meta Tokens 全局聚合',
         'la_recurrent_gemma.html': 'Griffin 架构 + Gemma 训练 — 固定显存推理, 无 KV cache, 端侧友好',
         'sparse_attention.html': 'O(N²)→O(N·k) 稀疏化mask, Sliding Window/Longformer/NSA, 训练vs推理稀疏',
+        'hysparse.html': 'Full/Sparse 交替层 — Full 算 block score 缓存 KV, Sparse 双分支(SWA+Block Sparse)门控融合, Triton kernel',
         'multi_token_prediction.html': '一次预测多 token — 更强表征 + Speculative Decoding 加速',
         'kv_cache.html': 'GQA/MLA 压缩、PagedAttention、量化与稀疏策略',
         'activation_functions.html': 'ReLU → GELU → SiLU → SwiGLU 演进，公式、图解',
@@ -1360,6 +1366,7 @@ function renderWelcomeCards(layout) {
         'omni_janus.html',
         'omni_encoder.html',
         'sparse_attention.html',
+        'hysparse.html',
         'ai_cluster_mindmap.html',
         'qformer.html',
         'vit_clip.html',
