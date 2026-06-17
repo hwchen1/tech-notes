@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HySparse — 混合块稀疏注意力</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f59e0b, #ef4444); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f59e0b; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f59e0b0a; border: 1px solid #f59e0b22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f59e0b; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #f59e0b; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>HySparse — 混合块稀疏注意力</h1>
+<p class="subtitle">AMFP 内部实现 | MiMo-7B 基座 | 双分支: Full Attention (计算 block score + 缓存 KV) → Sparse Attention (Block Sparse + SWA 门控融合) | Triton Kernel | 层模式 1:3 (Full:Sparse) | block_size=64, topk_tokens=1024</p>
+
+<!-- Section 1 -->
+<h2>1. 整体架构 — Full/Sparse 交替层 + KV 缓存传递</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// HySparse 层模式 (36层, 1:3)</span>
+<span class="cm">// 0=Full, 1=Sparse</span>
+hybrid_layer_pattern: [
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,  <span class="cm">// Full→Sparse×3</span>
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,  <span class="cm">// Full→Sparse×3</span>
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,  <span class="cm">// ...</span>
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+  <span class="num">0</span>, <span class="kw">1, 1, 1</span>,
+]
+
+<span class="cm">// 关键配置</span>
+block_size: <span class="num">64</span>
+topk_tokens: <span class="num">1024</span>
+num_sparse_per_full: <span class="num">3</span>
+enable_block_sparse: <span class="kw">True</span>
+enable_triton: <span class="kw">True</span>
+
+<span class="cm">// GQA 配置</span>
+full_num_attention_heads: <span class="num">32</span>
+full_num_key_value_heads: <span class="num">8</span>
+swa_num_attention_heads: <span class="num">32</span>
+swa_num_key_value_heads: <span class="num">4</span>
+
+<span class="cm">// KVBlockManager</span>
+<span class="cm">// 管理 Full→Sparse 的 KV 传递</span>
+<span class="cm">// max_layer_diff = num_sparse_per_full</span>
+<span class="cm">// Full 层存 K,V,block_indices</span>
+<span class="cm">// Sparse 层读取并复用</span>
+</pre></div>
+<div class="col-svg"><div class="svg-block">
+<svg viewBox="0 0 560 420" xmlns="http://www.w3.org/2000/svg">
+<rect width="560" height="420" fill="#11111a"/>
+<text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">HySparse 整体架构 — Full/Sparse 交替</text>
+
+<!-- Full Layer -->
+<rect x="30" y="40" width="500" height="75" rx="8" fill="#1a1a2e" stroke="#22c55e" stroke-width="1.5"/>
+<text x="50" y="60" fill="#22c55e" font-size="10" font-weight="bold">Full Attention Layer (L0, L4, L8, ...)</text>
+<text x="50" y="78" fill="#ccc" font-size="8">Q × K_full → Attention Output</text>
+<text x="50" y="93" fill="#ccc" font-size="8">+ Block Score: max(softmax(QK^T)) per block</text>
+<text x="50" y="108" fill="#f59e0b" font-size="8">→ TopK(block_scores, k=topk_tokens/block_size=16) → 缓存 {K, V, indices}</text>
+
+<!-- Arrow down -->
+<path d="M280 115 L280 135" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr3)"/>
+<text x="295" y="128" fill="#f59e0b" font-size="7">KVBlockManager</text>
+
+<!-- Sparse Layer 1 -->
+<rect x="30" y="140" width="500" height="75" rx="8" fill="#1a1a2e" stroke="#ef4444" stroke-width="1.2"/>
+<text x="50" y="158" fill="#ef4444" font-size="10" font-weight="bold">Sparse Attention Layer (L1)</text>
+
+<!-- Two branches -->
+<rect x="50" y="165" width="210" height="40" rx="5" fill="#0d0d18" stroke="#3b82f6" stroke-width="0.8"/>
+<text x="155" y="180" text-anchor="middle" fill="#3b82f6" font-size="8" font-weight="bold">SWA 分支 (Sliding Window)</text>
+<text x="155" y="195" text-anchor="middle" fill="#888" font-size="7">独立 K/V proj, window=(4096,0)</text>
+
+<rect x="280" y="165" width="230" height="40" rx="5" fill="#0d0d18" stroke="#f59e0b" stroke-width="0.8"/>
+<text x="395" y="180" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="bold">Block Sparse 分支 (全局稀疏)</text>
+<text x="395" y="195" text-anchor="middle" fill="#888" font-size="7">复用 Full 层 K/V + TopK indices</text>
+
+<!-- Gate fusion -->
+<rect x="180" y="207" width="200" height="16" rx="3" fill="#0d0d18" stroke="#a78bfa" stroke-width="0.8"/>
+<text x="280" y="218" text-anchor="middle" fill="#a78bfa" font-size="7">linear_proj(SWA) + sparse_linear_proj(Sparse) → 门控融合</text>
+
+<!-- Sparse Layer 2 -->
+<rect x="30" y="230" width="500" height="35" rx="8" fill="#1a1a2e" stroke="#ef4444" stroke-width="1" opacity="0.7"/>
+<text x="50" y="252" fill="#ef4444" font-size="9">Sparse Attention Layer (L2) — 同结构, 复用 L0 的 KV + indices</text>
+
+<!-- Sparse Layer 3 -->
+<rect x="30" y="272" width="500" height="35" rx="8" fill="#1a1a2e" stroke="#ef4444" stroke-width="1" opacity="0.5"/>
+<text x="50" y="294" fill="#ef4444" font-size="9">Sparse Attention Layer (L3) — 同结构, 复用 L0 的 KV + indices</text>
+
+<!-- Next Full -->
+<rect x="30" y="318" width="500" height="35" rx="8" fill="#1a1a2e" stroke="#22c55e" stroke-width="1.2"/>
+<text x="50" y="340" fill="#22c55e" font-size="9" font-weight="bold">Full Attention Layer (L4) — 重新计算 block scores, 更新 KV cache</text>
+
+<!-- Dots -->
+<text x="280" y="375" text-anchor="middle" fill="#555" font-size="12">. . .</text>
+<text x="280" y="395" text-anchor="middle" fill="#888" font-size="8">重复 9 组 (36 层总计: 9 Full + 27 Sparse)</text>
+
+<!-- Complexity comparison -->
+<text x="280" y="415" text-anchor="middle" fill="#f59e0b" font-size="8">Full Attn 占比 25% | Sparse+SWA 占比 75% → 整体计算量显著低于 Full Attention</text>
+
+<defs><marker id="arr3" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#f59e0b" stroke-width="1"/></marker></defs>
+</svg>
+</div></div>
+<div class="col-caption">
+<h3>设计思想</h3>
+<p><strong>HySparse</strong> 将 Transformer 层分为两类交替排列：</p>
+<div class="key-point"><strong>Full 层 (25%):</strong> 做完整 attention，额外计算每个 Q 对所有 KV block 的最大 attention score，选出 TopK 个最相关 block。结果缓存到 KVBlockManager。</div>
+<div class="key-point"><strong>Sparse 层 (75%):</strong> 双分支并行 — ①SWA 用独立 K/V 做局部窗口 attention（精确近距离）；②Block Sparse 复用 Full 层缓存的 K/V，只对选中的 block 做 sparse FA（高效远距离）。两分支通过独立 linear_proj 融合。</div>
+<p>核心优势: Full 层只占 1/4，但为后续 3 个 Sparse 层提供全局 "哪些 KV block 重要" 的信息。Sparse 层复用这些信息，避免重复计算全局 attention。</p>
+
+<h3>与 DSA (DeepSeek) 对比</h3>
+<p>DSA: 每层都有独立 indexer，indexer 本身是轻量网络。</p>
+<p>HySparse: 用 Full Attention 层本身作为 "indexer"，直接复用 attention score 选 TopK，更精确但 Full 层更重。通过 1:3 比例平衡。</p>
+</div>
+</div>
+
+<!-- Section 2 -->
+<h2>2. Triton Kernel — Block Score 计算 + Sparse Flash Attention</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// ① block_attn_scores_group (Triton)</span>
+<span class="cm">// 输入:</span>
+<span class="cm">//   Q: [B, Sq, Hq, D]</span>
+<span class="cm">//   K: [B, Sk, Hkv, D]</span>
+<span class="cm">// 输出:</span>
+<span class="cm">//   scores: [B, Sq, Hkv, num_blocks]</span>
+<span class="cm">// 逻辑:</span>
+<span class="cm">//   对每个 Q token, 将 K 按 block_size</span>
+<span class="cm">//   分块, 计算 Q×K^T 的 block-max score</span>
+<span class="cm">//   GQA group 内所有 Q head 取 max</span>
+
+<span class="cm">// ② sparse_flash_attention (Triton)</span>
+<span class="cm">// Forward kernel: _sparse_flash_fwd_kernel</span>
+<span class="cm">// Grid: (batch, num_heads_kv, seq_len_q)</span>
+<span class="cm">// 每个 thread block: 1 token × GROUP_SIZE heads</span>
+<span class="cm">//</span>
+<span class="cm">// 关键设计:</span>
+<span class="cm">//   - K/V/topk 只加载一次</span>
+<span class="cm">//   - GROUP_SIZE 个 head 共享 K/V load</span>
+<span class="cm">//   - 遍历 NUM_SELECTED 个 topk block</span>
+<span class="cm">//   - online softmax (FlashAttention style)</span>
+<span class="cm">//     m_i, l_i, acc 累加</span>
+
+<span class="kw">for</span> sel_idx <span class="kw">in</span> range(NUM_SELECTED):
+    kv_block_idx = tl.load(topk + sel_idx)
+    start_n = kv_block_idx * BLOCK_N
+    <span class="cm">// load K[start_n:start_n+BLOCK_N]</span>
+    <span class="cm">// QK = Q @ K^T  [GROUP_SIZE, BLOCK_N]</span>
+    <span class="cm">// causal mask</span>
+    <span class="cm">// online softmax update</span>
+    <span class="cm">// acc += P @ V[start_n:start_n+BLOCK_N]</span>
+
+<span class="cm">// ③ build_reverse_mask (Triton)</span>
+<span class="cm">// 构建 KV block → Q tokens 的反向索引</span>
+<span class="cm">// 用于 backward dK/dV 计算</span>
+<span class="cm">// reverse_mask[b,h,kv_blk,q] = True</span>
+<span class="cm">//   表示 Q token q 选择了 kv_blk</span>
+</pre></div>
+<div class="col-svg"><div class="svg-block">
+<svg viewBox="0 0 560 380" xmlns="http://www.w3.org/2000/svg">
+<rect width="560" height="380" fill="#11111a"/>
+<text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">Sparse Flash Attention — Per-Token TopK Block Selection</text>
+
+<!-- Q token -->
+<rect x="40" y="50" width="80" height="30" rx="4" fill="#3b82f6" opacity="0.3" stroke="#3b82f6"/>
+<text x="80" y="69" text-anchor="middle" fill="#3b82f6" font-size="9">Q token i</text>
+
+<!-- Arrow to block scores -->
+<path d="M120 65 L170 65" stroke="#888" stroke-width="1" marker-end="url(#arr3)"/>
+
+<!-- Block scores -->
+<rect x="175" y="42" width="200" height="46" rx="5" fill="#0d0d18" stroke="#f59e0b" stroke-width="0.8"/>
+<text x="275" y="58" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="bold">Block Attention Scores</text>
+<text x="275" y="73" text-anchor="middle" fill="#888" font-size="7">max(softmax(Q_i × K_block^T)) per block</text>
+<text x="275" y="83" text-anchor="middle" fill="#888" font-size="7">→ [num_kv_blocks] scores per group</text>
+
+<!-- TopK selection -->
+<path d="M375 65 L420 65" stroke="#f59e0b" stroke-width="1" marker-end="url(#arr3)"/>
+<rect x="425" y="50" width="100" height="30" rx="4" fill="#ef4444" opacity="0.2" stroke="#ef4444"/>
+<text x="475" y="69" text-anchor="middle" fill="#ef4444" font-size="8">TopK = 16 blocks</text>
+
+<!-- KV blocks visualization -->
+<text x="40" y="120" fill="#888" font-size="9">KV Sequence (分为 blocks of 64 tokens):</text>
+<rect x="40" y="130" width="480" height="24" rx="3" fill="#1a1a2e"/>
+
+<!-- Highlight selected blocks -->
+<rect x="40" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="100" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="160" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="250" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="340" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="400" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<rect x="460" y="130" width="30" height="24" rx="2" fill="#ef4444" opacity="0.4"/>
+<text x="280" y="170" text-anchor="middle" fill="#ef4444" font-size="7">红色 = TopK 选中的 block (只对这些做 attention)</text>
+<text x="280" y="183" text-anchor="middle" fill="#888" font-size="7">topk_tokens=1024, block_size=64 → 选 16 个 block → 只看 1024/seq_len 比例的 KV</text>
+
+<!-- Kernel design -->
+<rect x="30" y="200" width="500" height="160" rx="8" fill="#0d0d18" stroke="#22c55e33" stroke-width="1"/>
+<text x="280" y="220" text-anchor="middle" fill="#22c55e" font-size="10" font-weight="bold">_sparse_flash_fwd_kernel 设计</text>
+
+<text x="50" y="242" fill="#888" font-size="8">Grid: (batch, num_heads_kv, seq_len_q) — 每个 thread block 处理 1 个 Q token</text>
+<text x="50" y="258" fill="#888" font-size="8">GROUP_SIZE = num_q_heads / num_kv_heads (GQA ratio, e.g. 4)</text>
+
+<rect x="50" y="268" width="200" height="24" rx="3" fill="#1a1a2e" stroke="#3b82f6" stroke-width="0.6"/>
+<text x="150" y="284" text-anchor="middle" fill="#3b82f6" font-size="7">Q: [GROUP_SIZE, HEAD_DIM] 全部 load</text>
+
+<rect x="270" y="268" width="240" height="24" rx="3" fill="#1a1a2e" stroke="#f59e0b" stroke-width="0.6"/>
+<text x="390" y="284" text-anchor="middle" fill="#f59e0b" font-size="7">K/V: 遍历 NUM_SELECTED=16 blocks, 每次 load 1 block</text>
+
+<text x="50" y="310" fill="#ccc" font-size="8">Online Softmax (FlashAttn style):</text>
+<text x="50" y="326" fill="#888" font-size="7">for each selected block: QK = Q×K^T → causal mask → m_new = max(m_i, row_max(QK))</text>
+<text x="50" y="340" fill="#888" font-size="7">→ rescale: acc *= exp(m_old - m_new) → P = exp(QK - m_new) → acc += P×V → l_i update</text>
+<text x="50" y="354" fill="#888" font-size="7">最终: output = acc / l_i</text>
+</svg>
+</div></div>
+<div class="col-caption">
+<h3>三个 Triton Kernel</h3>
+<div class="key-point"><strong>block_attn_scores_group:</strong> Full 层调用。计算每个 Q token 对所有 KV block 的 max attention score。GQA group 内取 max，输出 [B, Sq, Hkv, num_blocks]。用于后续 TopK 选择。</div>
+<div class="key-point"><strong>sparse_flash_attention (forward):</strong> Sparse 层调用。只对 TopK 选中的 block 做 FlashAttention。Group-fused: 同一 GQA group 的所有 Q head 共享 K/V load，减少显存带宽。Online softmax 保证数值稳定。</div>
+<div class="key-point"><strong>build_reverse_mask:</strong> Backward 用。构建反向索引: 哪些 Q token 选了某个 KV block → 用于 dK/dV 计算时只遍历相关 Q。</div>
+
+<h3>Autotune 配置</h3>
+<p>Forward kernel 用 triton.autotune 搜索最优 (num_warps, num_stages) 组合，key 包含 HEAD_DIM, V_HEAD_DIM, GROUP_SIZE, NUM_SELECTED, BLOCK_N。</p>
+
+<h3>复杂度</h3>
+<p>Full Attention: \(O(N^2)\)。Sparse Attention: \(O(N \times topk\_tokens)\) = \(O(N \times 1024)\)。当 seq_len=32K 时稀疏比例仅 3.1%。</p>
+</div>
+</div>
+
+<!-- Section 3 -->
+<h2>3. 工程实现 — KVBlockManager + Bypass MLP + 训练配置</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// KVBlockManager — Full→Sparse KV 传递</span>
+<span class="kw">class</span> <span class="fn">KVBlockManager</span>:
+    <span class="cm">// max_layer_diff = num_sparse_per_full</span>
+    <span class="cm">// Full 层 store(layer_id, K, V, indices)</span>
+    <span class="cm">// Sparse 层 retrieve(layer_id) 获取</span>
+    <span class="cm">//   最近 Full 层的 K, V, block_indices</span>
+    <span class="cm">// 用于 gradient checkpointing 时</span>
+    <span class="cm">//   避免重算 Full 层的 K/V</span>
+
+<span class="cm">// HySparseTransformerBlock</span>
+<span class="cm">// 继承 TransformerBlock</span>
+<span class="cm">// forward 时:</span>
+<span class="cm">//   if layer is Sparse:</span>
+<span class="cm">//     K,V,idx = kv_manager.retrieve(layer)</span>
+<span class="cm">//     pass to attention as extra args</span>
+
+<span class="cm">// BypassMLPLayer — 渐进式 sparse</span>
+<span class="kw">class</span> <span class="fn">BypassMLPLayer</span>:
+    <span class="cm">// 用 bypass scaler 控制 MLP 贡献</span>
+    <span class="cm">// warmup 期间 scaler 从 0 → 1</span>
+    <span class="cm">// 使 sparse 层从 "跳过MLP" 渐进</span>
+    <span class="cm">//   到 "完整MLP"</span>
+    bypass_mlp_warmup_iters: <span class="num">2500</span>
+
+<span class="cm">// EmbeddingGatedMLPLayer</span>
+<span class="cm">// embedding gate: 用 input embedding</span>
+<span class="cm">//   控制 MLP 输出的 gate</span>
+<span class="cm">// 推理侧增加 embedding gate 机制</span>
+
+<span class="cm">// 训练配置</span>
+<span class="cm">// model: MiMo-7B (36 layers)</span>
+<span class="cm">// MoE: DeepEP, flex dispatcher</span>
+<span class="cm">// MTP: 1 layer, loss_scale=0.1</span>
+<span class="cm">// recompute_num_layers: 1 (FULL)</span>
+<span class="cm">// lr: 5e-5, cosine decay</span>
+<span class="cm">// global_batch_size: 8</span>
+<span class="cm">// micro_batch_size: 1</span>
+</pre></div>
+<div class="col-svg"><div class="svg-block">
+<svg viewBox="0 0 560 380" xmlns="http://www.w3.org/2000/svg">
+<rect width="560" height="380" fill="#11111a"/>
+<text x="280" y="22" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">KVBlockManager 数据流 + 模块关系</text>
+
+<!-- Module hierarchy -->
+<rect x="160" y="40" width="240" height="30" rx="5" fill="#1a1a2e" stroke="#a78bfa" stroke-width="1.2"/>
+<text x="280" y="59" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="bold">HySparseModel (extends MimoModel)</text>
+
+<path d="M280 70 L280 85" stroke="#888" stroke-width="1"/>
+
+<rect x="130" y="88" width="300" height="30" rx="5" fill="#1a1a2e" stroke="#06b6d4" stroke-width="1"/>
+<text x="280" y="107" text-anchor="middle" fill="#06b6d4" font-size="9">HySparseTransformerBlock (extends TransformerBlock)</text>
+
+<path d="M200 118 L200 138" stroke="#888" stroke-width="1"/>
+<path d="M360 118 L360 138" stroke="#888" stroke-width="1"/>
+
+<!-- Full layer -->
+<rect x="90" y="140" width="180" height="55" rx="5" fill="#1a1a2e" stroke="#22c55e" stroke-width="1"/>
+<text x="180" y="157" text-anchor="middle" fill="#22c55e" font-size="8" font-weight="bold">HySparseFullAttention</text>
+<text x="180" y="172" text-anchor="middle" fill="#888" font-size="7">get_query_key_value_tensors()</text>
+<text x="180" y="185" text-anchor="middle" fill="#888" font-size="7">compute_block_attention_scores()</text>
+<text x="180" y="192" text-anchor="middle" fill="#f59e0b" font-size="6">→ kv_manager.store(K, V, indices)</text>
+
+<!-- Sparse layer -->
+<rect x="290" y="140" width="180" height="55" rx="5" fill="#1a1a2e" stroke="#ef4444" stroke-width="1"/>
+<text x="380" y="157" text-anchor="middle" fill="#ef4444" font-size="8" font-weight="bold">HySparseSparseAttention</text>
+<text x="380" y="172" text-anchor="middle" fill="#888" font-size="7">SWA branch (self K/V)</text>
+<text x="380" y="185" text-anchor="middle" fill="#888" font-size="7">Sparse branch (cached K/V)</text>
+<text x="380" y="192" text-anchor="middle" fill="#f59e0b" font-size="6">← kv_manager.retrieve()</text>
+
+<!-- KVBlockManager -->
+<rect x="180" y="210" width="200" height="35" rx="5" fill="#f59e0b" opacity="0.15" stroke="#f59e0b" stroke-width="1.2"/>
+<text x="280" y="232" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="bold">KVBlockManager</text>
+
+<path d="M180 175 L180 210" stroke="#22c55e" stroke-width="1" stroke-dasharray="3" marker-end="url(#arr3)"/>
+<path d="M380 195 L380 228 L380 228" stroke="#ef4444" stroke-width="1" stroke-dasharray="3"/>
+<path d="M380 228 L380 228" stroke="#ef4444" stroke-width="1"/>
+
+<!-- Bypass MLP -->
+<rect x="30" y="265" width="240" height="100" rx="8" fill="#0d0d18" stroke="#a78bfa33" stroke-width="1"/>
+<text x="150" y="283" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="bold">BypassMLPLayer</text>
+<text x="50" y="302" fill="#888" font-size="7">output = hidden + scaler × MLP(hidden)</text>
+<text x="50" y="318" fill="#888" font-size="7">scaler = min(1.0, iter / warmup_iters)</text>
+<text x="50" y="334" fill="#888" font-size="7">warmup = 2500 iters</text>
+<text x="50" y="350" fill="#ccc" font-size="7">目的: Sparse 层新增时渐进引入 MLP</text>
+<text x="50" y="363" fill="#ccc" font-size="7">避免突然增加参数导致训练不稳定</text>
+
+<!-- Training config -->
+<rect x="290" y="265" width="240" height="100" rx="8" fill="#0d0d18" stroke="#22c55e33" stroke-width="1"/>
+<text x="410" y="283" text-anchor="middle" fill="#22c55e" font-size="9" font-weight="bold">训练配置摘要</text>
+<text x="310" y="302" fill="#888" font-size="7">Base: MiMo-7B, 36 layers</text>
+<text x="310" y="318" fill="#888" font-size="7">MoE: DeepEP flex dispatcher</text>
+<text x="310" y="334" fill="#888" font-size="7">Pattern: 1 Full + 3 Sparse (1:3)</text>
+<text x="310" y="350" fill="#888" font-size="7">Recompute: Full (num_layers=1)</text>
+<text x="310" y="363" fill="#888" font-size="7">MTP: 1 layer, loss_scale=0.1</text>
+</svg>
+</div></div>
+<div class="col-caption">
+<h3>KVBlockManager</h3>
+<p>核心数据结构，解决 Full→Sparse 的 KV 传递问题：</p>
+<div class="key-point"><strong>store():</strong> Full 层计算完 attention 后，将 K, V, block_indices 存入 manager。key 是 layer_number。</div>
+<div class="key-point"><strong>retrieve():</strong> Sparse 层 forward 时，根据 layer_number 找到最近的 Full 层缓存。max_layer_diff 保证 Sparse 层只看到同组的 Full 层。</div>
+<p>这允许 gradient checkpointing 时避免重算 Full 层的 K/V（最重的部分），只需重算 Sparse 层自己的 SWA K/V。</p>
+
+<h3>BypassMLPLayer</h3>
+<p>Sparse 层的 MLP 用渐进式 warmup：前 2500 步 scaler 从 0 线性增到 1。这是因为 HySparse 可能在已有 pretrained 模型上做 continued training，新增的 Sparse 层需要平滑引入。</p>
+
+<h3>文件结构</h3>
+<table>
+<tr><th>文件</th><th>功能</th></tr>
+<tr><td>hysparse_model.py</td><td>模型入口, KVBlockManager 初始化</td></tr>
+<tr><td>hysparse_transformer_block.py</td><td>自定义 TransformerBlock, 管理 KV 传递</td></tr>
+<tr><td>hysparse_attention.py</td><td>Full/Sparse Attention 双层实现</td></tr>
+<tr><td>block_sparse_attn.py</td><td>Triton sparse FA kernel</td></tr>
+<tr><td>block_attn_scores_triton.py</td><td>Triton block score kernel</td></tr>
+<tr><td>hysparse_layer_spec.py</td><td>层 spec 生成 (Full/Sparse 交替)</td></tr>
+<tr><td>bypass_mlp_layer.py</td><td>渐进式 MLP warmup</td></tr>
+</table>
+</div>
+</div>
+
+<footer>Generated 2026.06.17 | Source: icode.baidu.com/baidu/amfp/Megatron-Bridge (v0.2.2) | Internal: AMFP-10/17/19/23</footer>
+
+</div>
+</body>
+</html>
