@@ -399,6 +399,85 @@
     </tr>
 </table>
 
+<h3>代码对比：四种变体的 Q/K/V 投影</h3>
+<p>四种机制的差异几乎只体现在 <strong>K/V 投影的输出宽度</strong>上 —— Q 始终是 <code>n_heads</code> 套，区别在于 K/V 用几套头、以及 MLA 改用低秩潜向量。下面用同一套接口对比实现要点。</p>
+
+<p style="color:#ff6b6b;font-weight:bold;margin-bottom:4px;">① MHA — Q/K/V 各 n_heads 套独立投影</p>
+<pre><span class="kw">class</span> <span class="fn">MultiHeadAttention</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, n_heads):
+        self.n_heads = n_heads
+        self.d_head  = d_model // n_heads
+        <span class="cm"># K/V 与 Q 一样都有 n_heads 套 —— KV Cache 最大</span>
+        self.W_q = nn.Linear(d_model, n_heads * self.d_head)
+        self.W_k = nn.Linear(d_model, n_heads * self.d_head)
+        self.W_v = nn.Linear(d_model, n_heads * self.d_head)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):  <span class="cm"># x: [B, S, d_model]</span>
+        q = self.W_q(x).view(B, S, self.n_heads, self.d_head)
+        k = self.W_k(x).view(B, S, self.n_heads, self.d_head)  <span class="cm"># 缓存 n_heads×d_head</span>
+        v = self.W_v(x).view(B, S, self.n_heads, self.d_head)
+        <span class="kw">return</span> <span class="fn">sdpa</span>(q, k, v)  <span class="cm"># 每个 head 各算各的</span>
+</pre>
+
+<p style="color:#ffd93d;font-weight:bold;margin:14px 0 4px;">② MQA — K/V 只有 1 套，全部 Q head 共享</p>
+<pre><span class="kw">class</span> <span class="fn">MultiQueryAttention</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, n_heads):
+        self.n_heads = n_heads
+        self.d_head  = d_model // n_heads
+        self.W_q = nn.Linear(d_model, n_heads * self.d_head)
+        self.W_k = nn.Linear(d_model, <span class="num">1</span> * self.d_head)  <span class="cm"># 单个 KV head!</span>
+        self.W_v = nn.Linear(d_model, <span class="num">1</span> * self.d_head)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        q = self.W_q(x).view(B, S, self.n_heads, self.d_head)
+        k = self.W_k(x).view(B, S, <span class="num">1</span>, self.d_head)  <span class="cm"># KV Cache 缩小 n_heads 倍</span>
+        v = self.W_v(x).view(B, S, <span class="num">1</span>, self.d_head)
+        k = k.expand(-<span class="num">1</span>, -<span class="num">1</span>, self.n_heads, -<span class="num">1</span>)  <span class="cm"># 广播给所有 Q head</span>
+        v = v.expand(-<span class="num">1</span>, -<span class="num">1</span>, self.n_heads, -<span class="num">1</span>)
+        <span class="kw">return</span> <span class="fn">sdpa</span>(q, k, v)
+</pre>
+
+<p style="color:#6bcb77;font-weight:bold;margin:14px 0 4px;">③ GQA — K/V 分 n_kv_heads 组，组内 Q 共享</p>
+<pre><span class="kw">class</span> <span class="fn">GroupedQueryAttention</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, n_heads, n_kv_heads):
+        self.n_heads    = n_heads      <span class="cm"># 如 32</span>
+        self.n_kv_heads = n_kv_heads   <span class="cm"># 如 8 → 每 4 个 Q 共享 1 个 KV</span>
+        self.n_rep      = n_heads // n_kv_heads
+        self.d_head     = d_model // n_heads
+        self.W_q = nn.Linear(d_model, n_heads    * self.d_head)
+        self.W_k = nn.Linear(d_model, n_kv_heads * self.d_head)
+        self.W_v = nn.Linear(d_model, n_kv_heads * self.d_head)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        q = self.W_q(x).view(B, S, self.n_heads,    self.d_head)
+        k = self.W_k(x).view(B, S, self.n_kv_heads, self.d_head)  <span class="cm"># 缓存 n_kv_heads</span>
+        v = self.W_v(x).view(B, S, self.n_kv_heads, self.d_head)
+        k = <span class="fn">repeat_kv</span>(k, self.n_rep)  <span class="cm"># [B,S,n_kv,d] → [B,S,n_heads,d]</span>
+        v = <span class="fn">repeat_kv</span>(v, self.n_rep)
+        <span class="kw">return</span> <span class="fn">sdpa</span>(q, k, v)  <span class="cm"># MHA(n_kv=n_heads) 与 MQA(n_kv=1) 的统一形式</span>
+</pre>
+
+<p style="color:#4d96ff;font-weight:bold;margin:14px 0 4px;">④ MLA — 缓存低秩潜向量 c_kv，用时再上投影</p>
+<pre><span class="kw">class</span> <span class="fn">MultiHeadLatentAttention</span>(nn.Module):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model, n_heads, d_c):
+        self.d_c = d_c   <span class="cm"># 潜向量维度, 如 512 ≪ n_heads*d_head</span>
+        self.W_dkv = nn.Linear(d_model, d_c)                  <span class="cm"># 下投影: 压缩</span>
+        self.W_uk  = nn.Linear(d_c, n_heads * self.d_head)    <span class="cm"># 上投影: 还原 K</span>
+        self.W_uv  = nn.Linear(d_c, n_heads * self.d_head)    <span class="cm"># 上投影: 还原 V</span>
+        self.W_q   = nn.Linear(d_model, n_heads * self.d_head)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, x):
+        c_kv = self.W_dkv(x)                <span class="cm"># [B,S,d_c] ← KV Cache 只存这个!</span>
+        k = self.W_uk(c_kv).view(B, S, n_heads, d_head)
+        v = self.W_uv(c_kv).view(B, S, n_heads, d_head)
+        q = self.W_q(x).view(B, S, n_heads, d_head)
+        <span class="cm"># 推理优化: 把 W_uk 吸收进 W_q, 直接用 c_kv 算分数</span>
+        <span class="cm">#   scores = (q @ W_uk) @ c_kv^T  → 无需真正恢复完整 K/V</span>
+        <span class="kw">return</span> <span class="fn">sdpa</span>(q, k, v)
+</pre>
+
+<p class="caption">一句话总结：MHA→MQA→GQA 是在调 <code>W_k/W_v</code> 的输出头数（n_heads → 1 → n_kv_heads）；MLA 则换了思路 —— 不再直接存 K/V，而是存一个低秩 <code>c_kv</code>，并把上投影矩阵在推理时吸收进 Q，从而兼顾极小 KV Cache 与近 MHA 的质量。</p>
+
 <div class="separator"></div>
 
 <!-- =============================================================== -->
