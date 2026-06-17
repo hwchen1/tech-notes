@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLM-5 / 5.1 — 744B MoE + MLA + DSA</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #3b82f6, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #3b82f6; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #3b82f60a; border: 1px solid #3b82f622; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #3b82f6; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #3b82f6; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.formula { background: #11111a; border: 1px solid #1e1e30; border-radius: 10px; padding: 14px 20px; margin: 16px 0; font-size: 0.92rem; color: #3b82f6; line-height: 2.2; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>GLM-5 / 5.1 — From Vibe Coding to Agentic Engineering</h1>
+<p class="subtitle">Zhipu AI (Z.ai) | 744B Total / 40B Active | 80 Layers | MLA-256 + Muon Split | 256+1 MoE (Top-8) | DSA (Continued PT) | 3-layer Shared MTP | 28.5T Tokens | Mid-training 32K→128K→200K | Post: SFT → Reasoning RL → Agentic RL → General RL | 7 种国产芯片适配 | arxiv:2602.15763</p>
+
+<!-- ═══════════════════════════════ Section 1: Architecture ═══════════════════════════════ -->
+<h2>1. Architecture — MLA-256 + MoE + MTP</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// GLM-5.1 config.json (精简)</span>
+{
+  <span class="st">"model_type"</span>: <span class="st">"glm_moe_dsa"</span>,
+  <span class="st">"num_hidden_layers"</span>: <span class="num">78</span>,
+  <span class="st">"hidden_size"</span>: <span class="num">6144</span>,
+  <span class="st">"num_attention_heads"</span>: <span class="num">64</span>,
+  <span class="st">"qk_head_dim"</span>: <span class="num">256</span>,
+  <span class="st">"qk_nope_head_dim"</span>: <span class="num">192</span>,
+  <span class="st">"qk_rope_head_dim"</span>: <span class="num">64</span>,
+  <span class="st">"v_head_dim"</span>: <span class="num">256</span>,
+  <span class="st">"kv_lora_rank"</span>: <span class="num">512</span>,
+  <span class="st">"q_lora_rank"</span>: <span class="num">2048</span>,
+
+  <span class="st">"n_routed_experts"</span>: <span class="num">256</span>,
+  <span class="st">"n_shared_experts"</span>: <span class="num">1</span>,
+  <span class="st">"num_experts_per_tok"</span>: <span class="num">8</span>,
+  <span class="st">"moe_intermediate_size"</span>: <span class="num">2048</span>,
+  <span class="st">"first_k_dense_replace"</span>: <span class="num">3</span>,
+  <span class="st">"scoring_func"</span>: <span class="st">"sigmoid"</span>,
+  <span class="st">"topk_method"</span>: <span class="st">"noaux_tc"</span>,
+
+  <span class="st">"num_nextn_predict_layers"</span>: <span class="num">1</span>,
+  <span class="st">"max_position_embeddings"</span>: <span class="num">202752</span>,
+  <span class="st">"vocab_size"</span>: <span class="num">154880</span>
+}
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 520" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.15"/>
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:0.05"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect x="30" y="10" width="360" height="500" rx="12" fill="url(#g1)" stroke="#3b82f633" stroke-width="1"/>
+  <!-- Title -->
+  <text x="210" y="40" text-anchor="middle" fill="#3b82f6" font-size="13" font-weight="bold">GLM-5 Transformer Block (×78)</text>
+
+  <!-- MLA Block -->
+  <rect x="60" y="60" width="300" height="140" rx="8" fill="#1a1a2e" stroke="#3b82f666"/>
+  <text x="210" y="82" text-anchor="middle" fill="#3b82f6" font-size="11" font-weight="bold">MLA-256 (Multi-head Latent Attention)</text>
+  <text x="80" y="108" fill="#a8a8be" font-size="9">Q: h → q_lora(2048) → [nope(192) | rope(64)] × 64 heads</text>
+  <text x="80" y="126" fill="#a8a8be" font-size="9">KV: h → kv_lora(512) → K(192+64), V(256) × 64 heads</text>
+  <text x="80" y="148" fill="#06b6d4" font-size="9">head_dim = 256 (vs DeepSeek 192)</text>
+  <text x="80" y="166" fill="#06b6d4" font-size="9">→ heads reduced 1/3, faster decode, same FLOPs</text>
+  <text x="80" y="186" fill="#c678dd" font-size="9">Muon Split: W_up per-head → independent orthogonalization</text>
+
+  <!-- MoE Block -->
+  <rect x="60" y="215" width="300" height="110" rx="8" fill="#1a1a2e" stroke="#06b6d466"/>
+  <text x="210" y="237" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="bold">MoE FFN (256+1 experts, Top-8)</text>
+  <text x="80" y="262" fill="#a8a8be" font-size="9">Router: sigmoid scoring + noaux_tc (无辅助 loss)</text>
+  <text x="80" y="280" fill="#a8a8be" font-size="9">Expert FFN: 2048 intermediate (小专家 × 多路由)</text>
+  <text x="80" y="298" fill="#a8a8be" font-size="9">Shared Expert: 1 × always active (12288 intermediate)</text>
+  <text x="80" y="316" fill="#c678dd" font-size="9">Layer 0-2: Dense (first_k_dense_replace=3)</text>
+
+  <!-- MTP Block -->
+  <rect x="60" y="340" width="300" height="80" rx="8" fill="#1a1a2e" stroke="#98c37966"/>
+  <text x="210" y="362" text-anchor="middle" fill="#98c379" font-size="11" font-weight="bold">MTP (Multi-Token Prediction)</text>
+  <text x="80" y="387" fill="#a8a8be" font-size="9">3 shared-param layers during training (mem cost = 1 layer)</text>
+  <text x="80" y="405" fill="#a8a8be" font-size="9">Inference: speculative decode, accept_len = 2.76</text>
+
+  <!-- DSA Label -->
+  <rect x="60" y="435" width="300" height="55" rx="8" fill="#1a1a2e" stroke="#d19a6666"/>
+  <text x="210" y="457" text-anchor="middle" fill="#d19a66" font-size="11" font-weight="bold">DSA (applied via Continued PT, see §2)</text>
+  <text x="80" y="478" fill="#a8a8be" font-size="9">Index head: 32 heads × dim 128, topk=2048 per head</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>关键设计决策</h3>
+<p><strong>MLA-256</strong>: 将 head_dim 从 DeepSeek 的 192 提升到 256。为保持训练 FLOPs 不变，heads 数量减少 1/3。更大 head_dim 让 KV cache 压缩率更高，推理速度更快。</p>
+<p><strong>Muon Split</strong>: 将 up-projection 矩阵按 head 切分为独立子矩阵，每个子矩阵独立做 Muon 正交化 (Newton-Schulz)。避免全局矩阵正交化的通信开销。</p>
+<p><strong>MoE 设计</strong>: 256 路由专家 + 1 共享专家。每 token 激活 Top-8 = 40B active params。Sigmoid + noaux_tc 替代 softmax + 辅助 loss，负载均衡更稳定。</p>
+<p><strong>MTP</strong>: 3 层共享参数 (训练时)，推理时展开 speculative decoding。GLM-5.1 accept length 2.76 vs DeepSeek-V3.2 的 2.55。</p>
+<div class="key-point"><strong>NOT GDN</strong>: GDN (Gated DeltaNet) 仅在 GLM-9B 上做了 ablation 实验 (§2.1.2)。最终 GLM-5 选择 DSA 而非 GDN。</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════ Section 2: DSA ═══════════════════════════════ -->
+<h2>2. DSA — DeepSeek Sparse Attention (Continued Pre-Training)</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// DSA 不是原生架构组件</span>
+<span class="cm">// 而是通过 Continued PT 注入的稀疏 attention</span>
+
+<span class="cm">// Phase 1: Warmup (1000 steps)</span>
+<span class="cm">// 冻结 index head, 只训练 backbone</span>
+<span class="kw">for</span> step <span class="kw">in</span> range(<span class="num">1000</span>):
+    loss = model(x, use_full_attn=<span class="num">True</span>)
+    loss.backward()  <span class="cm">// index_head frozen</span>
+
+<span class="cm">// Phase 2: Sparse Adaptation (20B tokens)</span>
+<span class="cm">// 解冻 index head, 全模型联合训练</span>
+<span class="kw">for</span> step <span class="kw">in</span> sparse_training:
+    <span class="cm">// index head 选择 top-2048 KV</span>
+    indices = index_head(q, k)  <span class="cm">// [B,H,S,2048]</span>
+    <span class="cm">// 只对选中的 KV 做 attention</span>
+    out = sparse_attn(q, k[indices], v[indices])
+
+<span class="cm">// DSA config:</span>
+<span class="cm">// index_head_dim = 128</span>
+<span class="cm">// index_n_heads = 32</span>
+<span class="cm">// index_topk = 2048</span>
+<span class="cm">// 每个 head 选 2048 个 KV positions</span>
+<span class="cm">//</span>
+<span class="cm">// 90% attention entries are redundant</span>
+<span class="cm">// → 1.5-2× speedup on long sequences</span>
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 440" xmlns="http://www.w3.org/2000/svg">
+  <!-- Timeline -->
+  <text x="210" y="25" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="bold">DSA Training Timeline</text>
+
+  <!-- Pre-training bar -->
+  <rect x="40" y="50" width="340" height="35" rx="6" fill="#1a1a2e" stroke="#3b82f644"/>
+  <rect x="40" y="50" width="240" height="35" rx="6" fill="#3b82f620"/>
+  <text x="160" y="72" text-anchor="middle" fill="#3b82f6" font-size="10">Pre-Training (28.5T tokens, Full Attn)</text>
+
+  <!-- Mid-training -->
+  <rect x="280" y="50" width="100" height="35" rx="6" fill="#06b6d420"/>
+  <text x="330" y="72" text-anchor="middle" fill="#06b6d4" font-size="9">Mid-Train</text>
+
+  <!-- Arrow -->
+  <path d="M210 95 L210 115" stroke="#666" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <defs><marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- DSA Phase -->
+  <rect x="40" y="120" width="340" height="100" rx="8" fill="#1a1a2e" stroke="#d19a6666"/>
+  <text x="210" y="142" text-anchor="middle" fill="#d19a66" font-size="11" font-weight="bold">DSA Continued Pre-Training</text>
+
+  <rect x="60" y="155" width="80" height="25" rx="4" fill="#d19a6620"/>
+  <text x="100" y="172" text-anchor="middle" fill="#d19a66" font-size="9">Warmup</text>
+  <text x="100" y="195" text-anchor="middle" fill="#888" font-size="8">1000 steps</text>
+  <text x="100" y="208" text-anchor="middle" fill="#888" font-size="8">index frozen</text>
+
+  <rect x="160" y="155" width="200" height="25" rx="4" fill="#d19a6640"/>
+  <text x="260" y="172" text-anchor="middle" fill="#d19a66" font-size="9">Sparse Adaptation</text>
+  <text x="260" y="195" text-anchor="middle" fill="#888" font-size="8">20B tokens (全模型训练)</text>
+  <text x="260" y="208" text-anchor="middle" fill="#888" font-size="8">vs DS-V3.2: 943.7B tokens</text>
+
+  <!-- Comparison table -->
+  <text x="210" y="250" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">DSA vs Alternatives (Paper Ablation)</text>
+
+  <rect x="40" y="265" width="340" height="25" rx="0" fill="#16162a"/>
+  <text x="60" y="282" fill="#3b82f6" font-size="9">Method</text>
+  <text x="170" y="282" fill="#3b82f6" font-size="9">Training Cost</text>
+  <text x="290" y="282" fill="#3b82f6" font-size="9">RULER 128K</text>
+
+  <text x="60" y="306" fill="#c4c4d4" font-size="9">Full Attention</text>
+  <text x="170" y="306" fill="#c4c4d4" font-size="9">baseline</text>
+  <text x="290" y="306" fill="#c4c4d4" font-size="9">93.2</text>
+
+  <text x="60" y="326" fill="#d19a66" font-size="9">DSA (GLM-5)</text>
+  <text x="170" y="326" fill="#d19a66" font-size="9">20B tokens</text>
+  <text x="290" y="326" fill="#d19a66" font-size="9">92.8</text>
+
+  <text x="60" y="346" fill="#c4c4d4" font-size="9">DS-V3.2 NSA</text>
+  <text x="170" y="346" fill="#c4c4d4" font-size="9">943.7B tokens</text>
+  <text x="290" y="346" fill="#c4c4d4" font-size="9">—</text>
+
+  <text x="60" y="366" fill="#c4c4d4" font-size="9">SimpleGDN (ablation)</text>
+  <text x="170" y="366" fill="#c4c4d4" font-size="9">tested on 9B only</text>
+  <text x="290" y="366" fill="#c4c4d4" font-size="9">—</text>
+
+  <!-- Key insight -->
+  <rect x="40" y="385" width="340" height="40" rx="6" fill="#d19a660a" stroke="#d19a6622"/>
+  <text x="210" y="405" text-anchor="middle" fill="#d19a66" font-size="9">GLM-5 DSA: 仅需 20B tokens 即可达到与 Full Attention 接近的长文本质量</text>
+  <text x="210" y="420" text-anchor="middle" fill="#d19a66" font-size="9">训练成本仅为 DS-V3.2 的 1/47</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>DSA 核心机制</h3>
+<p><strong>Index Head</strong>: 32 个轻量 attention head (dim=128)，每个 head 为 query 选出 top-2048 个最相关的 KV position。选中的 KV 子集送入标准 MLA 计算。</p>
+<p><strong>为什么不是原生架构</strong>: GLM-5 先用 Full Attention 完成 28.5T 预训练 + 中训，之后通过 Continued PT 注入 DSA。好处是预训练质量不受影响。</p>
+<p><strong>稀疏度</strong>: 论文发现 90% attention entries 是冗余的。DSA 仅保留 ~10% 的 KV，长序列推理加速 1.5-2×。</p>
+<div class="key-point"><strong>vs GDN ablation (§2.1.2)</strong>: GDN (Gated DeltaNet) 仅在 GLM-9B 上测试。SimpleGDN 去除 Conv1d/gating，复用预训练 QKV 权重。但最终 DSA 在 744B 模型上效果更好且训练更简单。</div>
+<div class="key-point"><strong>训练效率</strong>: DSA warmup 1000 步 + 20B tokens adaptation。对比 DeepSeek-V3.2 需要 943.7B tokens 训练 NSA，GLM-5 的 DSA 方案训练成本降低 47×。</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════ Section 3: Training Data & Mid-Training ═══════════════════════════════ -->
+<h2>3. Pre-Training Data & Mid-Training (32K→128K→200K)</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// Pre-Training Data Pipeline</span>
+<span class="cm">// Total: 28.5T tokens</span>
+
+<span class="cm">// === Web Data ===</span>
+<span class="cm">// Three classifiers in sequence:</span>
+<span class="cm">// 1. DCLM classifier (quality filter)</span>
+<span class="cm">// 2. Sentence embedding classifier</span>
+<span class="cm">//    (dense vector similarity)</span>
+<span class="cm">// 3. World Knowledge classifier</span>
+<span class="cm">//    (factual content scoring)</span>
+
+<span class="cm">// === Code Data ===</span>
+<span class="cm">// 28% increase in unique code tokens</span>
+<span class="cm">// Language classification pipeline:</span>
+<span class="cm">//   file ext → AST parse → embedding</span>
+<span class="cm">//   → dedup (exact + near) → quality</span>
+
+<span class="cm">// === Math/STEM ===</span>
+<span class="cm">// LLM scoring pipeline:</span>
+<span class="cm">//   chunk → LLM evaluate → aggregate</span>
+<span class="cm">// Key principle:</span>
+<span class="cm">//   NO synthetic / AI-generated / template</span>
+<span class="cm">//   (explicit design choice)</span>
+
+<span class="cm">// === Mid-Training ===</span>
+<span class="cm">// Progressive context extension:</span>
+stage_1 = { seq: <span class="num">32768</span>, tokens: <span class="st">"1T"</span> }
+stage_2 = { seq: <span class="num">131072</span>, tokens: <span class="st">"500B"</span> }
+stage_3 = { seq: <span class="num">202752</span>, tokens: <span class="st">"50B"</span> }
+
+<span class="cm">// Long-context data sources:</span>
+<span class="cm">// - Natural: books, papers, legal docs</span>
+<span class="cm">// - Synthetic: interleaved packing,</span>
+<span class="cm">//   MRCR-like multi-round context recall</span>
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 460" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="25" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="bold">Pre-Training → Mid-Training Pipeline</text>
+
+  <!-- Pre-training data -->
+  <rect x="30" y="45" width="360" height="180" rx="8" fill="#1a1a2e" stroke="#3b82f644"/>
+  <text x="50" y="67" fill="#3b82f6" font-size="10" font-weight="bold">Pre-Training Data (28.5T tokens)</text>
+
+  <!-- Web -->
+  <rect x="50" y="80" width="100" height="60" rx="5" fill="#3b82f615" stroke="#3b82f633"/>
+  <text x="100" y="98" text-anchor="middle" fill="#3b82f6" font-size="9">Web</text>
+  <text x="100" y="113" text-anchor="middle" fill="#888" font-size="7">DCLM filter</text>
+  <text x="100" y="125" text-anchor="middle" fill="#888" font-size="7">Sent. Embed</text>
+  <text x="100" y="137" text-anchor="middle" fill="#888" font-size="7">World Knowledge</text>
+
+  <!-- Code -->
+  <rect x="165" y="80" width="100" height="60" rx="5" fill="#98c37915" stroke="#98c37933"/>
+  <text x="215" y="98" text-anchor="middle" fill="#98c379" font-size="9">Code</text>
+  <text x="215" y="113" text-anchor="middle" fill="#888" font-size="7">+28% unique tok</text>
+  <text x="215" y="125" text-anchor="middle" fill="#888" font-size="7">Lang classify</text>
+  <text x="215" y="137" text-anchor="middle" fill="#888" font-size="7">AST + dedup</text>
+
+  <!-- Math -->
+  <rect x="280" y="80" width="100" height="60" rx="5" fill="#d19a6615" stroke="#d19a6633"/>
+  <text x="330" y="98" text-anchor="middle" fill="#d19a66" font-size="9">Math/STEM</text>
+  <text x="330" y="113" text-anchor="middle" fill="#888" font-size="7">LLM scoring</text>
+  <text x="330" y="125" text-anchor="middle" fill="#888" font-size="7">Chunk+aggregate</text>
+  <text x="330" y="137" text-anchor="middle" fill="#888" font-size="7">NO synthetic!</text>
+
+  <!-- Data mix bar -->
+  <rect x="50" y="155" width="330" height="18" rx="3" fill="#111"/>
+  <rect x="50" y="155" width="165" height="18" rx="3" fill="#3b82f640"/>
+  <rect x="215" y="155" width="99" height="18" fill="#98c37940"/>
+  <rect x="314" y="155" width="66" height="18" rx="3" fill="#d19a6640"/>
+  <text x="132" y="168" text-anchor="middle" fill="#3b82f6" font-size="7">Web ~50%</text>
+  <text x="264" y="168" text-anchor="middle" fill="#98c379" font-size="7">Code ~30%</text>
+  <text x="347" y="168" text-anchor="middle" fill="#d19a66" font-size="7">Math ~20%</text>
+
+  <text x="210" y="200" text-anchor="middle" fill="#888" font-size="8">Tokenizer: 154,880 vocab (GLM-specific BPE)</text>
+  <text x="210" y="215" text-anchor="middle" fill="#888" font-size="8">RoPE θ=1,000,000</text>
+
+  <!-- Mid-training -->
+  <rect x="30" y="235" width="360" height="210" rx="8" fill="#1a1a2e" stroke="#06b6d444"/>
+  <text x="50" y="257" fill="#06b6d4" font-size="10" font-weight="bold">Mid-Training: Progressive Context Extension</text>
+
+  <!-- Stage 1 -->
+  <rect x="50" y="270" width="100" height="65" rx="5" fill="#06b6d410" stroke="#06b6d433"/>
+  <text x="100" y="290" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">32K</text>
+  <text x="100" y="307" text-anchor="middle" fill="#a8a8be" font-size="8">1T tokens</text>
+  <text x="100" y="322" text-anchor="middle" fill="#888" font-size="7">base context</text>
+
+  <!-- Arrow -->
+  <text x="162" y="303" fill="#666" font-size="14">→</text>
+
+  <!-- Stage 2 -->
+  <rect x="175" y="270" width="100" height="65" rx="5" fill="#06b6d420" stroke="#06b6d433"/>
+  <text x="225" y="290" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">128K</text>
+  <text x="225" y="307" text-anchor="middle" fill="#a8a8be" font-size="8">500B tokens</text>
+  <text x="225" y="322" text-anchor="middle" fill="#888" font-size="7">books + papers</text>
+
+  <!-- Arrow -->
+  <text x="287" y="303" fill="#666" font-size="14">→</text>
+
+  <!-- Stage 3 -->
+  <rect x="300" y="270" width="100" height="65" rx="5" fill="#06b6d430" stroke="#06b6d433"/>
+  <text x="350" y="290" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">200K</text>
+  <text x="350" y="307" text-anchor="middle" fill="#a8a8be" font-size="8">50B tokens</text>
+  <text x="350" y="322" text-anchor="middle" fill="#888" font-size="7">MRCR synthetic</text>
+
+  <!-- Long context data -->
+  <text x="210" y="360" text-anchor="middle" fill="#fff" font-size="9">Long-Context Data Composition</text>
+  <rect x="50" y="370" width="155" height="30" rx="4" fill="#3b82f610" stroke="#3b82f622"/>
+  <text x="127" y="389" text-anchor="middle" fill="#a8a8be" font-size="8">Natural: books, papers, legal</text>
+  <rect x="215" y="370" width="155" height="30" rx="4" fill="#c678dd10" stroke="#c678dd22"/>
+  <text x="292" y="389" text-anchor="middle" fill="#a8a8be" font-size="8">Synthetic: interleaved packing</text>
+
+  <text x="210" y="425" text-anchor="middle" fill="#888" font-size="8">MRCR variants: multi-round context recall tasks</text>
+  <text x="210" y="440" text-anchor="middle" fill="#888" font-size="8">Final: max_position_embeddings = 202,752</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>数据工程原则</h3>
+<p><strong>Web 三级过滤</strong>: DCLM classifier (粗筛) → Sentence Embedding classifier (语义质量) → World Knowledge classifier (事实密度)。层层提纯。</p>
+<p><strong>Code 去重增量</strong>: 相比上代，unique code tokens 增加 28%。通过文件扩展名 + AST 分析的语言分类 pipeline，精确识别语言和去重。</p>
+<p><strong>Math/STEM 无合成</strong>: 显式设计选择 — 不使用任何 synthetic、AI-generated 或 template 数据。全部来自人类生成的数学/科学文档，用 LLM 进行质量评分。</p>
+<h3>Mid-Training 策略</h3>
+<p><strong>渐进扩展</strong>: 32K (基础) → 128K (1T→500B, 更少 tokens 因为长文本更贵) → 200K (50B, 最终微调)。</p>
+<p><strong>合成长文本</strong>: Interleaved packing (将短文档交错排列，模拟长距离依赖) + MRCR-like variants (多轮上下文回忆任务，强化 needle-in-haystack 能力)。</p>
+<div class="key-point"><strong>总量</strong>: 28.5T pre-training + 1.55T mid-training tokens。Mid-training 中 DSA 通过额外 20B tokens continued PT 注入。</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════ Section 4: Post-Training RL Pipeline ═══════════════════════════════ -->
+<h2>4. Post-Training — SFT → Reasoning RL → Agentic RL → General RL</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// Post-Training Pipeline (Sequential)</span>
+
+<span class="cm">// Stage 1: SFT (三种 Thinking 模式)</span>
+<span class="kw">class</span> <span class="fn">ThinkingMode</span>:
+    INTERLEAVED = <span class="st">"interleaved"</span>
+    <span class="cm">// 思考与回答交错</span>
+    PRESERVED   = <span class="st">"preserved"</span>
+    <span class="cm">// 保留完整思考链</span>
+    TURN_LEVEL  = <span class="st">"turn_level"</span>
+    <span class="cm">// 每轮独立思考</span>
+
+<span class="cm">// Stage 2: Reasoning RL</span>
+<span class="cm">// 数学/代码推理强化</span>
+<span class="cm">// Outcome-based reward</span>
+
+<span class="cm">// Stage 3: Agentic RL (Slime)</span>
+<span class="kw">class</span> <span class="fn">SlimeRL</span>:
+    <span class="cm">// 异步架构: 生成与训练解耦</span>
+    rollout_engines: List[Engine]
+    <span class="cm">// 大规模 agent 轨迹探索</span>
+    <span class="cm">// SWE-Bench Pro #1</span>
+
+<span class="cm">// Stage 4: General RL</span>
+<span class="cm">// 通用能力对齐 (RLHF)</span>
+<span class="cm">// 避免 reasoning 退化</span>
+
+<span class="cm">// Stage 5: Cross-Stage Distillation</span>
+<span class="cm">// On-policy 跨阶段蒸馏:</span>
+<span class="cm">// 从 Stage 2/3/4 best model</span>
+<span class="cm">// → 蒸馏到统一 final model</span>
+<span class="cm">// 保留各阶段最优能力</span>
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 480" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="25" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="bold">Post-Training Pipeline</text>
+
+  <!-- SFT -->
+  <rect x="60" y="45" width="300" height="70" rx="8" fill="#1a1a2e" stroke="#3b82f666"/>
+  <text x="210" y="65" text-anchor="middle" fill="#3b82f6" font-size="10" font-weight="bold">Stage 1: SFT</text>
+  <rect x="80" y="75" width="85" height="25" rx="4" fill="#3b82f615"/>
+  <text x="122" y="92" text-anchor="middle" fill="#a8a8be" font-size="8">Interleaved</text>
+  <rect x="172" y="75" width="80" height="25" rx="4" fill="#3b82f615"/>
+  <text x="212" y="92" text-anchor="middle" fill="#a8a8be" font-size="8">Preserved</text>
+  <rect x="259" y="75" width="85" height="25" rx="4" fill="#3b82f615"/>
+  <text x="301" y="92" text-anchor="middle" fill="#a8a8be" font-size="8">Turn-level</text>
+
+  <path d="M210 115 L210 135" stroke="#666" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Reasoning RL -->
+  <rect x="60" y="140" width="300" height="55" rx="8" fill="#1a1a2e" stroke="#c678dd66"/>
+  <text x="210" y="160" text-anchor="middle" fill="#c678dd" font-size="10" font-weight="bold">Stage 2: Reasoning RL</text>
+  <text x="210" y="180" text-anchor="middle" fill="#a8a8be" font-size="9">Math + Code reasoning, outcome-based reward</text>
+
+  <path d="M210 195 L210 215" stroke="#666" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Agentic RL -->
+  <rect x="60" y="220" width="300" height="80" rx="8" fill="#1a1a2e" stroke="#98c37966"/>
+  <text x="210" y="240" text-anchor="middle" fill="#98c379" font-size="10" font-weight="bold">Stage 3: Agentic RL (Slime)</text>
+  <text x="210" y="258" text-anchor="middle" fill="#a8a8be" font-size="9">Decoupled rollout: generation ≠ training</text>
+  <text x="210" y="274" text-anchor="middle" fill="#a8a8be" font-size="9">Massive-scale agent trajectory exploration</text>
+  <text x="210" y="292" text-anchor="middle" fill="#98c379" font-size="8">→ SWE-Bench Pro #1, SWE-Bench Verified #1</text>
+
+  <path d="M210 300 L210 320" stroke="#666" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- General RL -->
+  <rect x="60" y="325" width="300" height="55" rx="8" fill="#1a1a2e" stroke="#d19a6666"/>
+  <text x="210" y="345" text-anchor="middle" fill="#d19a66" font-size="10" font-weight="bold">Stage 4: General RL</text>
+  <text x="210" y="365" text-anchor="middle" fill="#a8a8be" font-size="9">RLHF alignment, prevent reasoning regression</text>
+
+  <path d="M210 380 L210 400" stroke="#666" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Distillation -->
+  <rect x="60" y="405" width="300" height="60" rx="8" fill="#1a1a2e" stroke="#06b6d466"/>
+  <text x="210" y="425" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">Stage 5: On-Policy Cross-Stage Distillation</text>
+  <text x="210" y="445" text-anchor="middle" fill="#a8a8be" font-size="9">Best-of-each-stage → unified final model</text>
+  <text x="210" y="460" text-anchor="middle" fill="#888" font-size="8">Preserve reasoning + agentic + general capabilities</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>SFT 三种思考模式</h3>
+<p><strong>Interleaved</strong>: 思考和回答交错出现，适合复杂多步推理。</p>
+<p><strong>Preserved</strong>: 保留完整思考链输出，用户可见推理过程。</p>
+<p><strong>Turn-level</strong>: 每轮对话独立思考，适合多轮交互场景。</p>
+<h3>Slime 异步 RL</h3>
+<p><strong>核心创新</strong>: Rollout engine 与 training 完全解耦。生成 agent 轨迹 (代码编写、工具调用、环境交互) 的计算与 RL 梯度更新分离，支持大规模并行探索。</p>
+<p><strong>成果</strong>: SWE-Bench Pro 和 SWE-Bench Verified 均排名第一。从 "Vibe Coding" 到真正的 Agentic Engineering。</p>
+<h3>Cross-Stage Distillation</h3>
+<p><strong>问题</strong>: Sequential RL 各阶段优化不同能力，后续阶段可能覆盖前期成果。</p>
+<p><strong>解法</strong>: On-Policy 蒸馏 — 从每阶段最佳 checkpoint 生成 trajectory，蒸馏到统一模型。保留推理 + Agent + 通用三重能力。</p>
+<div class="key-point"><strong>INT4 QAT</strong>: 在 SFT 阶段即引入 INT4 量化感知训练，推理时直接部署量化模型，无需 post-hoc PTQ。</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════ Section 5: Infrastructure ═══════════════════════════════ -->
+<h2>5. Training Infrastructure & 国产芯片适配</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// Key Infra Optimizations</span>
+
+<span class="cm">// 1. Pipeline ZeRO2 Gradient Sharding</span>
+<span class="cm">// 在 pipeline stages 间分片梯度</span>
+<span class="cm">// 减少显存峰值</span>
+
+<span class="cm">// 2. MTP Flexible Placement</span>
+<span class="cm">// MTP layers 可放在任意 PP stage</span>
+<span class="cm">// 平衡各 stage 计算量</span>
+
+<span class="cm">// 3. Muon Zero-Redundant Communication</span>
+<span class="cm">// Newton-Schulz 正交化的通信优化</span>
+<span class="cm">// 避免重复传输相同梯度</span>
+
+<span class="cm">// 4. Pipeline Activation Offloading</span>
+<span class="cm">// 闲置 stage 的 activation → CPU</span>
+<span class="cm">// GPU 显存只保留当前计算所需</span>
+
+<span class="cm">// 5. Hierarchical All-to-All (CP)</span>
+<span class="cm">// 两级通信:</span>
+<span class="cm">//   intra-node: NVLink all-to-all</span>
+<span class="cm">//   inter-node: RDMA all-to-all</span>
+<span class="cm">// 减少跨节点通信量</span>
+
+<span class="cm">// 6. INT4 QAT in SFT</span>
+<span class="cm">// 量化感知训练从 SFT 阶段开始</span>
+<span class="cm">// 推理直接用 INT4, 无需 PTQ</span>
+
+<span class="cm">// === 7 Chinese Chip Platforms ===</span>
+chips = [
+    <span class="st">"Huawei Ascend"</span>,
+    <span class="st">"Moore Threads"</span>,
+    <span class="st">"Hygon (海光)"</span>,
+    <span class="st">"Cambricon (寒武纪)"</span>,
+    <span class="st">"Kunlunxin (昆仑芯)"</span>,
+    <span class="st">"MetaX (沐曦)"</span>,
+    <span class="st">"Enflame (燧原)"</span>,
+]
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 440" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="25" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="bold">Training Infrastructure</text>
+
+  <!-- Memory optimization -->
+  <rect x="30" y="45" width="360" height="150" rx="8" fill="#1a1a2e" stroke="#3b82f644"/>
+  <text x="50" y="67" fill="#3b82f6" font-size="10" font-weight="bold">Memory & Compute Optimizations</text>
+
+  <rect x="50" y="80" width="155" height="45" rx="5" fill="#3b82f610" stroke="#3b82f622"/>
+  <text x="127" y="98" text-anchor="middle" fill="#3b82f6" font-size="8">Pipeline ZeRO2</text>
+  <text x="127" y="113" text-anchor="middle" fill="#888" font-size="7">Grad sharding across PP</text>
+
+  <rect x="215" y="80" width="155" height="45" rx="5" fill="#c678dd10" stroke="#c678dd22"/>
+  <text x="292" y="98" text-anchor="middle" fill="#c678dd" font-size="8">Activation Offload</text>
+  <text x="292" y="113" text-anchor="middle" fill="#888" font-size="7">Idle stage → CPU RAM</text>
+
+  <rect x="50" y="135" width="155" height="45" rx="5" fill="#98c37910" stroke="#98c37922"/>
+  <text x="127" y="153" text-anchor="middle" fill="#98c379" font-size="8">MTP Flex Placement</text>
+  <text x="127" y="168" text-anchor="middle" fill="#888" font-size="7">Balance PP stages</text>
+
+  <rect x="215" y="135" width="155" height="45" rx="5" fill="#d19a6610" stroke="#d19a6622"/>
+  <text x="292" y="153" text-anchor="middle" fill="#d19a66" font-size="8">Muon Zero-Redundant</text>
+  <text x="292" y="168" text-anchor="middle" fill="#888" font-size="7">No duplicate grad comm</text>
+
+  <!-- CP -->
+  <rect x="30" y="210" width="360" height="80" rx="8" fill="#1a1a2e" stroke="#06b6d444"/>
+  <text x="50" y="232" fill="#06b6d4" font-size="10" font-weight="bold">Context Parallelism (Hierarchical All-to-All)</text>
+
+  <rect x="50" y="245" width="150" height="35" rx="5" fill="#06b6d410"/>
+  <text x="125" y="260" text-anchor="middle" fill="#06b6d4" font-size="9">Intra-node</text>
+  <text x="125" y="275" text-anchor="middle" fill="#888" font-size="8">NVLink A2A (fast)</text>
+
+  <text x="210" y="265" fill="#666" font-size="12">→</text>
+
+  <rect x="225" y="245" width="150" height="35" rx="5" fill="#06b6d420"/>
+  <text x="300" y="260" text-anchor="middle" fill="#06b6d4" font-size="9">Inter-node</text>
+  <text x="300" y="275" text-anchor="middle" fill="#888" font-size="8">RDMA A2A (minimize)</text>
+
+  <!-- Chips -->
+  <rect x="30" y="305" width="360" height="125" rx="8" fill="#1a1a2e" stroke="#ff6b6b44"/>
+  <text x="50" y="327" fill="#ff6b6b" font-size="10" font-weight="bold">7 种国产芯片全栈适配</text>
+
+  <rect x="50" y="340" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="100" y="358" text-anchor="middle" fill="#c4c4d4" font-size="8">华为 Ascend</text>
+
+  <rect x="160" y="340" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="210" y="358" text-anchor="middle" fill="#c4c4d4" font-size="8">摩尔线程</text>
+
+  <rect x="270" y="340" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="320" y="358" text-anchor="middle" fill="#c4c4d4" font-size="8">海光 Hygon</text>
+
+  <rect x="50" y="375" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="100" y="393" text-anchor="middle" fill="#c4c4d4" font-size="8">寒武纪</text>
+
+  <rect x="160" y="375" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="210" y="393" text-anchor="middle" fill="#c4c4d4" font-size="8">昆仑芯</text>
+
+  <rect x="270" y="375" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="320" y="393" text-anchor="middle" fill="#c4c4d4" font-size="8">沐曦 MetaX</text>
+
+  <rect x="50" y="410" width="100" height="28" rx="4" fill="#ff6b6b10" stroke="#ff6b6b22"/>
+  <text x="100" y="428" text-anchor="middle" fill="#c4c4d4" font-size="8">燧原 Enflame</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>显存优化四板斧</h3>
+<p><strong>Pipeline ZeRO2</strong>: 梯度在 pipeline stages 间分片存储，每个 stage 只保留自己负责的梯度切片。</p>
+<p><strong>Activation Offloading</strong>: Pipeline 中空闲 stage 的 activation 转存至 CPU，仅在 backward 时搬回。</p>
+<p><strong>MTP Flexible Placement</strong>: MTP 层不固定绑在最后一个 stage，可以灵活放置以平衡各 stage 的计算/显存负载。</p>
+<p><strong>Muon Zero-Redundant</strong>: Newton-Schulz 正交化需要全局梯度统计。通过去重通信避免相同梯度在多个 rank 间重复传输。</p>
+<h3>Context Parallelism</h3>
+<p><strong>Hierarchical All-to-All</strong>: 先做节点内 NVLink all-to-all (高带宽)，再做节点间 RDMA all-to-all (最小化跨机数据量)。支持 200K 序列长度的高效训练。</p>
+<h3>国产芯片</h3>
+<p>GLM-5 是首个完成 7 种国产 AI 芯片全栈适配的 744B 参数模型。覆盖华为昇腾、摩尔线程、海光、寒武纪、昆仑芯、沐曦、燧原。</p>
+<div class="key-point"><strong>INT4 QAT</strong>: 从 SFT 阶段开始量化感知训练。推理时直接以 INT4 部署，避免传统 PTQ 的精度损失。</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════ Section 6: GLM-5 vs 5.1 ═══════════════════════════════ -->
+<h2>6. GLM-5 → GLM-5.1 — 纯 Post-Training 升级</h2>
+
+<div class="three-col">
+<div class="col-code"><pre>
+<span class="cm">// GLM-5 vs GLM-5.1: 架构完全相同</span>
+<span class="cm">// config.json 一模一样 (744B/40B)</span>
+<span class="cm">// 区别 100% 在 post-training</span>
+
+<span class="cm">// GLM-5 的问题:</span>
+<span class="cm">// "exhaust repertoire early"</span>
+<span class="cm">// 快速出招 → 很快 plateau</span>
+<span class="cm">// 给更多时间也没用</span>
+
+<span class="cm">// GLM-5.1 的改进:</span>
+<span class="cm">// "sustains optimization over</span>
+<span class="cm">//  hundreds of rounds and</span>
+<span class="cm">//  thousands of tool calls"</span>
+<span class="cm">// 长时效 agentic — 持续迭代</span>
+
+<span class="cm">// 关键能力提升:</span>
+<span class="cm">// - 拆解复杂问题</span>
+<span class="cm">// - 运行实验 + 读取结果</span>
+<span class="cm">// - 精确定位 blockers</span>
+<span class="cm">// - 反复修正策略</span>
+<span class="cm">// - 长 session 不衰减</span>
+
+<span class="cm">// 对比竞品 (GLM-5.1 发布时):</span>
+<span class="cm">// Claude Opus 4.6, Gemini 3.1 Pro,</span>
+<span class="cm">// GPT-5.4, Qwen3.6-Plus, Minimax M2.7</span>
+
+<span class="cm">// GLM-5.2: 截至 2026.06 不存在</span>
+<span class="cm">// HuggingFace 上无此模型</span>
+</pre></div>
+
+<div class="svg-block">
+<svg viewBox="0 0 420 500" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="25" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="bold">GLM-5 → GLM-5.1 Benchmark Comparison</text>
+
+  <!-- Header -->
+  <rect x="30" y="40" width="360" height="28" rx="0" fill="#16162a"/>
+  <text x="50" y="58" fill="#3b82f6" font-size="9" font-weight="bold">Benchmark</text>
+  <text x="200" y="58" fill="#a8a8be" font-size="9">GLM-5</text>
+  <text x="280" y="58" fill="#98c379" font-size="9">GLM-5.1</text>
+  <text x="350" y="58" fill="#888" font-size="9">Delta</text>
+
+  <!-- Rows -->
+  <text x="50" y="85" fill="#c4c4d4" font-size="9">SWE-Bench Pro</text>
+  <text x="200" y="85" fill="#a8a8be" font-size="9">55.1</text>
+  <text x="280" y="85" fill="#98c379" font-size="9" font-weight="bold">58.4 (#1)</text>
+  <text x="350" y="85" fill="#98c379" font-size="9">+3.3</text>
+
+  <text x="50" y="108" fill="#c4c4d4" font-size="9">NL2Repo</text>
+  <text x="200" y="108" fill="#a8a8be" font-size="9">35.9</text>
+  <text x="280" y="108" fill="#98c379" font-size="9" font-weight="bold">42.7</text>
+  <text x="350" y="108" fill="#98c379" font-size="9">+19%</text>
+
+  <text x="50" y="131" fill="#c4c4d4" font-size="9">Terminal-Bench 2.0</text>
+  <text x="200" y="131" fill="#a8a8be" font-size="9">56.2</text>
+  <text x="280" y="131" fill="#98c379" font-size="9" font-weight="bold">63.5→69.0</text>
+  <text x="350" y="131" fill="#98c379" font-size="9">+13%</text>
+
+  <text x="50" y="154" fill="#c4c4d4" font-size="9">CyberGym</text>
+  <text x="200" y="154" fill="#a8a8be" font-size="9">48.3</text>
+  <text x="280" y="154" fill="#98c379" font-size="9" font-weight="bold">68.7 (#1)</text>
+  <text x="350" y="154" fill="#98c379" font-size="9">+42%</text>
+
+  <text x="50" y="177" fill="#c4c4d4" font-size="9">BrowseComp</text>
+  <text x="200" y="177" fill="#a8a8be" font-size="9">62.0</text>
+  <text x="280" y="177" fill="#98c379" font-size="9" font-weight="bold">68.0</text>
+  <text x="350" y="177" fill="#98c379" font-size="9">+10%</text>
+
+  <text x="50" y="200" fill="#c4c4d4" font-size="9">HLE (w/ Tools)</text>
+  <text x="200" y="200" fill="#a8a8be" font-size="9">50.4</text>
+  <text x="280" y="200" fill="#98c379" font-size="9">52.3</text>
+  <text x="350" y="200" fill="#98c379" font-size="9">+4%</text>
+
+  <text x="50" y="223" fill="#c4c4d4" font-size="9">Vending Bench 2</text>
+  <text x="200" y="223" fill="#a8a8be" font-size="9">$4,432</text>
+  <text x="280" y="223" fill="#98c379" font-size="9" font-weight="bold">$5,634</text>
+  <text x="350" y="223" fill="#98c379" font-size="9">+27%</text>
+
+  <line x1="30" y1="238" x2="390" y2="238" stroke="#1a1a28"/>
+
+  <!-- Key insight box -->
+  <rect x="30" y="250" width="360" height="100" rx="8" fill="#1a1a2e" stroke="#98c37944"/>
+  <text x="210" y="272" text-anchor="middle" fill="#98c379" font-size="10" font-weight="bold">核心差异: Long-Horizon Agentic Capability</text>
+
+  <text x="50" y="295" fill="#a8a8be" font-size="9">GLM-5: 快速出招 → plateau → 更多时间无帮助</text>
+  <text x="50" y="315" fill="#98c379" font-size="9">GLM-5.1: 持续优化 → 数百轮迭代 → 数千次 tool call</text>
+  <text x="50" y="338" fill="#888" font-size="8">→ 拆解问题 → 实验 → 读结果 → 定位 blocker → 修正策略</text>
+
+  <!-- Architecture note -->
+  <rect x="30" y="365" width="360" height="55" rx="8" fill="#1a1a2e" stroke="#3b82f644"/>
+  <text x="210" y="387" text-anchor="middle" fill="#3b82f6" font-size="10">架构: 完全相同 (config.json 一致)</text>
+  <text x="210" y="407" text-anchor="middle" fill="#888" font-size="9">同一个 744B base model，不同的 post-training recipe</text>
+
+  <!-- 5.2 note -->
+  <rect x="30" y="435" width="360" height="45" rx="8" fill="#1a1a2e" stroke="#ff6b6b44"/>
+  <text x="210" y="455" text-anchor="middle" fill="#ff6b6b" font-size="9">GLM-5.2: 截至 2026.06 不存在</text>
+  <text x="210" y="472" text-anchor="middle" fill="#888" font-size="8">HuggingFace zai-org 仅有 GLM-5 和 GLM-5.1</text>
+</svg>
+</div>
+
+<div class="col-caption">
+<h3>同架构不同 Post-Training</h3>
+<p>GLM-5 和 GLM-5.1 的 config.json <strong>完全一致</strong> — 同样的 78 层、MLA-256、256+1 MoE Top-8、DSA。所有差异来自 post-training 阶段的改进。</p>
+<h3>5.1 的核心突破: 长时效 Agent</h3>
+<p><strong>GLM-5 的瓶颈</strong>: 模型倾向于快速应用熟悉的技巧获得初始 gain，然后迅速 plateau。给更多计算时间不会改善结果。</p>
+<p><strong>GLM-5.1 的解法</strong>: 通过更深入的 Agentic RL 训练，模型能在长 session 中持续有效 — 分解问题、运行实验、读取结果、精确定位 blocker、反复修正策略。数百轮迭代和数千次 tool call 后仍在改善。</p>
+<h3>Benchmark 提升幅度</h3>
+<p>Agentic/coding 任务提升最大: CyberGym +42%, NL2Repo +19%, Terminal-Bench +13%。纯推理任务 (AIME, HMMT) 基本持平 — 符合 "post-training only" 的特征。</p>
+<h3>GLM-5.2?</h3>
+<p>截至 2026 年 6 月，<strong>GLM-5.2 不存在</strong>。HuggingFace zai-org 组织下仅有 GLM-5 和 GLM-5.1 两个版本。</p>
+<div class="key-point"><strong>版本关系</strong>: GLM-4.5 → GLM-4.7 → GLM-5 (架构升级: DSA + 744B) → GLM-5.1 (纯 post-training 升级: 长时效 agentic)。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.15 · GLM-5 Architecture Notes (based on arxiv:2602.15763)</footer>
+</div>
+</body>
+</html>

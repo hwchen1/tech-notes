@@ -652,7 +652,216 @@ long_horizon_envs = {
 </div>
 </div>
 
-<footer>Generated 2026.06.05 · Source: NVIDIA Nemotron-3-Ultra Technical Report (65 pages)</footer>
+<!-- ===== Section 5: Long-Horizon Data Construction ===== -->
+<h2>5. Long-Horizon 数据构建 — Terminal / SWE / Search 三条 Pipeline</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ═══ Pipeline A: Terminal 数据 (370K) ═══</span>
+<span class="cm"># 来源: "On Data Engineering for Scaling LLM</span>
+<span class="cm">#        Terminal Capabilities" (arxiv 2602.21193)</span>
+
+<span class="cm"># 方法 1: Dataset Adaptation (存量转化)</span>
+dataset_adaptation = {
+    <span class="st">"input"</span>: <span class="st">"existing benchmarks"</span>,
+    <span class="st">"process"</span>: [
+        <span class="st">"将编程/DevOps 题目重写为 terminal prompt"</span>,
+        <span class="st">"添加 bash 环境 + 文件系统上下文"</span>,
+        <span class="st">"生成 Docker 容器化环境描述"</span>,
+    ],
+    <span class="st">"output"</span>: <span class="st">"terminal-native task prompts"</span>,
+}
+
+<span class="cm"># 方法 2: Synthetic Task Generation (全合成)</span>
+synthetic_gen = {
+    <span class="st">"seed_data"</span>: <span class="st">"人工少量种子任务"</span>,
+    <span class="st">"skill_taxonomy"</span>: [
+        <span class="st">"file_ops"</span>,      <span class="cm"># 文件操作</span>
+        <span class="st">"text_proc"</span>,     <span class="cm"># 文本处理</span>
+        <span class="st">"system_admin"</span>,  <span class="cm"># 系统管理</span>
+        <span class="st">"networking"</span>,    <span class="cm"># 网络诊断</span>
+        <span class="st">"git_ops"</span>,       <span class="cm"># Git 操作</span>
+        <span class="st">"docker"</span>,        <span class="cm"># 容器管理</span>
+        <span class="st">"debugging"</span>,     <span class="cm"># 调试排错</span>
+        <span class="st">"data_pipeline"</span>, <span class="cm"># 数据处理</span>
+    ],
+    <span class="st">"generation"</span>: [
+        <span class="st">"从 taxonomy 采样 skill 组合"</span>,
+        <span class="st">"LLM 生成任务描述 + 初始环境"</span>,
+        <span class="st">"LLM 生成参考解法 (trajectory)"</span>,
+        <span class="st">"生成 verifier (completion test)"</span>,
+        <span class="st">"过滤: 仅保留可解且非平凡的"</span>,
+    ],
+}
+
+<span class="cm"># 方法 3: LiteCoder-Terminal-Gen (长程环境)</span>
+<span class="cm"># arxiv 2605.29559, 5 阶段:</span>
+litecoder_pipeline = [
+    <span class="st">"Stage 1: Instruction Refinement"</span>,
+    <span class="cm"># 从粗糙 prompt → 精确、可执行的任务描述</span>
+    <span class="st">"Stage 2: Environment Initialization"</span>,
+    <span class="cm"># 构建 Docker 容器 + 初始文件系统状态</span>
+    <span class="st">"Stage 3: Solution Synthesis"</span>,
+    <span class="cm"># 强模型在容器中实际执行 → 收集轨迹</span>
+    <span class="st">"Stage 4: Verifier Generation"</span>,
+    <span class="cm"># 基于成功轨迹自动生成验证脚本</span>
+    <span class="st">"Stage 5: Resource Configuration"</span>,
+    <span class="cm"># 配置容器资源限制 + timeout 策略</span>
+]
+<span class="cm"># 结果: 可 scale 的长程终端环境 (1hr+)</span>
+
+<span class="cm"># ═══ Pipeline B: SWE-RL 数据 ═══</span>
+swe_data = {
+    <span class="st">"source"</span>: <span class="st">"GitHub Issues + PRs"</span>,
+    <span class="st">"steps"</span>: [
+        <span class="st">"筛选有 test patch 的 issue"</span>,
+        <span class="st">"还原到 issue 提交前的 repo 状态"</span>,
+        <span class="st">"删除 future commits (防泄漏)"</span>,
+        <span class="st">"封锁 git remote access"</span>,
+        <span class="st">"用 hidden test 做 binary reward"</span>,
+    ],
+    <span class="st">"trajectory"</span>: {
+        <span class="st">"framework"</span>: <span class="st">"OpenHands agent"</span>,
+        <span class="st">"max_turns"</span>: <span class="num">200</span>,
+        <span class="st">"actions"</span>: [<span class="st">"bash"</span>, <span class="st">"file_edit"</span>,
+                   <span class="st">"tool_call"</span>],
+    },
+    <span class="st">"sft_data"</span>: <span class="st">"Nemotron-SFT-SWE-v3"</span>,
+    <span class="cm"># 先收集成功轨迹做 Agentic SFT</span>
+    <span class="cm"># 再用 PivotRL 单步 RL 迭代</span>
+    <span class="cm"># 最后端到端 SWE-RL (192K gen)</span>
+}
+
+<span class="cm"># ═══ Pipeline C: Search Agent 数据 ═══</span>
+search_data = {
+    <span class="st">"method"</span>: <span class="st">"NeMo Data Designer"</span>,
+    <span class="st">"steps"</span>: [
+        <span class="st">"采集 multi-hop 问题"</span>,
+        <span class="st">"模拟 browser tool 调用序列"</span>,
+        <span class="st">"训练 context management 策略"</span>,
+        <span class="st">"  - discard-all resets"</span>,
+        <span class="st">"  - summary compression"</span>,
+        <span class="st">"过滤: 保留需 50-100 queries 的"</span>,
+    ],
+}
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 580" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowE" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#76b900"/></marker>
+  </defs>
+
+  <text x="210" y="20" text-anchor="middle" fill="#76b900" font-size="13" font-weight="bold">Long-Horizon 数据构建 Pipeline</text>
+
+  <!-- Pipeline A: Terminal -->
+  <rect x="20" y="40" width="380" height="175" rx="10" fill="#0d1a0d" stroke="#76b900" stroke-width="1.5"/>
+  <text x="40" y="60" fill="#76b900" font-size="12" font-weight="bold">Pipeline A: Terminal (370K)</text>
+
+  <!-- Dataset Adaptation branch -->
+  <rect x="35" y="72" width="160" height="60" rx="6" fill="#12121c" stroke="#4facfe55" stroke-width="1"/>
+  <text x="115" y="88" text-anchor="middle" fill="#4facfe" font-size="9" font-weight="bold">Dataset Adaptation</text>
+  <text x="115" y="103" text-anchor="middle" fill="#888" font-size="8">存量 benchmark → terminal</text>
+  <text x="115" y="116" text-anchor="middle" fill="#888" font-size="8">重写 + Docker 环境化</text>
+  <text x="115" y="128" text-anchor="middle" fill="#666" font-size="7">快速获取大量基础数据</text>
+
+  <!-- Synthetic Task Gen branch -->
+  <rect x="210" y="72" width="175" height="60" rx="6" fill="#12121c" stroke="#f7971e55" stroke-width="1"/>
+  <text x="297" y="88" text-anchor="middle" fill="#f7971e" font-size="9" font-weight="bold">Synthetic Task Gen</text>
+  <text x="297" y="103" text-anchor="middle" fill="#888" font-size="8">Skill Taxonomy × Seed</text>
+  <text x="297" y="116" text-anchor="middle" fill="#888" font-size="8">LLM 生成 + Verifier 过滤</text>
+  <text x="297" y="128" text-anchor="middle" fill="#666" font-size="7">覆盖长尾 skill 组合</text>
+
+  <!-- Merge -->
+  <line x1="115" y1="132" x2="190" y2="155" stroke="#666" stroke-width="1"/>
+  <line x1="297" y1="132" x2="220" y2="155" stroke="#666" stroke-width="1"/>
+  <rect x="155" y="155" width="110" height="25" rx="5" fill="#1a1a2e" stroke="#76b900" stroke-width="1"/>
+  <text x="210" y="172" text-anchor="middle" fill="#76b900" font-size="9">370K Trajectories</text>
+
+  <!-- LiteCoder long-horizon extension -->
+  <rect x="155" y="185" width="110" height="22" rx="5" fill="#1a1a2e" stroke="#c678dd55" stroke-width="1"/>
+  <text x="210" y="200" text-anchor="middle" fill="#c678dd" font-size="8">+ LiteCoder 5-Stage 长程扩展</text>
+
+  <!-- Pipeline B: SWE -->
+  <rect x="20" y="225" width="380" height="145" rx="10" fill="#0d0d1a" stroke="#4facfe" stroke-width="1.5"/>
+  <text x="40" y="245" fill="#4facfe" font-size="12" font-weight="bold">Pipeline B: SWE-RL</text>
+
+  <!-- 3 stages -->
+  <rect x="35" y="258" width="105" height="50" rx="6" fill="#12121c" stroke="#4facfe33" stroke-width="1"/>
+  <text x="87" y="274" text-anchor="middle" fill="#4facfe" font-size="9">Agentic SFT</text>
+  <text x="87" y="288" text-anchor="middle" fill="#888" font-size="8">收集成功轨迹</text>
+  <text x="87" y="300" text-anchor="middle" fill="#666" font-size="7">OpenHands框架</text>
+
+  <text x="150" y="283" fill="#666" font-size="12">→</text>
+
+  <rect x="160" y="258" width="105" height="50" rx="6" fill="#12121c" stroke="#4facfe55" stroke-width="1"/>
+  <text x="212" y="274" text-anchor="middle" fill="#4facfe" font-size="9">PivotRL</text>
+  <text x="212" y="288" text-anchor="middle" fill="#888" font-size="8">单步环境 RL</text>
+  <text x="212" y="300" text-anchor="middle" fill="#666" font-size="7">低成本迭代</text>
+
+  <text x="275" y="283" fill="#666" font-size="12">→</text>
+
+  <rect x="285" y="258" width="105" height="50" rx="6" fill="#12121c" stroke="#4facfe" stroke-width="1"/>
+  <text x="337" y="274" text-anchor="middle" fill="#4facfe" font-size="9">端到端 SWE-RL</text>
+  <text x="337" y="288" text-anchor="middle" fill="#888" font-size="8">200 turns × 192K</text>
+  <text x="337" y="300" text-anchor="middle" fill="#666" font-size="7">Binary reward</text>
+
+  <!-- Anti-cheat -->
+  <rect x="35" y="318" width="355" height="40" rx="6" fill="#1a0d0d" stroke="#ff6b6b33" stroke-width="1"/>
+  <text x="210" y="335" text-anchor="middle" fill="#ff6b6b" font-size="9">防泄漏: 删 future commits + 封锁 git remote + hidden test as reward</text>
+  <text x="210" y="350" text-anchor="middle" fill="#666" font-size="8">数据来源: GitHub Issues with test patches → 还原到 pre-fix repo state</text>
+
+  <!-- Pipeline C: Search -->
+  <rect x="20" y="380" width="380" height="95" rx="10" fill="#1a1a0d" stroke="#f7971e" stroke-width="1.5"/>
+  <text x="40" y="400" fill="#f7971e" font-size="12" font-weight="bold">Pipeline C: Search Agent</text>
+  <text x="40" y="420" fill="#aa8" font-size="9">Multi-hop 问题 → 模拟 Browser Tool → Context Management 训练</text>
+  <text x="40" y="438" fill="#aa8" font-size="9">关键: 训练 discard-all reset + summary compression 策略</text>
+  <text x="40" y="456" fill="#888" font-size="8">目标: 模型主动管理 context window，不被动截断 → 超越官方 context 限制</text>
+  <text x="40" y="468" fill="#666" font-size="7">NeMo Data Designer pipeline: seed scenarios → trajectory → filter (50-100 queries/task)</text>
+
+  <!-- Key insight -->
+  <rect x="40" y="490" width="340" height="75" rx="10" fill="#16162a" stroke="#c678dd55" stroke-width="1"/>
+  <text x="210" y="510" text-anchor="middle" fill="#c678dd" font-size="11" font-weight="bold">数据构建核心原则</text>
+  <text x="60" y="530" fill="#a8a" font-size="9">1. 环境必须容器化 (Docker) → 可复现 + 可并行 scale</text>
+  <text x="60" y="545" fill="#a8a" font-size="9">2. 必须有 verifiable reward → 支持 RL 闭环</text>
+  <text x="60" y="560" fill="#a8a" font-size="9">3. 必须过滤 "可解且非平凡" → 避免 trivial/impossible 数据</text>
+</svg>
+</div>
+<p class="caption">三条数据 Pipeline: Terminal (合成+转化) / SWE (3阶段) / Search (context管理)</p>
+</div>
+<div class="col-caption">
+<h3>Terminal 370K 数据如何构建</h3>
+<p><strong>双轨生产:</strong> (1) Dataset Adaptation — 将现有 benchmark (DevOps 运维题、shell 编程题) 改写成真实 terminal 环境任务; (2) Synthetic Task Generation — 用 Skill Taxonomy 驱动 LLM 合成全新任务。两路合并后经 verifier 过滤，保留可执行、有意义的 370K 条轨迹。</p>
+<p><strong>Skill Taxonomy:</strong> 预定义技能分类树 (文件操作/网络/Git/Docker/调试...)，按组合采样确保 skill 覆盖率。不是随机生成，而是系统性覆盖终端操作的各个象限。</p>
+<p><strong>LiteCoder 扩展 (长程):</strong> 5 阶段 pipeline 专门生成需要长时间交互的复杂任务 — Instruction Refinement → Environment Init → Solution Synthesis → Verifier Gen → Resource Config。每个环境都是独立 Docker 容器，可设 1hr+ timeout。</p>
+
+<h3>SWE-RL 数据: 3 阶段渐进</h3>
+<p><strong>数据来源:</strong> GitHub 真实 Issues（筛选有 test patch 的）→ 回退到 fix 前状态 → 模型在容器中尝试修复 → hidden test 判成败。</p>
+<p><strong>Agentic SFT:</strong> 先用强模型 (或人工) 收集成功修复轨迹作为 SFT 数据（Nemotron-SFT-SWE-v3）。</p>
+<p><strong>PivotRL:</strong> 在简化环境做单步 RL — 每步给 instant feedback，成本低、迭代快。训练模型基本的工具调用和错误恢复能力。</p>
+<p><strong>端到端 SWE-RL:</strong> 完整 200 turn agent loop，gen 192K tokens，只在任务结束给 binary reward。此时模型已有 PivotRL 打底，能有效利用 sparse signal。</p>
+
+<h3>Search Agent 数据: Context Management</h3>
+<p><strong>独特需求:</strong> Search 任务可能需要 50-100 次查询才能找到答案。context window 会被搜索结果撑满。</p>
+<p><strong>关键训练信号:</strong> 教模型两个策略 — (1) discard-all reset: 发现搜索方向错误时清空 context 重来; (2) summary compression: 将已收集信息压缩为摘要释放空间。</p>
+<p><strong>效果:</strong> 模型能"突破"官方 context 限制 — 通过主动管理信息而非被动等 context 满。</p>
+
+<h3>数据质量控制</h3>
+<table>
+<tr><th>环节</th><th>方法</th></tr>
+<tr><td>可解性过滤</td><td>强模型尝试解决，不可解的丢弃</td></tr>
+<tr><td>非平凡性</td><td>弱模型也能解的过于简单，丢弃</td></tr>
+<tr><td>防泄漏</td><td>删 future commits + 封锁 remote</td></tr>
+<tr><td>环境隔离</td><td>每任务独立 Docker 容器</td></tr>
+<tr><td>Verifier</td><td>自动生成 completion test + 人工抽检</td></tr>
+</table>
+
+<div class="key-point"><strong>关键洞察:</strong> 传统 SFT 数据是 "一问一答"。Long-horizon 数据必须是"环境 + 多步轨迹 + 可验证 reward"三位一体。370K terminal 数据不是简单的 Q&A 对，而是可在 Docker 容器中 replay 的完整交互序列，每条平均 10-50 步 tool call。这才是 Nemotron Ultra 能做 long-running agent 的数据基础。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.05 · Source: NVIDIA Nemotron-3-Ultra Technical Report (65 pages) + arxiv 2602.21193 + arxiv 2605.29559</footer>
 
 </div>
 </body>

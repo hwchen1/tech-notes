@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context Parallel — Full Attn / SWA / Linear Attn 的 CP 难点对比</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #06b6d4, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #06b6d4; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 480px; }
+.caption { text-align: center; color: #6b6b80; font-size: 0.82rem; margin-top: 12px; font-style: italic; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 16px 0; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; color: #c4c4e0; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #06b6d40a; border: 1px solid #06b6d422; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #06b6d4; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #06b6d4; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Context Parallel — 三种 Attention 的 CP 难点</h1>
+<p class="subtitle">Ring Attention 原理 | Full Attention CP (成熟) | SWA CP (稀疏跳过) | Linear Attention CP (串行瓶颈) | 混合架构策略 | 2026.06</p>
+
+<!-- ===== Section 1: CP 工作原理 ===== -->
+<h2>1. Context Parallel 工作原理 — Ring Attention</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># Context Parallel (CP) 核心思想</span>
+<span class="cm"># 长序列 S (len=N) 切分到 P 个 GPU</span>
+<span class="cm"># 每 GPU 持有 N/P 个 token 的 Q/K/V</span>
+
+<span class="cm"># ═══ Ring Attention 算法 ═══</span>
+<span class="cm"># GPU_i 持有: Q_i, K_i, V_i (本地 chunk)</span>
+<span class="cm"># 目标: 计算 Attn(Q_i, K_all, V_all)</span>
+
+<span class="kw">for</span> step <span class="kw">in</span> <span class="fn">range</span>(P):
+    <span class="cm"># 当前持有的 KV 来自 GPU_(i-step)%P</span>
+    local_attn = <span class="fn">flash_attn</span>(Q_i, K_recv, V_recv)
+
+    <span class="cm"># Online softmax: 增量更新</span>
+    <span class="cm"># O_i = rescale(O_old, m_old, m_new)</span>
+    <span class="cm">#      + rescale(local_attn, m_local, m_new)</span>
+    O_i = <span class="fn">online_softmax_update</span>(
+        O_i, local_attn,
+        max_old, max_new, sum_old, sum_new
+    )
+
+    <span class="cm"># KV 沿 ring 传递给下一个 GPU</span>
+    K_recv, V_recv = <span class="fn">ring_send_recv</span>(
+        K_recv, V_recv,
+        src=(rank+<span class="num">1</span>)%P,
+        dst=(rank-<span class="num">1</span>)%P
+    )
+    <span class="cm"># 关键: compute 和 comm 可 overlap!</span>
+    <span class="cm"># step i 计算时, step i+1 的 KV 在传</span>
+
+<span class="cm"># ═══ 因果 Mask 处理 ═══</span>
+<span class="cm"># Causal: Q_i 只 attend K_j where j ≤ i</span>
+<span class="cm"># Ring 中后半圈的 KV 来自 "未来"</span>
+<span class="cm"># → 直接跳过 (不计算, 不通信)</span>
+<span class="cm"># → 有效通信轮数: P/2 (因果) vs P (双向)</span>
+
+<span class="cm"># ═══ 通信模式选择 ═══</span>
+comm_patterns = {
+    <span class="st">"ring"</span>: {
+        <span class="st">"pattern"</span>: <span class="st">"逐步 send/recv"</span>,
+        <span class="st">"优势"</span>: <span class="st">"overlap friendly"</span>,
+        <span class="st">"带宽"</span>: <span class="st">"每步 2*(N/P)*d bytes"</span>,
+    },
+    <span class="st">"all-to-all (Ulysses)"</span>: {
+        <span class="st">"pattern"</span>: <span class="st">"按 head 切分 → all2all 交换"</span>,
+        <span class="st">"优势"</span>: <span class="st">"一次通信全搞定"</span>,
+        <span class="st">"适合"</span>: <span class="st">"head 数 ≥ CP 数"</span>,
+    },
+    <span class="st">"hybrid (USP)"</span>: {
+        <span class="st">"pattern"</span>: <span class="st">"Ulysses intra-node + Ring inter-node"</span>,
+        <span class="st">"优势"</span>: <span class="st">"利用 NVLink 高带宽"</span>,
+    },
+}
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 520" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#06b6d4"/></marker>
+    <marker id="arr2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#f7971e"/></marker>
+  </defs>
+
+  <text x="210" y="20" text-anchor="middle" fill="#06b6d4" font-size="13" font-weight="bold">Ring Attention: KV 沿环传递</text>
+
+  <!-- 4 GPUs in ring -->
+  <rect x="160" y="40" width="100" height="45" rx="10" fill="#0d1a2a" stroke="#06b6d4" stroke-width="2"/>
+  <text x="210" y="58" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">GPU 0</text>
+  <text x="210" y="75" text-anchor="middle" fill="#888" font-size="8">Q₀, K₀, V₀</text>
+
+  <rect x="300" y="150" width="100" height="45" rx="10" fill="#0d1a2a" stroke="#06b6d4" stroke-width="2"/>
+  <text x="350" y="168" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">GPU 1</text>
+  <text x="350" y="185" text-anchor="middle" fill="#888" font-size="8">Q₁, K₁, V₁</text>
+
+  <rect x="160" y="260" width="100" height="45" rx="10" fill="#0d1a2a" stroke="#06b6d4" stroke-width="2"/>
+  <text x="210" y="278" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">GPU 2</text>
+  <text x="210" y="295" text-anchor="middle" fill="#888" font-size="8">Q₂, K₂, V₂</text>
+
+  <rect x="20" y="150" width="100" height="45" rx="10" fill="#0d1a2a" stroke="#06b6d4" stroke-width="2"/>
+  <text x="70" y="168" text-anchor="middle" fill="#06b6d4" font-size="10" font-weight="bold">GPU 3</text>
+  <text x="70" y="185" text-anchor="middle" fill="#888" font-size="8">Q₃, K₃, V₃</text>
+
+  <!-- Ring arrows (KV flow) -->
+  <path d="M 260 62 Q 310 62 300 150" stroke="#f7971e" stroke-width="2" fill="none" marker-end="url(#arr2)"/>
+  <path d="M 350 195 Q 350 260 260 282" stroke="#f7971e" stroke-width="2" fill="none" marker-end="url(#arr2)"/>
+  <path d="M 160 282 Q 110 282 120 195" stroke="#f7971e" stroke-width="2" fill="none" marker-end="url(#arr2)"/>
+  <path d="M 70 150 Q 70 85 160 62" stroke="#f7971e" stroke-width="2" fill="none" marker-end="url(#arr2)"/>
+
+  <!-- KV labels on arrows -->
+  <text x="300" y="100" fill="#f7971e" font-size="9">KV →</text>
+  <text x="320" y="240" fill="#f7971e" font-size="9">KV →</text>
+  <text x="110" y="240" fill="#f7971e" font-size="9">KV →</text>
+  <text x="90" y="100" fill="#f7971e" font-size="9">KV →</text>
+
+  <!-- Timeline below -->
+  <line x1="30" y1="340" x2="390" y2="340" stroke="#333" stroke-width="1"/>
+  <text x="210" y="360" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="bold">GPU 0 时间线 (P=4)</text>
+
+  <!-- Step boxes -->
+  <rect x="40" y="375" width="75" height="50" rx="5" fill="#12121c" stroke="#06b6d4" stroke-width="1"/>
+  <text x="77" y="392" text-anchor="middle" fill="#06b6d4" font-size="8">Step 0</text>
+  <text x="77" y="406" text-anchor="middle" fill="#8c8" font-size="7">Compute</text>
+  <text x="77" y="418" text-anchor="middle" fill="#888" font-size="7">Q₀ × K₀V₀</text>
+
+  <rect x="125" y="375" width="75" height="50" rx="5" fill="#12121c" stroke="#06b6d4" stroke-width="1"/>
+  <text x="162" y="392" text-anchor="middle" fill="#06b6d4" font-size="8">Step 1</text>
+  <text x="162" y="406" text-anchor="middle" fill="#8c8" font-size="7">Compute</text>
+  <text x="162" y="418" text-anchor="middle" fill="#888" font-size="7">Q₀ × K₃V₃</text>
+
+  <rect x="210" y="375" width="75" height="50" rx="5" fill="#12121c" stroke="#06b6d4" stroke-width="1"/>
+  <text x="247" y="392" text-anchor="middle" fill="#06b6d4" font-size="8">Step 2</text>
+  <text x="247" y="406" text-anchor="middle" fill="#8c8" font-size="7">Compute</text>
+  <text x="247" y="418" text-anchor="middle" fill="#888" font-size="7">Q₀ × K₂V₂</text>
+
+  <rect x="295" y="375" width="75" height="50" rx="5" fill="#12121c" stroke="#06b6d4" stroke-width="1"/>
+  <text x="332" y="392" text-anchor="middle" fill="#06b6d4" font-size="8">Step 3</text>
+  <text x="332" y="406" text-anchor="middle" fill="#8c8" font-size="7">Compute</text>
+  <text x="332" y="418" text-anchor="middle" fill="#888" font-size="7">Q₀ × K₁V₁</text>
+
+  <!-- Comm overlap bars -->
+  <rect x="85" y="430" width="60" height="12" rx="3" fill="#f7971e" opacity="0.6"/>
+  <rect x="170" y="430" width="60" height="12" rx="3" fill="#f7971e" opacity="0.6"/>
+  <rect x="255" y="430" width="60" height="12" rx="3" fill="#f7971e" opacity="0.6"/>
+  <text x="210" y="458" text-anchor="middle" fill="#f7971e" font-size="8">↑ comm (overlap with next step compute)</text>
+
+  <!-- Online softmax -->
+  <rect x="60" y="475" width="300" height="30" rx="6" fill="#16162a" stroke="#06b6d455" stroke-width="1"/>
+  <text x="210" y="495" text-anchor="middle" fill="#06b6d4" font-size="9">Online Softmax: O = rescale(O_old) + rescale(O_new) — 无需全局 max</text>
+</svg>
+</div>
+<p class="caption">Ring Attention: 4 GPU 环形 KV 传递 + Compute-Comm Overlap</p>
+</div>
+<div class="col-caption">
+<h3>CP 核心思想</h3>
+<p><strong>问题:</strong> 序列太长（128K-1M tokens），单卡放不下完整 KV cache。需要把序列切分到多个 GPU 并行处理。</p>
+<p><strong>切分方式:</strong> 长度 N 的序列切成 P 个 chunk，GPU_i 持有第 i 个 chunk 的 Q/K/V（各 N/P tokens）。</p>
+
+<h3>Ring Attention 算法</h3>
+<p><strong>Q 留本地:</strong> 每个 GPU 的 Q 不动。K/V 沿环形拓扑传递。经过 P 步后，每个 GPU 见过所有 KV。</p>
+<p><strong>Online Softmax:</strong> 不需要等全部 KV 到齐才算 softmax。每收到一个 KV chunk 就增量更新 output — 用 max/sum 统计量做 rescale。</p>
+<p><strong>Compute-Comm Overlap:</strong> 计算 step i 时，step i+1 的 KV 已经在传输。只要 compute ≥ comm 时间，通信完全隐藏。</p>
+
+<h3>因果 Mask 优化</h3>
+<p><strong>关键:</strong> Causal attention 中，Q_i 只看 K_j (j≤i)。来自"未来"的 KV chunk 可以直接跳过不计算 → 有效步数从 P 降到 ~P/2。</p>
+
+<h3>通信模式对比</h3>
+<table>
+<tr><th>模式</th><th>特点</th><th>适用</th></tr>
+<tr><td>Ring</td><td>逐步传 KV，P 步完成</td><td>seq 长、head 少</td></tr>
+<tr><td>Ulysses</td><td>按 head 切 → all-to-all</td><td>head 多、节点内</td></tr>
+<tr><td>USP (混合)</td><td>Ulysses 节点内 + Ring 节点间</td><td>大规模集群</td></tr>
+</table>
+
+<div class="key-point"><strong>核心约束:</strong> CP 的效率取决于"每个 Q chunk 需要看多少 KV"。Full Attention 必须看全部 → 通信 P 步；SWA 只看窗口内 → 通信 1-2 步；Linear Attention 不做 Q×K → 没有 KV 传输需求，但有状态依赖。</div>
+</div>
+</div>
+
+<!-- ===== Section 2: 三种 Attention CP 难点 ===== -->
+<h2>2. 三种 Attention 的 CP 难点 — 从通信模式到串行依赖</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ═══ Case A: Full Attention CP ═══</span>
+<span class="cm"># 每个 Q chunk 必须看所有 KV → P 步 ring</span>
+
+<span class="cm"># 通信量 (per GPU per step):</span>
+<span class="cm"># 2 × (N/P) × d × sizeof(bf16) bytes</span>
+<span class="cm"># 总通信: (P-1) × 上面 ≈ 2Nd bytes</span>
+
+<span class="cm"># 难点 A1: Compute-Comm Overlap</span>
+<span class="cm"># 计算: (N/P)² × d flops per step</span>
+<span class="cm"># 通信: 2(N/P)d bytes per step</span>
+<span class="cm"># ratio = (N/P)d / (2×bandwidth)</span>
+<span class="cm"># → chunk 越大越容易 overlap</span>
+<span class="cm"># → CP 太大 (P太大) → chunk 太小 → 无法隐藏通信</span>
+
+<span class="cm"># 难点 A2: Causal Mask 导致 Load Imbalance</span>
+<span class="cm"># GPU_0 的 Q₀ 只看 K₀ (1 step)</span>
+<span class="cm"># GPU_P-1 的 Q_{P-1} 看所有 K (P steps)</span>
+<span class="cm"># → 前面的 GPU 空转等后面</span>
+<span class="cm"># 解法: Zigzag 分配</span>
+<span class="cm"># GPU_i 持有 chunk i 和 chunk 2P-1-i</span>
+
+<span class="cm"># ═══ Case B: SWA (Sliding Window) CP ═══</span>
+<span class="cm"># 窗口 w，chunk_size = N/P</span>
+<span class="cm"># Q_i 只需要 K_j where |i-j| × (N/P) ≤ w</span>
+
+<span class="cm"># 关键区别: 大部分 chunk 对不交互!</span>
+num_comm_steps = <span class="fn">ceil</span>(w / (N/P))  <span class="cm"># 通常 1-2 步</span>
+<span class="cm"># vs Full Attention 的 P 步!</span>
+
+<span class="cm"># 难点 B1: 窗口跨 chunk 边界</span>
+<span class="cm"># chunk 边界处的 token 需要相邻 chunk 的 KV</span>
+<span class="cm"># 需要精确计算哪些 KV 要传</span>
+<span class="cm"># → 不再是简单的"传整个 chunk"</span>
+<span class="cm"># → 需要 partial KV 传输或 halo exchange</span>
+
+<span class="cm"># 难点 B2: 不规则通信 pattern</span>
+<span class="cm"># Ring attention 假设每步传相同量</span>
+<span class="cm"># SWA: 只和相邻 1-2 GPU 通信</span>
+<span class="cm"># → Ring 模式浪费，改用 P2P send/recv</span>
+<span class="cm"># → 或者用 "shifted window" 避免边界</span>
+
+<span class="cm"># 难点 B3: 与 Global Attention 层交替</span>
+<span class="cm"># Gemma3: 5层 SWA + 1层 Global</span>
+<span class="cm"># Global 层仍需 full ring → 两种 CP 策略共存</span>
+
+<span class="cm"># ═══ Case C: Linear Attention / SSM CP ═══</span>
+<span class="cm"># S_t = f(S_{t-1}, k_t, v_t)  ← 串行!</span>
+
+<span class="cm"># 根本问题: 不是 Q×K 的 pattern</span>
+<span class="cm"># 没有"KV 传递"这个概念</span>
+<span class="cm"># 而是 STATE 依赖: chunk 2 需要 chunk 1 的</span>
+<span class="cm"># 最终状态 S_{N/P} 才能开始计算</span>
+
+<span class="cm"># 难点 C1: 不可消除的串行依赖</span>
+<span class="cm"># GPU_1 必须等 GPU_0 算完 state</span>
+<span class="cm"># GPU_2 必须等 GPU_1 算完 state</span>
+<span class="cm"># → 有 P-1 步串行等待 (pipeline bubble)</span>
+
+<span class="cm"># 解法: Parallel Prefix Scan</span>
+<span class="cm"># 如果 f 是结合律运算:</span>
+<span class="cm"># S_t = A_t · S_{t-1} + B_t</span>
+<span class="cm"># 可以用 O(log P) depth 的 parallel scan</span>
+<span class="cm"># 但需要 materialize 中间 state → 内存大</span>
+
+<span class="cm"># 难点 C2: State 大小 vs KV 大小</span>
+<span class="cm"># Linear Attn state: d×d (如 128×128 = 16K)</span>
+<span class="cm"># 传 state 很小 → 通信不是瓶颈</span>
+<span class="cm"># 瓶颈是串行计算等待!</span>
+
+<span class="cm"># 难点 C3: 非结合律运算</span>
+<span class="cm"># DeltaNet: S_t = S - β(S·k)k + kv</span>
+<span class="cm"># Titans: gradient-based update</span>
+<span class="cm"># → 不满足结合律 → parallel scan 不适用</span>
+<span class="cm"># → 只能串行或近似</span>
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 600" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrC" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#06b6d4"/></marker>
+    <marker id="arrR" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#ff6b6b"/></marker>
+  </defs>
+
+  <text x="210" y="18" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="bold">三种 Attention 的 CP 通信模式对比</text>
+
+  <!-- Case A: Full Attention -->
+  <rect x="15" y="30" width="390" height="150" rx="10" fill="#0d1a2a" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="30" y="50" fill="#06b6d4" font-size="11" font-weight="bold">A: Full Attention — 每 Q 看所有 KV</text>
+
+  <!-- 4 GPU bars showing full communication -->
+  <rect x="40" y="65" width="60" height="15" rx="3" fill="#06b6d4" opacity="0.8"/><text x="70" y="76" text-anchor="middle" fill="#fff" font-size="7">GPU0</text>
+  <rect x="110" y="65" width="60" height="15" rx="3" fill="#06b6d4" opacity="0.8"/><text x="140" y="76" text-anchor="middle" fill="#fff" font-size="7">GPU1</text>
+  <rect x="180" y="65" width="60" height="15" rx="3" fill="#06b6d4" opacity="0.8"/><text x="210" y="76" text-anchor="middle" fill="#fff" font-size="7">GPU2</text>
+  <rect x="250" y="65" width="60" height="15" rx="3" fill="#06b6d4" opacity="0.8"/><text x="280" y="76" text-anchor="middle" fill="#fff" font-size="7">GPU3</text>
+
+  <!-- Full connectivity lines -->
+  <line x1="70" y1="80" x2="140" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+  <line x1="70" y1="80" x2="210" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+  <line x1="70" y1="80" x2="280" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+  <line x1="140" y1="80" x2="70" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+  <line x1="140" y1="80" x2="210" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+  <line x1="140" y1="80" x2="280" y2="95" stroke="#f7971e" stroke-width="0.8" opacity="0.6"/>
+
+  <text x="40" y="115" fill="#888" font-size="8">通信: P-1 步 ring (全连接)</text>
+  <text x="40" y="130" fill="#888" font-size="8">难点: overlap (chunk太小→暴露comm)</text>
+  <text x="40" y="145" fill="#888" font-size="8">难点: causal mask 负载不均 → zigzag</text>
+  <rect x="290" y="108" width="100" height="55" rx="5" fill="#16162a" stroke="#06b6d433" stroke-width="1"/>
+  <text x="340" y="125" text-anchor="middle" fill="#06b6d4" font-size="9">P 步</text>
+  <text x="340" y="140" text-anchor="middle" fill="#8c8" font-size="8">成熟度: ⭐⭐</text>
+  <text x="340" y="155" text-anchor="middle" fill="#888" font-size="7">FlashAttn 直接支持</text>
+
+  <!-- Case B: SWA -->
+  <rect x="15" y="190" width="390" height="150" rx="10" fill="#1a1a0d" stroke="#f7971e" stroke-width="1.5"/>
+  <text x="30" y="210" fill="#f7971e" font-size="11" font-weight="bold">B: SWA — 只看窗口内 KV</text>
+
+  <!-- 4 GPU bars with sparse communication -->
+  <rect x="40" y="225" width="60" height="15" rx="3" fill="#f7971e" opacity="0.8"/><text x="70" y="236" text-anchor="middle" fill="#fff" font-size="7">GPU0</text>
+  <rect x="110" y="225" width="60" height="15" rx="3" fill="#f7971e" opacity="0.8"/><text x="140" y="236" text-anchor="middle" fill="#fff" font-size="7">GPU1</text>
+  <rect x="180" y="225" width="60" height="15" rx="3" fill="#f7971e" opacity="0.8"/><text x="210" y="236" text-anchor="middle" fill="#fff" font-size="7">GPU2</text>
+  <rect x="250" y="225" width="60" height="15" rx="3" fill="#f7971e" opacity="0.8"/><text x="280" y="236" text-anchor="middle" fill="#fff" font-size="7">GPU3</text>
+
+  <!-- Only adjacent communication -->
+  <line x1="70" y1="240" x2="140" y2="255" stroke="#f7971e" stroke-width="1.5"/>
+  <line x1="140" y1="240" x2="210" y2="255" stroke="#f7971e" stroke-width="1.5"/>
+  <line x1="210" y1="240" x2="280" y2="255" stroke="#f7971e" stroke-width="1.5"/>
+  <!-- No long-range lines! -->
+
+  <text x="40" y="275" fill="#888" font-size="8">通信: 仅相邻 1-2 GPU (窗口内)</text>
+  <text x="40" y="290" fill="#888" font-size="8">难点: 边界 halo exchange 不规则</text>
+  <text x="40" y="305" fill="#888" font-size="8">难点: 与 Global Attn 层混合时策略切换</text>
+  <rect x="290" y="268" width="100" height="55" rx="5" fill="#16162a" stroke="#f7971e33" stroke-width="1"/>
+  <text x="340" y="285" text-anchor="middle" fill="#f7971e" font-size="9">1-2 步</text>
+  <text x="340" y="300" text-anchor="middle" fill="#8c8" font-size="8">效率: 最高 ✓</text>
+  <text x="340" y="315" text-anchor="middle" fill="#888" font-size="7">通信量 ↓↓</text>
+
+  <!-- Case C: Linear Attention -->
+  <rect x="15" y="350" width="390" height="170" rx="10" fill="#1a0d0d" stroke="#ff6b6b" stroke-width="1.5"/>
+  <text x="30" y="370" fill="#ff6b6b" font-size="11" font-weight="bold">C: Linear Attention / SSM — 状态串行依赖</text>
+
+  <!-- Sequential state passing -->
+  <rect x="40" y="390" width="60" height="30" rx="5" fill="#12121c" stroke="#ff6b6b" stroke-width="1"/>
+  <text x="70" y="409" text-anchor="middle" fill="#ff6b6b" font-size="8">GPU0</text>
+
+  <line x1="100" y1="405" x2="130" y2="405" stroke="#ff6b6b" stroke-width="2" marker-end="url(#arrR)"/>
+  <text x="115" y="398" text-anchor="middle" fill="#ff6b6b" font-size="7">S₁</text>
+
+  <rect x="135" y="390" width="60" height="30" rx="5" fill="#12121c" stroke="#ff6b6b" stroke-width="1"/>
+  <text x="165" y="409" text-anchor="middle" fill="#ff6b6b" font-size="8">GPU1</text>
+
+  <line x1="195" y1="405" x2="225" y2="405" stroke="#ff6b6b" stroke-width="2" marker-end="url(#arrR)"/>
+  <text x="210" y="398" text-anchor="middle" fill="#ff6b6b" font-size="7">S₂</text>
+
+  <rect x="230" y="390" width="60" height="30" rx="5" fill="#12121c" stroke="#ff6b6b" stroke-width="1"/>
+  <text x="260" y="409" text-anchor="middle" fill="#ff6b6b" font-size="8">GPU2</text>
+
+  <line x1="290" y1="405" x2="320" y2="405" stroke="#ff6b6b" stroke-width="2" marker-end="url(#arrR)"/>
+  <text x="305" y="398" text-anchor="middle" fill="#ff6b6b" font-size="7">S₃</text>
+
+  <rect x="325" y="390" width="60" height="30" rx="5" fill="#12121c" stroke="#ff6b6b" stroke-width="1"/>
+  <text x="355" y="409" text-anchor="middle" fill="#ff6b6b" font-size="8">GPU3</text>
+
+  <!-- Wait indicators -->
+  <text x="165" y="435" text-anchor="middle" fill="#ff6b6b" font-size="7">等 GPU0</text>
+  <text x="260" y="435" text-anchor="middle" fill="#ff6b6b" font-size="7">等 GPU1</text>
+  <text x="355" y="435" text-anchor="middle" fill="#ff6b6b" font-size="7">等 GPU2</text>
+
+  <text x="40" y="460" fill="#888" font-size="8">通信: state 很小 (d²) — 不是瓶颈</text>
+  <text x="40" y="475" fill="#888" font-size="8">瓶颈: 串行依赖! GPU_i 必须等 GPU_{i-1}</text>
+  <text x="40" y="490" fill="#888" font-size="8">解法: parallel scan (log P depth) 但需结合律</text>
+  <rect x="290" y="450" width="100" height="55" rx="5" fill="#16162a" stroke="#ff6b6b33" stroke-width="1"/>
+  <text x="340" y="467" text-anchor="middle" fill="#ff6b6b" font-size="9">O(log P) 或 O(P)</text>
+  <text x="340" y="482" text-anchor="middle" fill="#c88" font-size="8">难度: ⭐⭐⭐⭐⭐</text>
+  <text x="340" y="497" text-anchor="middle" fill="#888" font-size="7">本质串行瓶颈</text>
+
+  <!-- Summary bar -->
+  <rect x="30" y="540" width="360" height="45" rx="8" fill="#16162a" stroke="#06b6d433" stroke-width="1"/>
+  <text x="210" y="558" text-anchor="middle" fill="#06b6d4" font-size="9" font-weight="bold">CP 难度总结</text>
+  <text x="210" y="575" text-anchor="middle" fill="#888" font-size="8">Full: 通信大但规则 | SWA: 通信小但不规则 | Linear: 通信小但串行等待</text>
+</svg>
+</div>
+<p class="caption">三种 CP 模式对比: Full(全连接) / SWA(仅相邻) / Linear(串行传state)</p>
+</div>
+<div class="col-caption">
+<h3>A: Full Attention CP</h3>
+<p><strong>通信模式:</strong> 每个 Q chunk 需要全部 KV → ring 传 P-1 步。通信量大但 pattern 完全规则。</p>
+<p><strong>难点 1 — Overlap:</strong> chunk_size = N/P。P 太大 → chunk 太小 → compute time \lt comm time → 通信暴露。实践中 CP≤8 比较安全。</p>
+<p><strong>难点 2 — Load Imbalance:</strong> Causal mask 下前面的 chunk 计算量少、后面的多。解法: Zigzag 分配（GPU_i 同时持有最前和最后的 chunk）。</p>
+<p><strong>成熟度:</strong> 最高。Megatron-Core、DeepSpeed、vLLM 都有生产实现。</p>
+
+<h3>B: SWA CP</h3>
+<p><strong>通信模式:</strong> 只和持有"窗口范围内 KV"的相邻 GPU 通信。大部分 chunk 对零交互。</p>
+<p><strong>难点 1 — Halo Exchange:</strong> 窗口跨 chunk 边界时，需要从相邻 GPU 取部分 KV（不是整个 chunk）。实现比简单 ring shift 复杂。</p>
+<p><strong>难点 2 — 混合层:</strong> Gemma 3 每 6 层有 1 层 Global Attention。该层需要 full ring CP，其余 SWA 层只需相邻通信 → 同一模型两种 CP 策略交替。</p>
+<p><strong>优势:</strong> 通信量从 O(N) 降到 O(w)，CP 效率反而比 Full Attention 更高。</p>
+
+<h3>C: Linear Attention / SSM CP</h3>
+<p><strong>通信模式:</strong> 不传 KV，传 state（d×d 矩阵，很小）。通信本身不是瓶颈。</p>
+<p><strong>根本难点 — 串行依赖:</strong> \(S_t = f(S_{t-1}, x_t)\)。chunk 2 需要 chunk 1 的最终 state 才能开始。P 个 GPU 存在 P-1 步串行等待。</p>
+<p><strong>解法:</strong> 若 f 满足结合律（如 \(S_t = A_t S_{t-1} + B_t\)），可用 parallel prefix scan → O(log P) depth。Mamba-2、GLA 满足；DeltaNet、Titans 不满足。</p>
+<p><strong>不满足结合律时:</strong> 只能串行传 state，或用近似方法（如 reset state at chunk boundary → 牺牲质量换并行）。</p>
+
+<div class="key-point"><strong>本质区别:</strong> Attention 的 CP 是<em>数据并行</em>问题（同一计算对不同数据）→ 天然可并行。SSM 的 CP 是<em>前缀计算</em>问题（后一步依赖前一步结果）→ 本质串行，只能用 scan 降到 log 深度。</div>
+</div>
+</div>
+
+<!-- ===== Section 3: 工程实践 ===== -->
+<h2>3. 工程实践 — 混合架构的 CP 策略与 Scaling 分析</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ═══ 混合架构 CP 策略 ═══</span>
+<span class="cm"># 核心思路: 让 Attention 层承担 CP 通信</span>
+<span class="cm"># SSM 层不需要跨 GPU 通信 (O(N) 本地)</span>
+
+<span class="cm"># Nemotron Ultra (Mamba-2 + Attention + MoE)</span>
+nemotron_cp = {
+    <span class="st">"mamba_layers"</span>: {
+        <span class="st">"cp_strategy"</span>: <span class="st">"local_only"</span>,
+        <span class="cm"># 每 GPU 独立计算自己的 chunk</span>
+        <span class="cm"># chunk 间 state 传递:</span>
+        <span class="cm"># Mamba-2 满足结合律 → parallel scan</span>
+        <span class="st">"comm"</span>: <span class="st">"log(P) steps, state only"</span>,
+        <span class="st">"state_size"</span>: <span class="st">"128×64×8 = 64KB"</span>,
+    },
+    <span class="st">"attention_layers"</span>: {
+        <span class="st">"cp_strategy"</span>: <span class="st">"ring_attention"</span>,
+        <span class="cm"># 标准 ring CP with causal zigzag</span>
+        <span class="st">"comm"</span>: <span class="st">"P/2 steps, full KV"</span>,
+    },
+}
+
+<span class="cm"># Jamba (Mamba + Attention, AI21)</span>
+jamba_cp = {
+    <span class="st">"ratio"</span>: <span class="st">"7:1 (Mamba:Attn)"</span>,
+    <span class="cm"># 只有 1/8 的层需要 ring comm</span>
+    <span class="cm"># → 整体 CP 通信量比纯 Transformer ↓ 7×</span>
+}
+
+<span class="cm"># Gemma 3 (SWA + Global Attn)</span>
+gemma3_cp = {
+    <span class="st">"swa_layers"</span>: {
+        <span class="st">"cp_strategy"</span>: <span class="st">"neighbor_exchange"</span>,
+        <span class="st">"comm_steps"</span>: <span class="num">1</span>,  <span class="cm"># 只和相邻 GPU</span>
+    },
+    <span class="st">"global_layers"</span>: {
+        <span class="st">"cp_strategy"</span>: <span class="st">"full_ring"</span>,
+        <span class="st">"comm_steps"</span>: <span class="st">"P-1"</span>,
+    },
+    <span class="st">"ratio"</span>: <span class="st">"5:1 (SWA:Global)"</span>,
+}
+
+<span class="cm"># ═══ Scaling 分析 (CP=8, N=128K) ═══</span>
+scaling = {
+    <span class="st">"seq_len"</span>: <span class="num">131072</span>,
+    <span class="st">"cp_degree"</span>: <span class="num">8</span>,
+    <span class="st">"chunk_size"</span>: <span class="num">16384</span>,  <span class="cm"># 16K per GPU</span>
+    <span class="st">"d_model"</span>: <span class="num">8192</span>,
+    <span class="st">"num_heads"</span>: <span class="num">64</span>,
+    <span class="st">"head_dim"</span>: <span class="num">128</span>,
+}
+
+<span class="cm"># 每步 KV 传输量 (Full Attn):</span>
+<span class="cm"># 2 × 16K × 128 × 2(KV) × 2(bf16)</span>
+<span class="cm"># = 2 × 16384 × 128 × 2 × 2 = 16 MB / step</span>
+<span class="cm"># 7 步 × 16 MB = 112 MB total per layer</span>
+
+<span class="cm"># SWA (window=4096):</span>
+<span class="cm"># 只需传 4096 tokens 的 KV (1 step)</span>
+<span class="cm"># = 4096 × 128 × 2 × 2 = 2 MB per layer</span>
+<span class="cm"># → 56× 通信减少!</span>
+
+<span class="cm"># Linear Attn (state pass):</span>
+<span class="cm"># state: 128 × 128 × 2(bf16) = 32 KB</span>
+<span class="cm"># log(8)=3 步 scan → 96 KB total</span>
+<span class="cm"># 但有 3 步串行等待!</span>
+
+<span class="cm"># ═══ 实际选择指南 ═══</span>
+<span class="cm"># CP ≤ 4: Full Attn 没问题 (overlap 住)</span>
+<span class="cm"># CP 8-16: 混合架构优势明显</span>
+<span class="cm"># CP ≥ 32: 纯 Transformer 基本不行</span>
+<span class="cm">#           需要 SWA/SSM 降低通信</span>
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 550" xmlns="http://www.w3.org/2000/svg">
+  <text x="210" y="18" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="bold">CP=8 时三种架构的通信量与延迟</text>
+
+  <!-- Bar chart: Communication volume -->
+  <text x="210" y="45" text-anchor="middle" fill="#aaa" font-size="10">通信量 (per layer, N=128K, d=128)</text>
+
+  <text x="95" y="80" text-anchor="end" fill="#06b6d4" font-size="9">Full Attn</text>
+  <rect x="100" y="68" width="280" height="18" rx="4" fill="#06b6d4" opacity="0.7"/>
+  <text x="385" y="81" fill="#06b6d4" font-size="9">112 MB</text>
+
+  <text x="95" y="112" text-anchor="end" fill="#f7971e" font-size="9">SWA (w=4K)</text>
+  <rect x="100" y="100" width="5" height="18" rx="4" fill="#f7971e" opacity="0.7"/>
+  <text x="110" y="113" fill="#f7971e" font-size="9">2 MB</text>
+
+  <text x="95" y="144" text-anchor="end" fill="#ff6b6b" font-size="9">Linear Attn</text>
+  <rect x="100" y="132" width="1" height="18" rx="4" fill="#ff6b6b" opacity="0.7"/>
+  <text x="106" y="145" fill="#ff6b6b" font-size="9">96 KB</text>
+
+  <!-- Separator -->
+  <line x1="30" y1="170" x2="390" y2="170" stroke="#333" stroke-width="0.5"/>
+
+  <!-- Bar chart: Serialization depth -->
+  <text x="210" y="195" text-anchor="middle" fill="#aaa" font-size="10">串行等待深度 (P=8)</text>
+
+  <text x="95" y="228" text-anchor="end" fill="#06b6d4" font-size="9">Full Attn</text>
+  <rect x="100" y="216" width="10" height="18" rx="4" fill="#06b6d4" opacity="0.7"/>
+  <text x="115" y="229" fill="#06b6d4" font-size="9">0 (完全并行)</text>
+
+  <text x="95" y="260" text-anchor="end" fill="#f7971e" font-size="9">SWA</text>
+  <rect x="100" y="248" width="10" height="18" rx="4" fill="#f7971e" opacity="0.7"/>
+  <text x="115" y="261" fill="#f7971e" font-size="9">0 (完全并行)</text>
+
+  <text x="95" y="292" text-anchor="end" fill="#ff6b6b" font-size="9">Linear Attn</text>
+  <rect x="100" y="280" width="210" height="18" rx="4" fill="#ff6b6b" opacity="0.7"/>
+  <text x="315" y="293" fill="#ff6b6b" font-size="9">log₂(8)=3 步 scan</text>
+
+  <text x="95" y="324" text-anchor="end" fill="#c678dd" font-size="9">DeltaNet</text>
+  <rect x="100" y="312" width="280" height="18" rx="4" fill="#c678dd" opacity="0.7"/>
+  <text x="385" y="325" fill="#c678dd" font-size="9">7 步 (串行)</text>
+
+  <!-- Separator -->
+  <line x1="30" y1="350" x2="390" y2="350" stroke="#333" stroke-width="0.5"/>
+
+  <!-- Hybrid architecture illustration -->
+  <text x="210" y="375" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="bold">混合架构 CP 策略</text>
+
+  <!-- Nemotron pattern -->
+  <text x="40" y="400" fill="#76b900" font-size="9" font-weight="bold">Nemotron Ultra (108 层)</text>
+  <rect x="40" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="57" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="74" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="91" y="408" width="15" height="12" rx="2" fill="#06b6d4" opacity="0.8"/>
+  <rect x="108" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="125" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="142" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="159" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <rect x="176" y="408" width="15" height="12" rx="2" fill="#06b6d4" opacity="0.8"/>
+  <rect x="193" y="408" width="15" height="12" rx="2" fill="#76b900" opacity="0.6"/>
+  <text x="220" y="418" fill="#888" font-size="7">绿=Mamba(本地) 蓝=Attn(ring CP)</text>
+
+  <!-- Gemma 3 pattern -->
+  <text x="40" y="445" fill="#f7971e" font-size="9" font-weight="bold">Gemma 3</text>
+  <rect x="40" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="57" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="74" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="91" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="108" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="125" y="453" width="15" height="12" rx="2" fill="#06b6d4" opacity="0.8"/>
+  <rect x="142" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="159" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="176" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <rect x="193" y="453" width="15" height="12" rx="2" fill="#f7971e" opacity="0.6"/>
+  <text x="220" y="463" fill="#888" font-size="7">橙=SWA(邻居) 蓝=Global(ring)</text>
+
+  <!-- Key insight -->
+  <rect x="30" y="485" width="360" height="50" rx="8" fill="#16162a" stroke="#06b6d433" stroke-width="1"/>
+  <text x="210" y="505" text-anchor="middle" fill="#06b6d4" font-size="9" font-weight="bold">设计原则</text>
+  <text x="210" y="522" text-anchor="middle" fill="#888" font-size="8">少数 Attention 层承担 CP 通信 + 精确 recall</text>
+  <text x="210" y="535" text-anchor="middle" fill="#888" font-size="8">多数 SSM/SWA 层本地计算 → 整体通信 ↓ 5-8×</text>
+</svg>
+</div>
+<p class="caption">CP=8 通信量/串行深度对比 + 混合架构层模式</p>
+</div>
+<div class="col-caption">
+<h3>混合架构的 CP 设计哲学</h3>
+<p><strong>核心洞察:</strong> 不是每层都需要跨 GPU 通信。SSM/Mamba 层的计算是 O(N) 本地的 — 每个 GPU 独立处理自己的 chunk，只需在层末传递一个小 state。把"昂贵的 ring communication"留给少数 Attention 层。</p>
+
+<h3>三种混合策略</h3>
+<p><strong>Nemotron Ultra:</strong> ~80% Mamba 层（本地 + scan）+ ~20% Attention 层（ring CP）。通信量比纯 Transformer 降 5×。</p>
+<p><strong>Gemma 3:</strong> 5/6 SWA 层（只传 halo）+ 1/6 Global 层（full ring）。通信量比纯 Transformer 降 ~5×。</p>
+<p><strong>Jamba:</strong> 7/8 Mamba 层 + 1/8 Attention 层。通信降 ~7×。</p>
+
+<h3>Scaling 数据 (CP=8, 128K tokens)</h3>
+<table>
+<tr><th>类型</th><th>通信/层</th><th>串行深度</th></tr>
+<tr><td>Full Attn</td><td>112 MB</td><td>0</td></tr>
+<tr><td>SWA (w=4K)</td><td>2 MB</td><td>0</td></tr>
+<tr><td>Mamba-2</td><td>96 KB</td><td>3 (scan)</td></tr>
+<tr><td>DeltaNet</td><td>32 KB</td><td>7 (串行)</td></tr>
+</table>
+
+<h3>选型指南</h3>
+<p><strong>CP ≤ 4:</strong> 纯 Transformer 可行，overlap 住通信。</p>
+<p><strong>CP 8-16:</strong> 混合架构优势显现。Mamba/SWA 层的通信几乎为零。</p>
+<p><strong>CP ≥ 32:</strong> 纯 Transformer 通信占比太高。必须用 SWA 或 SSM 降通信。这是 1M context 模型都用混合架构的根本原因。</p>
+
+<div class="key-point"><strong>终极结论:</strong> CP 的瓶颈不是"哪种 attention 最难做 CP"，而是"哪种架构在 CP 下总效率最高"。答案是混合: 用少量 Attention 保精确 recall（承担 ring 通信），用大量 SSM/SWA 做高效本地计算（几乎零通信）。这就是为什么 1M context 的 Nemotron Ultra、Gemma 3、Jamba 都选择了混合架构。</div>
+</div>
+</div>
+
+<!-- ===== Section 4: Megatron-Core GDN CP 实现 ===== -->
+<h2>4. Megatron-Core 实现 — Gated DeltaNet 的 All-to-All CP</h2>
+
+<div class="three-col">
+<div class="col-code">
+<pre><span class="cm"># ═══ MCore GDN CP 策略: All-to-All CP↔HP ═══</span>
+<span class="cm"># 文件: megatron/core/ssm/gated_delta_net.py</span>
+<span class="cm"># 核心思想: 不传 state，换维度！</span>
+<span class="cm"># CP sharding (序列切分)</span>
+<span class="cm">#   → All-to-All → HP sharding (head 切分)</span>
+<span class="cm"># 每 rank 拿完整序列但只算部分 head</span>
+<span class="cm"># 递推在完整序列上执行 → 无串行依赖！</span>
+
+<span class="cm"># ═══ 非 CP 时的数据流 ═══</span>
+<span class="cm"># 每 GPU 持有完整序列，全部 head (TP 内)</span>
+<span class="cm"># shape: [seq_len, batch, hidden]</span>
+<span class="kw">def</span> <span class="fn">forward_no_cp</span>(hidden_states):
+    <span class="cm"># 1. 投影: h → q,k,v,gate,beta,alpha</span>
+    qkvzba, _ = in_proj(hidden_states)
+    <span class="cm"># shape: [S, B, qk*2+v*2+heads*2]</span>
+
+    <span class="cm"># 2. Conv1d on QKV</span>
+    qkv = causal_conv1d(qkv, conv1d.weight)
+
+    <span class="cm"># 3. GDN 递推 (chunk_gated_delta_rule)</span>
+    <span class="cm"># S_t = g_t⊙S_{t-1} + β_t·(k_t⊗v_t - (S·k_t)⊗k_t)</span>
+    out = chunk_gated_delta_rule(q, k, v, g, beta)
+
+    <span class="cm"># 4. Output norm + gate + proj</span>
+    out = gated_norm(out, gate)
+    out = out_proj(out)
+    <span class="kw">return</span> out
+
+<span class="cm"># ═══ CP 时的数据流 (实际代码) ═══</span>
+<span class="cm"># 每 GPU 持有 S/P 的序列, 全部 head (TP 内)</span>
+<span class="kw">def</span> <span class="fn">forward_with_cp</span>(hidden_states):
+    <span class="cm"># shape: [S/P, B, hidden]</span>
+
+    <span class="cm"># 1. 投影 (在 S/P 上做, 无通信)</span>
+    qkvzba, _ = in_proj(hidden_states)
+    <span class="cm"># shape: [S/P, B, qk*2+v*2+heads*2]</span>
+
+    <span class="cm"># ★ 2. All-to-All: CP → HP</span>
+    <span class="cm"># 输入: [S/P, B, H_all]  (序列分片)</span>
+    <span class="cm"># 输出: [S, B, H_all/P]  (头分片)</span>
+    qkvzba = <span class="fn">tensor_a2a_cp2hp</span>(
+        qkvzba,
+        seq_dim=<span class="num">0</span>, head_dim=<span class="num">-1</span>,
+        cp_group=pg_collection.cp,
+        split_sections=[qk, qk, v, v, h, h],
+    )
+    <span class="cm"># ↑ 每个 section 独立做 a2a</span>
+    <span class="cm"># qk 维度: S/P → S, heads/P</span>
+
+    <span class="cm"># 3. Conv1d (参数也要按 head 切片!)</span>
+    conv1d_weight = <span class="fn">get_parameter_local_cp</span>(
+        self.conv1d.weight, dim=<span class="num">0</span>,
+        cp_group=pg_collection.cp,
+        split_sections=[qk, qk, v],
+    )
+    <span class="cm"># ↑ 只取当前 rank 负责的 head 对应参数</span>
+    qkv = causal_conv1d(qkv, conv1d_weight)
+
+    <span class="cm"># 4. A_log, dt_bias 也按 head 切片</span>
+    A_log_local = <span class="fn">get_parameter_local_cp</span>(
+        self.A_log, dim=<span class="num">0</span>,
+        cp_group=pg_collection.cp,
+    )
+    <span class="cm"># 只取 num_heads/cp_size 个 head 的参数</span>
+
+    <span class="cm"># 5. GDN 递推 (完整序列, 部分 head)</span>
+    <span class="cm"># 每 rank 独立递推 → 无串行依赖!</span>
+    out = chunk_gated_delta_rule(q, k, v, g, beta)
+
+    <span class="cm"># 6. Output norm + gate</span>
+    out = gated_norm(out, gate)
+
+    <span class="cm"># ★ 7. All-to-All: HP → CP</span>
+    <span class="cm"># 输入: [S, B, V/P]  (头分片)</span>
+    <span class="cm"># 输出: [S/P, B, V]  (序列分片)</span>
+    out = <span class="fn">tensor_a2a_hp2cp</span>(
+        out, seq_dim=<span class="num">0</span>, head_dim=<span class="num">-1</span>,
+        cp_group=pg_collection.cp,
+    )
+
+    <span class="cm"># 8. Output proj (在 S/P 上做)</span>
+    out = out_proj(out)
+    <span class="kw">return</span> out
+</pre>
+</div>
+<div class="col-svg">
+<div class="svg-block">
+<svg viewBox="0 0 420 620" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr4" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#06b6d4"/></marker>
+    <marker id="arr5" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="#38d9a9"/></marker>
+  </defs>
+
+  <text x="210" y="18" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="bold">GDN CP: All-to-All 维度交换策略</text>
+
+  <!-- Before A2A: CP sharding -->
+  <text x="210" y="45" text-anchor="middle" fill="#aaa" font-size="9">投影后 (CP Sharding): 每 rank 持有 S/P 序列, 全部 Head</text>
+
+  <rect x="30" y="55" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="72" y="72" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="bold">Rank 0</text>
+  <text x="72" y="86" text-anchor="middle" fill="#888" font-size="7">seq: [0, S/4)</text>
+  <text x="72" y="100" text-anchor="middle" fill="#8c8" font-size="7">heads: ALL</text>
+  <text x="72" y="112" text-anchor="middle" fill="#666" font-size="6">[S/4, B, H_all]</text>
+
+  <rect x="120" y="55" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="162" y="72" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="bold">Rank 1</text>
+  <text x="162" y="86" text-anchor="middle" fill="#888" font-size="7">seq: [S/4, S/2)</text>
+  <text x="162" y="100" text-anchor="middle" fill="#8c8" font-size="7">heads: ALL</text>
+
+  <rect x="210" y="55" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="252" y="72" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="bold">Rank 2</text>
+  <text x="252" y="86" text-anchor="middle" fill="#888" font-size="7">seq: [S/2, 3S/4)</text>
+  <text x="252" y="100" text-anchor="middle" fill="#8c8" font-size="7">heads: ALL</text>
+
+  <rect x="300" y="55" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="342" y="72" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="bold">Rank 3</text>
+  <text x="342" y="86" text-anchor="middle" fill="#888" font-size="7">seq: [3S/4, S)</text>
+  <text x="342" y="100" text-anchor="middle" fill="#8c8" font-size="7">heads: ALL</text>
+
+  <!-- A2A arrow -->
+  <rect x="130" y="125" width="160" height="28" rx="6" fill="#38d9a9" opacity="0.2" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="210" y="143" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">All-to-All: CP → HP</text>
+
+  <!-- After A2A: HP sharding -->
+  <text x="210" y="175" text-anchor="middle" fill="#aaa" font-size="9">A2A 后 (HP Sharding): 每 rank 持有完整序列, H/P 个 Head</text>
+
+  <rect x="30" y="185" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="72" y="202" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Rank 0</text>
+  <text x="72" y="216" text-anchor="middle" fill="#8c8" font-size="7">seq: [0, S) FULL</text>
+  <text x="72" y="230" text-anchor="middle" fill="#888" font-size="7">heads: [0, H/4)</text>
+  <text x="72" y="242" text-anchor="middle" fill="#666" font-size="6">[S, B, H/4]</text>
+
+  <rect x="120" y="185" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="162" y="202" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Rank 1</text>
+  <text x="162" y="216" text-anchor="middle" fill="#8c8" font-size="7">seq: [0, S) FULL</text>
+  <text x="162" y="230" text-anchor="middle" fill="#888" font-size="7">heads: [H/4, H/2)</text>
+
+  <rect x="210" y="185" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="252" y="202" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Rank 2</text>
+  <text x="252" y="216" text-anchor="middle" fill="#8c8" font-size="7">seq: [0, S) FULL</text>
+  <text x="252" y="230" text-anchor="middle" fill="#888" font-size="7">heads: [H/2, 3H/4)</text>
+
+  <rect x="300" y="185" width="85" height="60" rx="6" fill="#0d1a2a" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="342" y="202" text-anchor="middle" fill="#38d9a9" font-size="8" font-weight="bold">Rank 3</text>
+  <text x="342" y="216" text-anchor="middle" fill="#8c8" font-size="7">seq: [0, S) FULL</text>
+  <text x="342" y="230" text-anchor="middle" fill="#888" font-size="7">heads: [3H/4, H)</text>
+
+  <!-- GDN compute -->
+  <rect x="60" y="260" width="300" height="35" rx="8" fill="#16162a" stroke="#ff6b6b" stroke-width="1"/>
+  <text x="210" y="275" text-anchor="middle" fill="#ff6b6b" font-size="9" font-weight="bold">chunk_gated_delta_rule(q, k, v, g, β)</text>
+  <text x="210" y="290" text-anchor="middle" fill="#888" font-size="8">每 rank 独立递推完整序列 (H/P heads) → 零串行!</text>
+
+  <!-- A2A back arrow -->
+  <rect x="130" y="305" width="160" height="28" rx="6" fill="#38d9a9" opacity="0.2" stroke="#38d9a9" stroke-width="1.5"/>
+  <text x="210" y="323" text-anchor="middle" fill="#38d9a9" font-size="10" font-weight="bold">All-to-All: HP → CP</text>
+
+  <!-- Back to CP sharding -->
+  <text x="210" y="352" text-anchor="middle" fill="#aaa" font-size="9">恢复 CP Sharding → 送入下一层</text>
+
+  <!-- Comparison table -->
+  <line x1="30" y1="370" x2="390" y2="370" stroke="#333" stroke-width="0.5"/>
+  <text x="210" y="395" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="bold">非 CP vs CP 关键差异</text>
+
+  <rect x="30" y="405" width="360" height="200" rx="8" fill="#0d1a2a" stroke="#2a2a3e" stroke-width="1"/>
+
+  <!-- Table headers -->
+  <text x="50" y="425" fill="#06b6d4" font-size="8" font-weight="bold">步骤</text>
+  <text x="150" y="425" fill="#888" font-size="8" font-weight="bold">非 CP (cp_size=1)</text>
+  <text x="290" y="425" fill="#38d9a9" font-size="8" font-weight="bold">CP (cp_size=P)</text>
+  <line x1="40" y1="432" x2="380" y2="432" stroke="#333" stroke-width="0.5"/>
+
+  <text x="50" y="448" fill="#ccc" font-size="7">输入 shape</text>
+  <text x="150" y="448" fill="#888" font-size="7">[S, B, H]</text>
+  <text x="290" y="448" fill="#888" font-size="7">[S/P, B, H]</text>
+
+  <text x="50" y="466" fill="#ccc" font-size="7">in_proj 后</text>
+  <text x="150" y="466" fill="#888" font-size="7">[S, B, proj_dim]</text>
+  <text x="290" y="466" fill="#888" font-size="7">[S/P, B, proj_dim]</text>
+
+  <text x="50" y="484" fill="#ccc" font-size="7">A2A CP→HP</text>
+  <text x="150" y="484" fill="#888" font-size="7">— (不需要)</text>
+  <text x="290" y="484" fill="#38d9a9" font-size="7">★ [S, B, proj_dim/P]</text>
+
+  <text x="50" y="502" fill="#ccc" font-size="7">conv1d weight</text>
+  <text x="150" y="502" fill="#888" font-size="7">完整 (conv_dim/TP)</text>
+  <text x="290" y="502" fill="#38d9a9" font-size="7">切片 (conv_dim/TP/CP)</text>
+
+  <text x="50" y="520" fill="#ccc" font-size="7">A_log/dt_bias</text>
+  <text x="150" y="520" fill="#888" font-size="7">完整 (heads/TP)</text>
+  <text x="290" y="520" fill="#38d9a9" font-size="7">切片 (heads/TP/CP)</text>
+
+  <text x="50" y="538" fill="#ccc" font-size="7">GDN 递推</text>
+  <text x="150" y="538" fill="#888" font-size="7">全 head, 全 seq</text>
+  <text x="290" y="538" fill="#38d9a9" font-size="7">H/P head, 全 seq</text>
+
+  <text x="50" y="556" fill="#ccc" font-size="7">A2A HP→CP</text>
+  <text x="150" y="556" fill="#888" font-size="7">— (不需要)</text>
+  <text x="290" y="556" fill="#38d9a9" font-size="7">★ [S/P, B, V_dim]</text>
+
+  <text x="50" y="574" fill="#ccc" font-size="7">通信量</text>
+  <text x="150" y="574" fill="#888" font-size="7">0</text>
+  <text x="290" y="574" fill="#38d9a9" font-size="7">2× all-to-all (S×H/P)</text>
+
+  <text x="50" y="592" fill="#ccc" font-size="7">串行依赖</text>
+  <text x="150" y="592" fill="#888" font-size="7">N/A</text>
+  <text x="290" y="592" fill="#38d9a9" font-size="7">0 (完全并行!)</text>
+</svg>
+</div>
+<p class="caption">MCore GDN: All-to-All 把序列分片换成 Head 分片，消除串行依赖</p>
+</div>
+<div class="col-caption">
+<h3>核心洞察: 不传 State，换维度</h3>
+<p><strong>问题回顾:</strong> Section 2 分析了 Linear Attention CP 的串行依赖难题 — chunk 间有状态依赖，需要 parallel scan 或串行传 state。</p>
+<p><strong>MCore 的解法:</strong> 完全绕过这个问题！不在序列维度分片做递推，而是用 All-to-All 换成 Head 维度分片。每个 rank 拿到<strong>完整序列</strong>但只负责 H/P 个 head → 递推在完整序列上独立执行，零串行依赖。</p>
+
+<h3>非 CP vs CP 的 5 处关键区别</h3>
+<p><strong>① 输入 shape:</strong> 非CP 拿完整 [S,B,H]；CP 时只拿 [S/P,B,H]。</p>
+<p><strong>② All-to-All 通信:</strong> CP 时在 in_proj 后插入 <code>tensor_a2a_cp2hp</code>，把 [S/P, B, H_all] 变成 [S, B, H_all/P]。GDN 核心计算完后再用 <code>tensor_a2a_hp2cp</code> 变回来。</p>
+<p><strong>③ 参数切片:</strong> conv1d.weight、A_log、dt_bias 都需要用 <code>get_parameter_local_cp</code> 按 head 维度取当前 rank 的切片。非 CP 时用完整参数。</p>
+<p><strong>④ 递推维度:</strong> 非 CP 在全 head 上递推；CP 时只递推 H/P 个 head，但是在<strong>完整序列</strong>上 → 没有 chunk 间的 state 传递。</p>
+<p><strong>⑤ 通信代价:</strong> 两次 All-to-All（前后各一次）。通信量 = 2 × S × H_all/P × sizeof(bf16)。这比 Ring Attention 的 P 步 KV 传递要大，但换来了<strong>零串行依赖</strong>。</p>
+
+<h3>为什么可行？</h3>
+<p><strong>前提:</strong> GDN 的递推 \(S_t = g_t \odot S_{t-1} + \beta_t(k_t \otimes v_t)\) 中，不同 head 之间完全独立。Head 维度的并行是"天然免费的"。</p>
+<p><strong>约束:</strong> <code>num_heads % (TP × CP) == 0</code>。头数必须能被 TP×CP 整除。</p>
+
+<h3>与 Section 2 的修正</h3>
+<p><strong>之前说:</strong> "DeltaNet 不满足结合律 → parallel scan 不适用 → 只能串行"。</p>
+<p><strong>修正:</strong> MCore 用的不是 parallel scan，而是<strong>All-to-All 换维度</strong>。代价是通信量更大（整个 activation tensor 做 a2a），但完全消除串行等待。这是在"通信量"和"并行度"之间做的 tradeoff — 对 NVLink 高带宽场景非常友好。</p>
+
+<div class="key-point"><strong>设计哲学:</strong> Ring Attention 是"Q 不动，KV 来找 Q"（序列并行+通信KV）。GDN 的 All-to-All CP 是"序列不分，Head 来分"（维度交换+独立递推）。两种完全不同的并行化思路，各自适合不同的 operator pattern。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.12 · Context Parallel for Full Attention / SWA / Linear Attention · MCore GDN CP analysis based on megatron/core/ssm/gated_delta_net.py</footer>
