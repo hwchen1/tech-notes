@@ -39,7 +39,7 @@ footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; col
 <div class="container">
 
 <h1>HySparse — 混合块稀疏注意力</h1>
-<p class="subtitle">AMFP 内部实现 | MiMo-7B 基座 | 双分支: Full Attention (计算 block score + 缓存 KV) → Sparse Attention (Block Sparse + SWA 门控融合) | Triton Kernel | 层模式 1:3 (Full:Sparse) | block_size=64, topk_tokens=1024</p>
+<p class="subtitle">AMFP 内部实现 | MiMo-7B 基座 | 双分支: Full Attention (计算 block score + 缓存 KV) → Sparse Attention (Block Sparse + SWA 双路融合) | Triton / TileLang Kernel | 层模式 1:3 (Full:Sparse) | block_size=64, topk_tokens=1024</p>
 
 <!-- Section 1 -->
 <h2>1. 整体架构 — Full/Sparse 交替层 + KV 缓存传递</h2>
@@ -110,7 +110,7 @@ swa_num_key_value_heads: <span class="num">4</span>
 
 <!-- Gate fusion -->
 <rect x="180" y="207" width="200" height="16" rx="3" fill="#0d0d18" stroke="#a78bfa" stroke-width="0.8"/>
-<text x="280" y="218" text-anchor="middle" fill="#a78bfa" font-size="7">linear_proj(SWA) + sparse_linear_proj(Sparse) → 门控融合</text>
+<text x="280" y="218" text-anchor="middle" fill="#a78bfa" font-size="7">linear_proj(SWA)→主残差 + sparse_linear_proj(Sparse)→bypass</text>
 
 <!-- Sparse Layer 2 -->
 <rect x="30" y="230" width="500" height="35" rx="8" fill="#1a1a2e" stroke="#ef4444" stroke-width="1" opacity="0.7"/>
@@ -138,7 +138,7 @@ swa_num_key_value_heads: <span class="num">4</span>
 <h3>设计思想</h3>
 <p><strong>HySparse</strong> 将 Transformer 层分为两类交替排列：</p>
 <div class="key-point"><strong>Full 层 (25%):</strong> 做完整 attention，额外计算每个 Q 对所有 KV block 的最大 attention score，选出 TopK 个最相关 block。结果缓存到 KVBlockManager。</div>
-<div class="key-point"><strong>Sparse 层 (75%):</strong> 双分支并行 — ①SWA 用独立 K/V 做局部窗口 attention（精确近距离）；②Block Sparse 复用 Full 层缓存的 K/V，只对选中的 block 做 sparse FA（高效远距离）。两分支通过独立 linear_proj 融合。</div>
+<div class="key-point"><strong>Sparse 层 (75%):</strong> 双分支并行 — ①SWA 用独立 K/V 做局部窗口 attention（精确近距离），经 linear_proj 走主残差；②Block Sparse 复用 Full 层缓存的 K/V，只对选中的 block 做 sparse FA（高效远距离），经 sparse_linear_proj 作为 bypass 输出走独立 bypass_mlp 旁路再求和。</div>
 <p>核心优势: Full 层只占 1/4，但为后续 3 个 Sparse 层提供全局 "哪些 KV block 重要" 的信息。Sparse 层复用这些信息，避免重复计算全局 attention。</p>
 <p style="color:#6b6b80;font-size:0.85rem;">↓ 它与 DSA (DeepSeek Sparse Attention) 在<strong>选择机制</strong>上的根本差异，以及完整对比，见 <strong>Section 2「机制图解」</strong>。</p>
 </div>
@@ -287,14 +287,20 @@ topk_blk = block_scores.topk(<span class="num">16</span>, -<span class="num">1</
 kv_manager.store(layer, K, V, topk_blk)
 
 <span class="cm"># ───────── Sparse 层 (复用) ─────────</span>
-K, V, topk_blk = kv_manager.retrieve(layer)
+K, V, topk_blk = kv_manager.get(layer)
 <span class="cm"># 双分支并行:</span>
-swa  = swa_attn(Q, K_swa, V_swa)   <span class="cm"># 局部窗口</span>
+swa  = swa_attn(Q, K_swa, V_swa)   <span class="cm"># 局部窗口(自有K/V)</span>
 spar = sparse_flash_attention(      <span class="cm"># 全局稀疏</span>
     Q, K, V, topk_blk)              <span class="cm"># 只算选中 block</span>
-<span class="cm"># 门控融合</span>
-out = linear_proj(swa) + \
-      sparse_linear_proj(spar)
+<span class="cm"># 各自独立输出投影 (非门控!)</span>
+swa_out    = linear_proj(swa)        <span class="cm"># → 主残差路径</span>
+sparse_out = sparse_linear_proj(spar)<span class="cm"># → bypass 旁路</span>
+<span class="cm"># 返回 3 元组 → BypassMLPLayer 接管:</span>
+<span class="cm">#   swa_out 走标准 attn_bda 残差</span>
+<span class="cm">#   sparse_out 走独立 bypass_mlp</span>
+<span class="cm">#   out = mlp(x) + scale·bypass_mlp(sparse_out)</span>
+<span class="cm">#   scale = bypass_mlp_scale = 0.0 (当前关闭)</span>
+
 </pre></div>
 <div class="col-svg"><div class="svg-block">
 <svg viewBox="0 0 560 470" xmlns="http://www.w3.org/2000/svg">
@@ -359,7 +365,8 @@ out = linear_proj(swa) + \
 <path d="M155 348 L230 372" stroke="#3b82f6" stroke-width="1" marker-end="url(#arrH)"/>
 <path d="M405 348 L330 372" stroke="#f59e0b" stroke-width="1" marker-end="url(#arrH)"/>
 <rect x="180" y="374" width="200" height="26" rx="5" fill="#1a1a2e" stroke="#a78bfa" stroke-width="1"/>
-<text x="280" y="391" text-anchor="middle" fill="#a78bfa" font-size="8" font-weight="bold">门控融合 (SWA + Sparse)</text>
+<text x="280" y="385" text-anchor="middle" fill="#a78bfa" font-size="7.5" font-weight="bold">BypassMLP 求和 (主残差 + 旁路)</text>
+<text x="280" y="396" text-anchor="middle" fill="#888" font-size="6">mlp_h + bypass_mlp_scale·bypass_mlp(spar)</text>
 
 <text x="280" y="409" text-anchor="middle" fill="#aaa" font-size="7">局部精确 + 全局稀疏 互补</text>
 
@@ -375,7 +382,7 @@ out = linear_proj(swa) + \
 <p>HySparse <strong>不训练任何代理网络</strong>。它让 Full 层在做正常 attention 的同时，"顺手" 用真实的 \(\text{softmax}(QK^T)\) 分数对 KV block 排序。</p>
 <div class="key-point"><strong>为什么精确:</strong> 选择依据是<em>真实 attention 分数</em>本身，不是学出来的近似。高分 block 一定被选中，不存在"代理网络学不好导致漏选"的问题，也无需 KL loss。</div>
 <div class="key-point"><strong>为什么用 block:</strong> 以 64 token 为一块，对 block 取 max 分再 TopK (选 16 块 = 1024 token)。块粒度让 Triton kernel 能连续读 K/V，对显存带宽友好；token 级反而难高效实现。</div>
-<div class="key-point"><strong>双分支互补:</strong> Block Sparse 覆盖<em>全局远距离</em>的重要块；但块粒度可能漏掉窗口内的精确近邻，于是再并联一条 <em>SWA 滑动窗口</em>分支专管局部，两者门控融合。这是 DSA(单分支) 没有的设计。</div>
+<div class="key-point"><strong>双分支互补:</strong> Block Sparse 覆盖<em>全局远距离</em>的重要块；但块粒度可能漏掉窗口内的精确近邻，于是再并联一条 <em>SWA 滑动窗口</em>分支专管局部。这是 DSA(单分支) 没有的设计。注意两路<em>不是简单加权门控</em>：SWA 经 <code>linear_proj</code> 走主残差路径，Sparse 经 <code>sparse_linear_proj</code> 作为第 3 个返回值（bypass）走独立的 <code>bypass_mlp</code> 旁路，最后才求和（详见 Section 4 BypassMLPLayer）。</div>
 <div class="key-point"><strong>代价:</strong> Full 层必须真的算完 \(O(N^2)\) attention 才能拿到分数（虽然只占 25% 层）；且 Sparse 层有<em>数据依赖</em>，必须等同组 Full 层完成 → PP 流水并行受限。</div>
 <p><strong>选择粒度:</strong> block 级 (64 token/块)，缓存的是 block_indices。</p>
 </div>
@@ -392,7 +399,7 @@ out = linear_proj(swa) + \
 <tr><td><strong>选择精度</strong></td><td>近似 — 代理网络可能漏选高分位置，依赖 KL 蒸馏学得好坏</td><td>精确 — 真实 \(QK^T\) 值排序，高分 block 必被选中，不漏选</td></tr>
 <tr><td><strong>决策层复杂度</strong></td><td><strong>仍是 \(O(N^2)\)</strong>，但常数极小: 单 head + FP8 + ReLU(非 softmax) + 无 V/无输出投影 → 实测远低于主 attention</td><td>\(O(N^2)\) full attention（必须真算完才有分数）+ 额外 block-max。只占 1/4 层</td></tr>
 <tr><td><strong>训练方式</strong></td><td><strong>两阶段</strong>: ①dense warmup → ②冻结主模型单独训 indexer 对齐(KL) → ③联合稀疏训练。indexer 需额外训练成本</td><td>零额外训练 — TopK 选择是确定性算子，无需学习，天然随主模型收敛</td></tr>
-<tr><td><strong>稀疏分支</strong></td><td>单分支: 只对选中 token 做 attention</td><td>双分支: SWA(局部精确) + Block Sparse(全局稀疏)，门控融合</td></tr>
+<tr><td><strong>稀疏分支</strong></td><td>单分支: 只对选中 token 做 attention</td><td>双分支: SWA(局部精确, 经 linear_proj 走主残差) + Block Sparse(全局稀疏, 经 sparse_linear_proj 走 bypass_mlp 旁路), 末端求和 (当前 bypass_mlp_scale=0 关闭旁路)</td></tr>
 <tr><td><strong>KV 来源</strong></td><td>每层独立 K/V 投影，indexer 只决定 "看哪些"</td><td>Sparse 层全局分支直接复用 Full 层 K/V（不重投影，省参数）；SWA 分支用独立 K/V</td></tr>
 <tr><td><strong>层间共享</strong></td><td><code>indexer_types=[full, shared, shared, shared]</code> — 每4层1个 full indexer 重打分，后3层复用</td><td>1 Full → 3 Sparse 复用 KV+block_indices。1:3 共享，本质相同</td></tr>
 <tr><td><strong>并行性</strong></td><td>indexer 每层可独立决策（其结果不依赖前层输出）→ <strong>对 PP 流水并行友好</strong></td><td>Sparse 层<strong>数据依赖</strong> Full 层缓存 → 必须同组 Full 先算完 → PP 切分受限</td></tr>
@@ -408,7 +415,7 @@ out = linear_proj(swa) + \
 <div class="key-point" style="border-color:#06b6d433;background:#06b6d40a;"><strong>⚠ 常见误解:</strong> DSA 的 Indexer 并<em>非</em>线性复杂度 —— 它仍要对所有 KV 位置打分，是 \(O(N^2)\)。它 "轻" 是因为常数小（单 head、低维 \(d_{index}\)、FP8、ReLU 代替 softmax、无 value 计算），而非阶数低。真正决定长序列上限的仍是这个 \(O(N^2)\) 打分（DeepSeek 用 FP8 kernel 压成本）。</div>
 
 <!-- Section 3 -->
-<h2>3. Triton Kernel — Block Score 计算 + Sparse Flash Attention</h2>
+<h2>3. 稀疏 Kernel — Block Score 计算 + Sparse Flash Attention (Triton / TileLang)</h2>
 
 <div class="three-col">
 <div class="col-code"><pre>
@@ -509,9 +516,12 @@ out = linear_proj(swa) + \
 </div></div>
 <div class="col-caption">
 <h3>三个 Triton Kernel</h3>
-<div class="key-point"><strong>block_attn_scores_group:</strong> Full 层调用。计算每个 Q token 对所有 KV block 的 max attention score。GQA group 内取 max，输出 [B, Sq, Hkv, num_blocks]。用于后续 TopK 选择。</div>
+<div class="key-point"><strong>block_attn_scores_group:</strong> Full 层调用。计算每个 Q token 对所有 KV block 的 max attention score。GQA group 内取 max，输出 [B, Sq, Hkv, num_blocks]。用于后续 TopK 选择。(另有 <code>block_attn_scores_group_pytorch</code> 纯 PyTorch 参考实现，由 <code>enable_triton</code> 切换。)</div>
 <div class="key-point"><strong>sparse_flash_attention (forward):</strong> Sparse 层调用。只对 TopK 选中的 block 做 FlashAttention。Group-fused: 同一 GQA group 的所有 Q head 共享 K/V load，减少显存带宽。Online softmax 保证数值稳定。</div>
 <div class="key-point"><strong>build_reverse_mask:</strong> Backward 用。构建反向索引: 哪些 Q token 选了某个 KV block → 用于 dK/dV 计算时只遍历相关 Q。</div>
+
+<h3>TileLang 后端 (新增)</h3>
+<div class="key-point" style="border-color:#06b6d433;background:#06b6d40a;"><strong>block_sparse_attn_tilelang:</strong> Triton kernel 的 <em>drop-in 替代</em>，接口与 <code>sparse_flash_attention</code> 完全一致 (BSHD layout)。封装为 <code>torch.autograd.Function</code>，fwd/bwd 分别由 <code>tilelang_block_sparse_fwd/bwd</code> 实现。优势: 单次 kernel launch 内原生 GQA、block 级连续 K/V load，显存访问模式更优。</div>
 
 <h3>Autotune 配置</h3>
 <p>Forward kernel 用 triton.autotune 搜索最优 (num_warps, num_stages) 组合，key 包含 HEAD_DIM, V_HEAD_DIM, GROUP_SIZE, NUM_SELECTED, BLOCK_N。</p>
@@ -522,47 +532,45 @@ out = linear_proj(swa) + \
 </div>
 
 <!-- Section 4 -->
-<h2>4. 工程实现 — KVBlockManager + Bypass MLP + 训练配置</h2>
+<h2>4. 工程实现 — KVBlockManager + 双路 BypassMLP + Embedding Gate</h2>
 
 <div class="three-col">
 <div class="col-code"><pre>
 <span class="cm">// KVBlockManager — Full→Sparse KV 传递</span>
 <span class="kw">class</span> <span class="fn">KVBlockManager</span>:
     <span class="cm">// max_layer_diff = num_sparse_per_full</span>
-    <span class="cm">// Full 层 store(layer_id, K, V, indices)</span>
-    <span class="cm">// Sparse 层 retrieve(layer_id) 获取</span>
-    <span class="cm">//   最近 Full 层的 K, V, block_indices</span>
-    <span class="cm">// 用于 gradient checkpointing 时</span>
-    <span class="cm">//   避免重算 Full 层的 K/V</span>
+    <span class="cm">// _kv_cache: dict {layer_no: (K,V,idx)}</span>
+    <span class="cm">// Full 层 store(layer_no, K, V, indices,</span>
+    <span class="cm">//                need_clear=True)</span>
+    <span class="cm">// Sparse 层 get(layer_no): 从 layer_no</span>
+    <span class="cm">//   往前 i∈[1, max_layer_diff] 回溯,</span>
+    <span class="cm">//   命中最近 Full 层的 (K,V,idx)</span>
 
-<span class="cm">// HySparseTransformerBlock</span>
-<span class="cm">// 继承 TransformerBlock</span>
-<span class="cm">// forward 时:</span>
-<span class="cm">//   if layer is Sparse:</span>
-<span class="cm">//     K,V,idx = kv_manager.retrieve(layer)</span>
-<span class="cm">//     pass to attention as extra args</span>
+<span class="cm">// BypassMLPLayer — 双路 MLP (非 warmup!)</span>
+<span class="kw">class</span> <span class="fn">BypassMLPLayer</span>(TransformerLayer):
+  <span class="cm">// self_attention 返回 3 值时,</span>
+  <span class="cm">// 第 3 值 = bypass_attn (=sparse_output)</span>
+  <span class="kw">def</span> <span class="fn">_forward_mlp</span>(h, bypass_attn):
+    <span class="cm">// ① 标准路: pre_mlp_ln→mlp→mlp_bda</span>
+    mlp_h = mlp_bda(mlp(ln(h)), residual)
+    <span class="cm">// ② 旁路: 独立 norm + bypass_mlp</span>
+    <span class="cm">//    bypass_mlp 用 moe_ffn_hidden_size</span>
+    byp = bypass_mlp(pre_byp_ln(bypass_attn))
+    <span class="cm">// ③ 求和 (scale 全局常量)</span>
+    <span class="kw">return</span> mlp_h + bypass_mlp_scale * byp
+  <span class="cm">// bypass_mlp_scale = 0.0  ← 当前禁用旁路</span>
 
-<span class="cm">// BypassMLPLayer — 渐进式 sparse</span>
-<span class="kw">class</span> <span class="fn">BypassMLPLayer</span>:
-    <span class="cm">// 用 bypass scaler 控制 MLP 贡献</span>
-    <span class="cm">// warmup 期间 scaler 从 0 → 1</span>
-    <span class="cm">// 使 sparse 层从 "跳过MLP" 渐进</span>
-    <span class="cm">//   到 "完整MLP"</span>
-    bypass_mlp_warmup_iters: <span class="num">2500</span>
-
-<span class="cm">// EmbeddingGatedMLPLayer</span>
-<span class="cm">// embedding gate: 用 input embedding</span>
-<span class="cm">//   控制 MLP 输出的 gate</span>
-<span class="cm">// 推理侧增加 embedding gate 机制</span>
+<span class="cm">// EmbeddingGatedMLPLayer (Full 层可选)</span>
+<span class="cm">// input_ids→Embedding→RMSNorm→emb_gate</span>
+<span class="cm">// mlp_out *= (1 + emb_gate) 后再残差</span>
+<span class="cm">// 由 enable_embedding_gated_mlp 开关</span>
 
 <span class="cm">// 训练配置</span>
 <span class="cm">// model: MiMo-7B (36 layers)</span>
 <span class="cm">// MoE: DeepEP, flex dispatcher</span>
 <span class="cm">// MTP: 1 layer, loss_scale=0.1</span>
 <span class="cm">// recompute_num_layers: 1 (FULL)</span>
-<span class="cm">// lr: 5e-5, cosine decay</span>
-<span class="cm">// global_batch_size: 8</span>
-<span class="cm">// micro_batch_size: 1</span>
+<span class="cm">// kernel: Triton / TileLang 可切</span>
 </pre></div>
 <div class="col-svg"><div class="svg-block">
 <svg viewBox="0 0 560 380" xmlns="http://www.w3.org/2000/svg">
@@ -605,12 +613,12 @@ out = linear_proj(swa) + \
 
 <!-- Bypass MLP -->
 <rect x="30" y="265" width="240" height="100" rx="8" fill="#0d0d18" stroke="#a78bfa33" stroke-width="1"/>
-<text x="150" y="283" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="bold">BypassMLPLayer</text>
-<text x="50" y="302" fill="#888" font-size="7">output = hidden + scaler × MLP(hidden)</text>
-<text x="50" y="318" fill="#888" font-size="7">scaler = min(1.0, iter / warmup_iters)</text>
-<text x="50" y="334" fill="#888" font-size="7">warmup = 2500 iters</text>
-<text x="50" y="350" fill="#ccc" font-size="7">目的: Sparse 层新增时渐进引入 MLP</text>
-<text x="50" y="363" fill="#ccc" font-size="7">避免突然增加参数导致训练不稳定</text>
+<text x="150" y="283" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="bold">BypassMLPLayer (双路 MLP)</text>
+<text x="50" y="302" fill="#888" font-size="7">attn 返回 3 值 → 第3值 = sparse(bypass)</text>
+<text x="50" y="318" fill="#888" font-size="7">主路: mlp_bda(mlp(ln(h)), residual)</text>
+<text x="50" y="334" fill="#888" font-size="7">旁路: bypass_mlp(norm(bypass_attn))</text>
+<text x="50" y="350" fill="#ccc" font-size="7">out = mlp_h + bypass_mlp_scale × byp</text>
+<text x="50" y="363" fill="#ef4444" font-size="7">bypass_mlp_scale = 0.0 (当前禁用旁路)</text>
 
 <!-- Training config -->
 <rect x="290" y="265" width="240" height="100" rx="8" fill="#0d0d18" stroke="#22c55e33" stroke-width="1"/>
@@ -625,28 +633,35 @@ out = linear_proj(swa) + \
 <div class="col-caption">
 <h3>KVBlockManager</h3>
 <p>核心数据结构，解决 Full→Sparse 的 KV 传递问题：</p>
-<div class="key-point"><strong>store():</strong> Full 层计算完 attention 后，将 K, V, block_indices 存入 manager。key 是 layer_number。</div>
-<div class="key-point"><strong>retrieve():</strong> Sparse 层 forward 时，根据 layer_number 找到最近的 Full 层缓存。max_layer_diff 保证 Sparse 层只看到同组的 Full 层。</div>
-<p>这允许 gradient checkpointing 时避免重算 Full 层的 K/V（最重的部分），只需重算 Sparse 层自己的 SWA K/V。</p>
+<div class="key-point"><strong>store():</strong> Full 层计算完 Q/K/V 后，将 K, V, block_indices 存入 <code>_kv_cache</code> 字典（key=layer_number）；<code>need_clear=True</code> 时先清空旧缓存。</div>
+<div class="key-point"><strong>get():</strong> Sparse 层 forward 时，从自身 layer_number 向前回溯 \(i\in[1, \text{max\_layer\_diff}]\)，命中最近的 Full 层缓存。max_layer_diff = num_sparse_per_full，保证只看到同组 Full 层。</div>
+<p>这允许 gradient checkpointing 时避免重算 Full 层的 K/V（最重的部分）——K/V/block_indices 作为 checkpoint 的显式输入张量传入 <code>_checkpointed_forward</code>，只需重算 Sparse 层自己的 SWA K/V。</p>
 
-<h3>BypassMLPLayer</h3>
-<p>Sparse 层的 MLP 用渐进式 warmup：前 2500 步 scaler 从 0 线性增到 1。这是因为 HySparse 可能在已有 pretrained 模型上做 continued training，新增的 Sparse 层需要平滑引入。</p>
+<h3>BypassMLPLayer (双路 MLP)</h3>
+<p>Sparse 层的输出处理。当 <code>self_attention</code> 返回 3 个值时，第 3 值（Block Sparse 分支经 <code>sparse_linear_proj</code> 的输出）被识别为 <strong>bypass attention</strong>，走一条<em>独立的 norm + bypass_mlp</em> 旁路（bypass_mlp 用 <code>moe_ffn_hidden_size</code> 维度），再与标准 MLP 输出求和：<code>out = mlp_h + bypass_mlp_scale × bypass_out</code>。</p>
+<div class="key-point" style="border-color:#ef444433;background:#ef44440a;"><strong>⚠ 修正旧版描述:</strong> 当前实现中 <code>bypass_mlp_scale = 0.0</code>（全局常量，<em>非</em>渐进式 warmup scaler）。即旁路 MLP 当前被<strong>完全关闭</strong>，Sparse 层实际只走 SWA 主路 + 标准 MLP；bypass 路径是为后续实验预留的结构。</div>
+
+<h3>EmbeddingGatedMLPLayer (Full 层可选)</h3>
+<p>由 <code>enable_embedding_gated_mlp</code> 开关。Full 层把 <code>input_ids</code> 过 LanguageModelEmbedding + RMSNorm 得到 <code>emb_gate</code>，在残差前对 MLP 输出做逐元素门控：<code>mlp_out *= (1 + emb_gate)</code>。</p>
 
 <h3>文件结构</h3>
 <table>
 <tr><th>文件</th><th>功能</th></tr>
-<tr><td>hysparse_model.py</td><td>模型入口, KVBlockManager 初始化</td></tr>
-<tr><td>hysparse_transformer_block.py</td><td>自定义 TransformerBlock, 管理 KV 传递</td></tr>
-<tr><td>hysparse_attention.py</td><td>Full/Sparse Attention 双层实现</td></tr>
-<tr><td>block_sparse_attn.py</td><td>Triton sparse FA kernel</td></tr>
-<tr><td>block_attn_scores_triton.py</td><td>Triton block score kernel</td></tr>
-<tr><td>hysparse_layer_spec.py</td><td>层 spec 生成 (Full/Sparse 交替)</td></tr>
-<tr><td>bypass_mlp_layer.py</td><td>渐进式 MLP warmup</td></tr>
+<tr><td>hysparse_model.py</td><td>模型入口 (extends MimoModel), KVBlockManager 初始化</td></tr>
+<tr><td>hysparse_transformer_block.py</td><td>自定义 TransformerBlock, KV 传递 + checkpointed forward</td></tr>
+<tr><td>hysparse_attention.py</td><td>Full/Sparse Attention 双层 (继承 MiMoSelfAttention)</td></tr>
+<tr><td>hysparse_layer_spec.py</td><td>层 spec 生成 (Full/Sparse 交替 + has_sparse 判定)</td></tr>
+<tr><td>bypass_mlp_layer.py</td><td>双路 MLP (主 MLP + bypass_mlp 求和)</td></tr>
+<tr><td>embedding_gated_mlp_layer.py</td><td>词嵌入门控 MLP 层</td></tr>
+<tr><td>block_attn_scores_triton.py</td><td>Triton block-max score kernel (+pytorch 参考)</td></tr>
+<tr><td>block_sparse_attn.py</td><td>Triton sparse FA fwd/bwd kernel</td></tr>
+<tr><td>block_sparse_attn_tilelang.py</td><td>TileLang sparse FA (Triton 的 drop-in 替代)</td></tr>
+<tr><td>tilelang_block_sparse_{fwd,bwd}.py</td><td>TileLang fwd/bwd kernel 实现</td></tr>
 </table>
 </div>
 </div>
 
-<footer>Generated 2026.06.17 | Source: icode.baidu.com/baidu/amfp/Megatron-Bridge (v0.2.2) | Internal: AMFP-10/17/19/23</footer>
+<footer>Generated 2026.06.18 | Source: icode.baidu.com/baidu/amu/Megatron-Bridge (v0.3.0) | Internal: AMFP / SearchMoE</footer>
 
 </div>
 </body>
