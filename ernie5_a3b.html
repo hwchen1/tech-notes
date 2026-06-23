@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERNIE 5.1 A3B — 结构与 Shape 流</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #6366f1, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #6366f1; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #6366f10a; border: 1px solid #6366f122; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #818cf8; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #818cf8; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ERNIE 5.1 A3B — 结构与 Shape 流</h1>
+<p class="subtitle">百度 ERNIE 5.1 MoE | 30B-A3B (≈3B 激活) | Megatron-Bridge 实现 | 门控 GQA (48Q/4KV, head_dim=128) + QK-Norm + 交错 RoPE | 细粒度 MoE 128 experts top-8 + 1 shared | sigmoid aux-free 路由 | MTP×1 | FP8-e4m3 + DeepEP | hidden=1536, 46 layers</p>
+
+<h2>1. 整体架构与 A3B 配置</h2>
+<p>ERNIE 5.1 A3B 是百度的细粒度 MoE 语言模型：≈30B 总参数、约 3B 激活。整体仍是标准 Decoder-only 堆叠（Pre-Norm + RMSNorm + 残差），但每一层把传统 dense FFN 换成 <strong>128 路由专家 (top-8) + 1 共享专家</strong> 的细粒度 MoE，并在注意力上叠加 <strong>门控 (gated attention)</strong>、<strong>QK-Norm</strong> 与 <strong>交错 RoPE</strong>。下面所有 shape 用 Megatron 的 <code>[s, b, h]</code>（seq, batch, hidden）布局。</p>
+
+<table>
+<tr><th>配置项</th><th>A3B 值</th><th>说明</th></tr>
+<tr><td>hidden_size</td><td>1536</td><td>模型主维度 $d$</td></tr>
+<tr><td>num_hidden_layers</td><td>46</td><td>含尾部 2 个 empty layer 占位 (PP 均衡)</td></tr>
+<tr><td>num_attention_heads</td><td>48</td><td>query 头数 $n_q$</td></tr>
+<tr><td>num_key_value_heads</td><td>4</td><td>KV 组数 $n_{kv}$ (GQA 12:1)</td></tr>
+<tr><td>head_dim</td><td>128</td><td>$h_d$，注意 $48\times128=6144 \ne 1536$</td></tr>
+<tr><td>moe_num_experts</td><td>128</td><td>路由专家数</td></tr>
+<tr><td>moe_k (top-k)</td><td>8</td><td>每 token 激活 8 个专家</td></tr>
+<tr><td>moe_intermediate_size</td><td>1024</td><td>单专家 SwiGLU 中间维 (细粒度)</td></tr>
+<tr><td>shared_experts</td><td>1</td><td>始终激活的共享专家</td></tr>
+<tr><td>routed_scaling_factor</td><td>2.5</td><td>路由权重缩放</td></tr>
+<tr><td>vocab_size</td><td>102400</td><td>词表</td></tr>
+<tr><td>rope_theta</td><td>1e6</td><td>交错 RoPE 底数</td></tr>
+<tr><td>mtp_num_layers</td><td>1</td><td>多 token 预测头</td></tr>
+</table>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># Decoder 主循环 (46 层)</span>
+x = <span class="fn">embed</span>(input_ids)        <span class="cm"># [s,b,1536]</span>
+<span class="kw">for</span> layer <span class="kw">in</span> layers:        <span class="cm"># ×46</span>
+    <span class="cm"># --- Attention block ---</span>
+    h = <span class="fn">RMSNorm</span>(x)           <span class="cm"># input_layernorm</span>
+    a = <span class="fn">GatedGQA</span>(h)          <span class="cm"># §2</span>
+    x = x + a                  <span class="cm"># 残差</span>
+    <span class="cm"># --- MoE block ---</span>
+    h = <span class="fn">RMSNorm</span>(x)           <span class="cm"># pre_mlp_layernorm</span>
+    m = <span class="fn">MoE</span>(h)               <span class="cm"># §3, 128e top-8 + shared</span>
+    x = x + m
+x = <span class="fn">RMSNorm</span>(x)               <span class="cm"># final_layernorm</span>
+logits = <span class="fn">output_layer</span>(x)     <span class="cm"># [s,b,102400]</span>
+<span class="cm"># + MTP×1 (§4)</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 200 400">
+<rect x="60" y="10" width="80" height="26" rx="5" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="100" y="27" text-anchor="middle" fill="#c7d2fe" font-size="10">Embedding</text>
+<text x="148" y="27" fill="#6b6b80" font-size="7">[s,b,1536]</text>
+<line x1="100" y1="36" x2="100" y2="52" stroke="#6366f1"/>
+<rect x="30" y="52" width="140" height="150" rx="8" fill="#11111a" stroke="#a855f7" stroke-dasharray="3"/>
+<text x="100" y="66" text-anchor="middle" fill="#c084fc" font-size="9">× 46 Decoder Layer</text>
+<rect x="46" y="76" width="108" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="100" y="90" text-anchor="middle" fill="#9ecbff" font-size="8">RMSNorm + 门控GQA</text>
+<text x="100" y="108" text-anchor="middle" fill="#6b6b80" font-size="7">⊕ residual</text>
+<rect x="46" y="118" width="108" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="100" y="132" text-anchor="middle" fill="#b5e890" font-size="8">RMSNorm + MoE</text>
+<text x="100" y="150" text-anchor="middle" fill="#6b6b80" font-size="7">⊕ residual</text>
+<text x="100" y="172" text-anchor="middle" fill="#6b6b80" font-size="7">128 experts top-8</text>
+<text x="100" y="184" text-anchor="middle" fill="#6b6b80" font-size="7">+ 1 shared</text>
+<line x1="100" y1="202" x2="100" y2="218" stroke="#6366f1"/>
+<rect x="50" y="218" width="100" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="100" y="234" text-anchor="middle" fill="#c7d2fe" font-size="9">Final RMSNorm</text>
+<line x1="100" y1="242" x2="100" y2="258" stroke="#6366f1"/>
+<rect x="40" y="258" width="120" height="24" rx="5" fill="#3b1d1d" stroke="#ff6b6b"/>
+<text x="100" y="274" text-anchor="middle" fill="#ffb3b3" font-size="9">output_layer</text>
+<text x="100" y="296" text-anchor="middle" fill="#6b6b80" font-size="7">[s,b,102400]</text>
+<rect x="40" y="312" width="120" height="22" rx="5" fill="#2a2438" stroke="#a855f7"/>
+<text x="100" y="326" text-anchor="middle" fill="#c084fc" font-size="8">MTP × 1 (辅助头)</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>关键不变量</h3>
+<div class="key-point"><strong>hidden 全程 1536：</strong> 注意力内部投影到 $6144=48\times128$，但 <code>linear_proj</code> 立刻投回 1536；MoE 内部到 1024 后也投回 1536。残差流维度恒定。</div>
+<div class="key-point"><strong>Pre-Norm 双残差：</strong> 每层两个子块（Attn / MoE）各自 <code>RMSNorm → block → ⊕residual</code>，norm 在残差分支外。</div>
+<div class="key-point"><strong>尾部 empty layers：</strong> 46 层里末尾 2 层是占位（<code>num_empty_layers_add_in_tail=2</code>），仅为 PP 切分对齐，不含真实参数。</div>
+<p>激活量 ≈3B 来自：每 token 只走 8/128 路由专家 + 1 共享专家，而非全部 128 个。</p>
+</div>
+</div>
+
+<h2>2. 门控 GQA 注意力 — QK-Norm + 交错 RoPE + 交错 QKV 布局</h2>
+<p>A3B 注意力有三个非标准点：(1) <strong>GQA 12:1</strong> — 48 query 头共享 4 个 KV 头；(2) <strong>门控输出</strong> — 一条独立的 <code>linear_gate</code> 投影产生 sigmoid 门控，乘到 attention 输出上；(3) QKV 权重以 <strong>GQA 交错布局</strong>离线排好，使 <code>ColumnParallelLinear</code> 沿 dim-0 的均匀切分恰好落在组边界。先看投影维度：</p>
+
+<p>$q_{\text{size}} = n_q \cdot h_d = 48 \times 128 = 6144,\quad kv_{\text{size}} = n_{kv}\cdot h_d = 4 \times 128 = 512$</p>
+<p>$\text{linear\_qkv}: 1536 \to q_{\text{size}} + 2\,kv_{\text{size}} = 6144 + 512 + 512 = 7168$</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># Ernie5SelfAttention._get_qkv_interleaved</span>
+mixed_qkv,_ = <span class="fn">linear_qkv</span>(h)  <span class="cm"># [s,b,7168]</span>
+
+<span class="cm"># 每组: 48/4=12 个Q + 1K + 1V = 14 头</span>
+q_per_grp = np // ng        <span class="cm"># 12</span>
+qkv_per_grp = q_per_grp + 2 <span class="cm"># 14</span>
+
+<span class="cm"># reshape 成按组交错布局</span>
+mixed = mixed_qkv.<span class="fn">view</span>(
+    s, b, ng,               <span class="cm"># ng=4</span>
+    qkv_per_grp * hd)       <span class="cm"># 14*128=1792</span>
+<span class="cm"># [s,b,4,1792]</span>
+
+split = [q_per_grp*hd, hd, hd]
+                            <span class="cm"># [1536,128,128]</span>
+q,k,v = <span class="fn">split</span>(mixed, split, dim=3)
+q = q.<span class="fn">reshape</span>(s,b,-1,hd) <span class="cm"># [s,b,48,128]</span>
+                            <span class="cm"># k,v:  [s,b,4,128]</span>
+
+<span class="cm"># QK-Norm (RMSNorm over head_dim)</span>
+q = <span class="fn">q_layernorm</span>(q)  <span class="cm"># 归一化 128 维</span>
+k = <span class="fn">k_layernorm</span>(k)
+
+<span class="cm"># 交错 RoPE (even/odd 配对)</span>
+q = <span class="fn">apply_rotary</span>(q, theta=1e6)
+k = <span class="fn">apply_rotary</span>(k, theta=1e6)
+
+core = <span class="fn">attn</span>(q,k,v)      <span class="cm"># [s,b,6144]</span>
+
+<span class="cm"># === 门控输出 ===</span>
+g,_ = <span class="fn">linear_gate</span>(h)   <span class="cm"># [s,b,6144]</span>
+out,bias = <span class="fn">linear_proj</span>(
+    core * <span class="fn">sigmoid</span>(g))  <span class="cm"># [s,b,1536]</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 420">
+<rect x="70" y="8" width="80" height="22" rx="4" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="110" y="23" text-anchor="middle" fill="#c7d2fe" font-size="9">h [s,b,1536]</text>
+<line x1="110" y1="30" x2="110" y2="44" stroke="#6366f1"/>
+<rect x="55" y="44" width="110" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="110" y="59" text-anchor="middle" fill="#9ecbff" font-size="8">linear_qkv →7168</text>
+<line x1="110" y1="66" x2="110" y2="80" stroke="#61afef"/>
+<text x="110" y="92" text-anchor="middle" fill="#c084fc" font-size="8">view [s,b,4,1792]</text>
+<text x="110" y="104" text-anchor="middle" fill="#6b6b80" font-size="7">4组 × (12Q+1K+1V)×128</text>
+<line x1="110" y1="110" x2="110" y2="124" stroke="#a855f7"/>
+<rect x="20" y="124" width="56" height="40" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="48" y="140" text-anchor="middle" fill="#9ecbff" font-size="8">Q</text>
+<text x="48" y="155" text-anchor="middle" fill="#6b6b80" font-size="7">[s,b,48,128]</text>
+<rect x="82" y="124" width="56" height="40" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="140" text-anchor="middle" fill="#b5e890" font-size="8">K</text>
+<text x="110" y="155" text-anchor="middle" fill="#6b6b80" font-size="7">[s,b,4,128]</text>
+<rect x="144" y="124" width="56" height="40" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="172" y="140" text-anchor="middle" fill="#d8a0e8" font-size="8">V</text>
+<text x="172" y="155" text-anchor="middle" fill="#6b6b80" font-size="7">[s,b,4,128]</text>
+<line x1="48" y1="164" x2="48" y2="178" stroke="#61afef"/>
+<line x1="110" y1="164" x2="110" y2="178" stroke="#98c379"/>
+<rect x="20" y="178" width="118" height="20" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="79" y="192" text-anchor="middle" fill="#c084fc" font-size="8">QK-Norm (over 128)</text>
+<line x1="79" y1="198" x2="79" y2="212" stroke="#a855f7"/>
+<rect x="20" y="212" width="118" height="20" rx="4" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="79" y="226" text-anchor="middle" fill="#e8b888" font-size="8">交错 RoPE θ=1e6</text>
+<line x1="79" y1="232" x2="79" y2="246" stroke="#d19a66"/>
+<line x1="172" y1="164" x2="172" y2="246" stroke="#c678dd"/>
+<rect x="40" y="246" width="140" height="24" rx="5" fill="#16213a" stroke="#61afef"/>
+<text x="110" y="262" text-anchor="middle" fill="#9ecbff" font-size="9">GQA core attention</text>
+<text x="110" y="284" text-anchor="middle" fill="#6b6b80" font-size="7">core [s,b,6144]</text>
+<line x1="110" y1="290" x2="110" y2="304" stroke="#6366f1"/>
+<rect x="20" y="304" width="80" height="24" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="60" y="316" text-anchor="middle" fill="#d8a0e8" font-size="8">linear_gate</text>
+<text x="60" y="326" text-anchor="middle" fill="#6b6b80" font-size="6">σ(g)[s,b,6144]</text>
+<text x="115" y="320" fill="#a855f7" font-size="12">⊙</text>
+<rect x="125" y="304" width="60" height="24" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="155" y="319" text-anchor="middle" fill="#9ecbff" font-size="8">core</text>
+<line x1="110" y1="328" x2="110" y2="342" stroke="#a855f7"/>
+<rect x="50" y="342" width="120" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="110" y="358" text-anchor="middle" fill="#c7d2fe" font-size="9">linear_proj →1536</text>
+<text x="110" y="380" text-anchor="middle" fill="#6b6b80" font-size="7">out [s,b,1536]</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么要交错布局？</h3>
+<div class="key-point"><strong>组内打包：</strong> 不是 <code>[全部Q | 全部K | 全部V]</code>，而是按 4 个 KV 组打包成 <code>[Q₁..₁₂,K,V, Q₁₃..₂₄,K,V, ...]</code>。每组 14 头 × 128 = 1792。</div>
+<div class="key-point"><strong>对齐 TP 切分：</strong> <code>ColumnParallelLinear</code> 沿输出维均匀切分。交错后，按组切分天然把每个 KV 头和它的 12 个 Q 头分到同一 rank，避免跨 rank 通信。<code>FusedQKVMapping</code> 在 HF→Megatron 转换时离线完成重排。</div>
+<div class="key-point"><strong>QK-Norm：</strong> 对每个 head 的 128 维做 RMSNorm（不是对整个 hidden），稳定 attention logits 量纲。</div>
+<div class="key-point"><strong>门控注意力：</strong> $\text{out}=W_o\big(\text{Attn}(q,k,v)\odot\sigma(W_g h)\big)$。门控用原始 <code>hidden_states</code> 而非 attn 输出算，gate 投影到 query 维 6144。</div>
+</div>
+</div>
+
+<h2>3. 细粒度 MoE — sigmoid aux-free 路由 + 128 专家 top-8 + 共享专家</h2>
+<p>A3B 的 MoE 是"细粒度"设计：专家数多（128）、单专家小（中间维仅 1024），配合 top-8 路由，等效一个大 FFN 被切成更细的碎片以提升组合多样性。路由是 <strong>sigmoid 打分 + aux-free（专家偏置负载均衡）</strong>，区别于 DeepSeek 的 softmax。</p>
+
+<p>路由打分（每 token 对 128 专家）：$\;s_i = \sigma(W_r\,h)_i,\quad W_r \in \mathbb{R}^{128\times 1536}$（router 权重保持 fp32）</p>
+<p>选择 + 缩放：$\;\mathcal{T}=\text{TopK}_8\big(s_i + b_i\big),\quad g_i = \dfrac{s_i}{\sum_{j\in\mathcal{T}} s_j}\cdot 2.5$</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># MoE forward (per token, h:[1536])</span>
+<span class="cm"># --- 路由 (fp32) ---</span>
+logits = h @ W_r.T          <span class="cm"># [128]</span>
+s = <span class="fn">sigmoid</span>(logits)        <span class="cm"># 非 softmax</span>
+
+<span class="cm"># aux-free: 加专家偏置仅用于选择</span>
+idx = <span class="fn">topk</span>(s + expert_bias, 8)
+g = s[idx] / s[idx].<span class="fn">sum</span>()
+g = g * 2.5                 <span class="cm"># routed_scaling</span>
+
+<span class="cm"># --- 8 个路由专家 (SwiGLU) ---</span>
+y = 0
+<span class="kw">for</span> e, w <span class="kw">in</span> <span class="fn">zip</span>(idx, g):
+    <span class="cm"># linear_fc1: 1536→2*1024 (gate,up)</span>
+    gate,up = <span class="fn">fc1_e</span>(h).<span class="fn">chunk</span>(2)
+    act = <span class="fn">silu</span>(gate) * up  <span class="cm"># [1024]</span>
+    <span class="cm"># linear_fc2: 1024→1536</span>
+    y += w * <span class="fn">fc2_e</span>(act)   <span class="cm"># [1536]</span>
+
+<span class="cm"># --- 1 个共享专家 (始终激活) ---</span>
+gate,up = <span class="fn">shared_fc1</span>(h).<span class="fn">chunk</span>(2)
+y += <span class="fn">shared_fc2</span>(<span class="fn">silu</span>(gate)*up)
+
+<span class="cm"># y: [1536]  (DeepEP a2a 调度 + FP8)</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 400">
+<rect x="75" y="8" width="70" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="23" text-anchor="middle" fill="#b5e890" font-size="9">h [.,1536]</text>
+<line x1="110" y1="30" x2="110" y2="44" stroke="#98c379"/>
+<rect x="55" y="44" width="110" height="22" rx="4" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="110" y="55" text-anchor="middle" fill="#e8b888" font-size="8">router (fp32) σ</text>
+<text x="110" y="64" text-anchor="middle" fill="#6b6b80" font-size="6">128 scores +bias</text>
+<line x1="110" y1="66" x2="110" y2="80" stroke="#d19a66"/>
+<rect x="50" y="80" width="120" height="18" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="110" y="93" text-anchor="middle" fill="#c084fc" font-size="8">TopK-8 + ×2.5 缩放</text>
+<line x1="110" y1="98" x2="110" y2="110" stroke="#a855f7"/>
+<g>
+<rect x="22" y="112" width="40" height="40" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="42" y="128" text-anchor="middle" fill="#9ecbff" font-size="7">E#3</text>
+<text x="42" y="142" text-anchor="middle" fill="#6b6b80" font-size="6">SwiGLU</text>
+<rect x="66" y="112" width="40" height="40" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="86" y="128" text-anchor="middle" fill="#9ecbff" font-size="7">E#17</text>
+<text x="86" y="142" text-anchor="middle" fill="#6b6b80" font-size="6">SwiGLU</text>
+<text x="120" y="135" text-anchor="middle" fill="#6b6b80" font-size="9">···</text>
+<rect x="130" y="112" width="40" height="40" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="150" y="128" text-anchor="middle" fill="#9ecbff" font-size="7">E#92</text>
+<text x="150" y="142" text-anchor="middle" fill="#6b6b80" font-size="6">(8/128)</text>
+</g>
+<text x="96" y="166" text-anchor="middle" fill="#6b6b80" font-size="7">每专家 1536→1024→1536</text>
+<rect x="130" y="174" width="60" height="36" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="160" y="190" text-anchor="middle" fill="#d8a0e8" font-size="7">shared</text>
+<text x="160" y="202" text-anchor="middle" fill="#6b6b80" font-size="6">始终激活</text>
+<line x1="96" y1="152" x2="110" y2="226" stroke="#61afef"/>
+<line x1="160" y1="210" x2="110" y2="226" stroke="#c678dd"/>
+<rect x="60" y="226" width="100" height="22" rx="4" fill="#a855f720" stroke="#a855f7"/>
+<text x="110" y="240" text-anchor="middle" fill="#c084fc" font-size="8">Σ gᵢ·Eᵢ + shared</text>
+<line x1="110" y1="248" x2="110" y2="262" stroke="#a855f7"/>
+<rect x="65" y="262" width="90" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="276" text-anchor="middle" fill="#b5e890" font-size="9">y [.,1536]</text>
+<rect x="30" y="300" width="160" height="60" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="316" text-anchor="middle" fill="#818cf8" font-size="8">分布式调度</text>
+<text x="110" y="332" text-anchor="middle" fill="#6b6b80" font-size="7">EP=8 · DeepEP all-to-all</text>
+<text x="110" y="346" text-anchor="middle" fill="#6b6b80" font-size="7">FP8-e4m3 dispatch + GroupedGEMM</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>细粒度路由要点</h3>
+<div class="key-point"><strong>sigmoid 而非 softmax：</strong> 每个专家独立打分 $\sigma(\cdot)\in(0,1)$，不跨专家归一化。选中后才在 top-8 内部归一化并 ×2.5 还原量纲。</div>
+<div class="key-point"><strong>aux-free 负载均衡：</strong> <code>expert_bias</code>（=<code>moe_statics.e_score_correction_bias</code>）只加在选择阶段（决定选哪 8 个），不进入最终权重 $g$。训练中按专家负载动态调整 bias 抹平热点，无需大的 aux loss（aux 系数仅 2.6e-7）。</div>
+<div class="key-point"><strong>共享专家：</strong> 1 个专家对所有 token 恒激活，承载通用计算，与 8 个路由专家输出相加。</div>
+<div class="key-point"><strong>DeepEP + FP8：</strong> flex dispatcher backend = DeepEP，专家计算用 FP8-e4m3 + GroupedGEMM；EP=8 时通过 all-to-all 把 token 发到专家所在 rank。router 权重与 expert_bias 强制 fp32（<code>fp32_patterns</code>）。</div>
+</div>
+</div>
+
+<h2>4. MTP 多 token 预测 · FP8/DeepEP · Empty Layers</h2>
+<p>除主干外，A3B 还有几个工程细节影响训练 shape 与并行：</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># MTP: Multi-Token Prediction (1 层)</span>
+<span class="cm"># 在主干最后一层后，预测 t+2</span>
+e = <span class="fn">enorm</span>(embed(shifted_ids)) <span class="cm"># [s,b,1536]</span>
+hn = <span class="fn">hnorm</span>(hidden)            <span class="cm"># 主干输出</span>
+<span class="cm"># eh_proj: 拼接 2*1536→1536 (bias=True)</span>
+x = <span class="fn">eh_proj</span>(<span class="fn">cat</span>([e, hn], -1))
+x = <span class="fn">transformer_layer</span>(x)      <span class="cm"># 同构 1 层</span>
+mtp_logits = <span class="fn">output_layer</span>(x)
+<span class="cm"># loss_scaling = 0.1</span>
+
+<span class="cm"># Empty layers (尾部 2 层占位)</span>
+<span class="cm"># num_empty_layers_add_in_tail = 2</span>
+<span class="cm"># → 真实计算层 44, 占位 2 (PP 均衡)</span>
+
+<span class="cm"># 并行配置 (full SFT)</span>
+<span class="cm"># TP=1, EP=8, PP=16, SP=True</span>
+<span class="cm"># recompute: selective</span>
+<span class="cm">#   [moe_act, layernorm, mlp]</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 360">
+<rect x="20" y="14" width="80" height="22" rx="4" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="60" y="29" text-anchor="middle" fill="#c7d2fe" font-size="8">embed(t+1)</text>
+<rect x="120" y="14" width="80" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="160" y="29" text-anchor="middle" fill="#9ecbff" font-size="8">主干 hidden</text>
+<line x1="60" y1="36" x2="60" y2="50" stroke="#6366f1"/>
+<line x1="160" y1="36" x2="160" y2="50" stroke="#61afef"/>
+<rect x="20" y="50" width="80" height="20" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="60" y="64" text-anchor="middle" fill="#c084fc" font-size="8">enorm</text>
+<rect x="120" y="50" width="80" height="20" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="160" y="64" text-anchor="middle" fill="#c084fc" font-size="8">hnorm</text>
+<line x1="60" y1="70" x2="100" y2="86" stroke="#a855f7"/>
+<line x1="160" y1="70" x2="120" y2="86" stroke="#a855f7"/>
+<rect x="50" y="86" width="120" height="24" rx="5" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="110" y="98" text-anchor="middle" fill="#e8b888" font-size="8">eh_proj cat→1536</text>
+<text x="110" y="107" text-anchor="middle" fill="#6b6b80" font-size="6">2*1536→1536 (bias)</text>
+<line x1="110" y1="110" x2="110" y2="124" stroke="#d19a66"/>
+<rect x="45" y="124" width="130" height="24" rx="5" fill="#11111a" stroke="#a855f7"/>
+<text x="110" y="140" text-anchor="middle" fill="#c084fc" font-size="8">transformer_layer ×1</text>
+<line x1="110" y1="148" x2="110" y2="162" stroke="#a855f7"/>
+<rect x="50" y="162" width="120" height="22" rx="4" fill="#3b1d1d" stroke="#ff6b6b"/>
+<text x="110" y="176" text-anchor="middle" fill="#ffb3b3" font-size="8">MTP logits ×0.1</text>
+<rect x="20" y="206" width="180" height="64" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="222" text-anchor="middle" fill="#818cf8" font-size="8">PP=16 切分 (46 层)</text>
+<rect x="32" y="230" width="30" height="28" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="47" y="247" text-anchor="middle" fill="#9ecbff" font-size="7">L0-2</text>
+<text x="80" y="247" fill="#6b6b80" font-size="8">···</text>
+<rect x="98" y="230" width="40" height="28" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="118" y="247" text-anchor="middle" fill="#9ecbff" font-size="7">真实层</text>
+<rect x="150" y="230" width="40" height="28" rx="3" fill="#1a1a28" stroke="#5c6370" stroke-dasharray="2"/>
+<text x="170" y="244" text-anchor="middle" fill="#6b6b80" font-size="6">empty</text>
+<text x="170" y="253" text-anchor="middle" fill="#6b6b80" font-size="6">×2</text>
+<rect x="20" y="286" width="180" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="300" text-anchor="middle" fill="#b5e890" font-size="8">EP=8 · DeepEP · FP8-e4m3</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>训练辅助机制</h3>
+<div class="key-point"><strong>MTP×1：</strong> 在主干末尾接 1 个同构 transformer 层，预测下一个+1 token。把"未来 token embedding"经 <code>enorm</code> 与主干 hidden 经 <code>hnorm</code> 后拼接，<code>eh_proj</code>（<code>2·1536→1536</code>，带 bias）压回主维。MTP loss 以 0.1 缩放加入总 loss，提升训练信号密度。</div>
+<div class="key-point"><strong>Empty layers：</strong> <code>num_empty_layers_add_in_tail=2</code> 在层列表尾部插入空占位层，纯粹为让 46 层能被 PP=16 整齐切分、各 stage 计算量均衡，不含可学习参数。</div>
+<div class="key-point"><strong>选择性重计算：</strong> <code>recompute_modules=[moe_act, layernorm, mlp]</code> 只对这几个高显存模块重算前向，省激活显存而非全层重计算。</div>
+<div class="key-point"><strong>FP8 + DeepEP：</strong> 专家 GEMM 用 FP8-e4m3，token 调度走 DeepEP（<code>moe_token_dispatcher_type=flex</code> + backend=deepep），<code>use_fp8_dispatch_a2a</code> 让 all-to-all 通信也用 FP8，省带宽。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.23 · ERNIE 5.1 A3B 结构与 Shape 流 · Megatron-Bridge (amfp/megatron_bridge_patch)</footer>
+
+</div>
+</body>
+</html>
