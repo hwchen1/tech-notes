@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERNIE A3B + Infinite Attention — SWA × 压缩 Memory</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #14b8a6, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #14b8a6; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #14b8a60a; border: 1px solid #14b8a622; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #2dd4bf; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16162a; color: #2dd4bf; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #13131f; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ERNIE A3B + Infinite Attention</h1>
+<p class="subtitle">在 ERNIE 5.1 A3B 门控 GQA 之上叠加 Infinite Attention | 滑窗 SWA + 压缩 Memory 双路, online-softmax 融合 | yc 压缩 R=4 + memory_extract + mem RoPE(R-1::R) + head-fold | seg0 纯 SWA | 连续切分 Context Parallel (P2P 交换 W 个 KV) | Megatron-Bridge (amfp) 实现 | 4 section: 总览 / Memory 路径 shape 流 / online-softmax 数学 / Context Parallel</p>
+
+<h2>1. Infinite Attention 总览 — 为什么要双路</h2>
+<p>A3B 原生注意力是<strong>全局因果 GQA</strong>，序列越长 KV cache 与算力越爆炸（$O(L^2)$）。Infinite Attention 的思路：把"近处"和"远处"拆成两条路，再用 online-softmax 无损融合：</p>
+<ul style="color:#a8a8be;font-size:0.92rem;margin:0 0 16px 22px;">
+<li><strong style="color:#2dd4bf;">SWA 路（精确近场）</strong>：滑动窗口注意力，每个 query 只看最近 <code>swa_window_size</code>（默认 4096）个原始 token，$O(L\cdot W)$。</li>
+<li><strong style="color:#2dd4bf;">Memory 路（压缩远场）</strong>：把窗口之外的历史<strong>压缩</strong>成稀疏的 memory KV（压缩比 $R$，默认 4），query 再去 attend 这批压缩 KV，把远距离信息以低成本带回来。</li>
+</ul>
+<p>实现上 <code>Ernie5InfiniteAttention(Ernie5SelfAttention)</code> 继承了 A3B 的 <code>linear_qkv / q_k_layernorm / linear_proj / linear_gate</code>，只是把"算 attention"那一步替换成内部模块 <code>self.infinite_attn = InfiniteAttention(config, layer_number)</code>。门控与投影完全复用 §A3B。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># Ernie5InfiniteAttention.forward (BSHD)</span>
+q,k,v = <span class="fn">_get_qkv</span>(h)      <span class="cm"># 复用 A3B GQA</span>
+                          <span class="cm"># QK-Norm + RoPE 已做</span>
+
+<span class="kw">if</span> yc <span class="kw">is</span> <span class="kw">None</span>:           <span class="cm"># 无压缩 memory</span>
+    out = <span class="fn">_fa_forward</span>(q,k,v)  <span class="cm"># 纯 SWA fallback</span>
+<span class="kw">else</span>:
+    <span class="cm"># yc = 压缩后的历史表示</span>
+    out = self.<span class="fn">infinite_attn</span>(
+        q, k, v,
+        yc=yc,            <span class="cm"># memory 源</span>
+        rotary_pos_emb=rope,
+        ...)              <span class="cm"># 双路+融合</span>
+
+<span class="cm"># === 复用 A3B 门控输出 ===</span>
+g,_ = self.<span class="fn">linear_gate</span>(h)
+out,bias = self.<span class="fn">linear_proj</span>(
+    out * <span class="fn">sigmoid</span>(g))  <span class="cm"># [s,b,1536]</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 230 360">
+<rect x="80" y="8" width="70" height="22" rx="4" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="115" y="23" text-anchor="middle" fill="#c7d2fe" font-size="9">Q [s,b,nh,hd]</text>
+<line x1="115" y1="30" x2="115" y2="44" stroke="#6366f1"/>
+<text x="115" y="42" text-anchor="middle" fill="#6b6b80" font-size="6">广播给两路</text>
+<line x1="115" y1="44" x2="55" y2="60" stroke="#14b8a6"/>
+<line x1="115" y1="44" x2="175" y2="60" stroke="#22d3ee"/>
+<rect x="14" y="60" width="90" height="52" rx="6" fill="#0d2e2a" stroke="#14b8a6"/>
+<text x="59" y="78" text-anchor="middle" fill="#5eead4" font-size="9">SWA 路</text>
+<text x="59" y="92" text-anchor="middle" fill="#6b6b80" font-size="6">窗口 W=4096</text>
+<text x="59" y="103" text-anchor="middle" fill="#6b6b80" font-size="6">原始 K/V 近场</text>
+<rect x="126" y="60" width="90" height="52" rx="6" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="171" y="78" text-anchor="middle" fill="#67e8f9" font-size="9">Memory 路</text>
+<text x="171" y="92" text-anchor="middle" fill="#6b6b80" font-size="6">压缩 KV (R=4)</text>
+<text x="171" y="103" text-anchor="middle" fill="#6b6b80" font-size="6">远场低成本</text>
+<line x1="59" y1="112" x2="59" y2="128" stroke="#14b8a6"/>
+<line x1="171" y1="112" x2="171" y2="128" stroke="#22d3ee"/>
+<rect x="14" y="128" width="90" height="40" rx="5" fill="#11111a" stroke="#14b8a6" stroke-dasharray="3"/>
+<text x="59" y="144" text-anchor="middle" fill="#5eead4" font-size="8">out_swa</text>
+<text x="59" y="158" text-anchor="middle" fill="#6b6b80" font-size="6">+ lse_swa</text>
+<rect x="126" y="128" width="90" height="40" rx="5" fill="#11111a" stroke="#22d3ee" stroke-dasharray="3"/>
+<text x="171" y="144" text-anchor="middle" fill="#67e8f9" font-size="8">out_mem</text>
+<text x="171" y="158" text-anchor="middle" fill="#6b6b80" font-size="6">+ lse_mem</text>
+<line x1="59" y1="168" x2="105" y2="190" stroke="#14b8a6"/>
+<line x1="171" y1="168" x2="125" y2="190" stroke="#22d3ee"/>
+<rect x="50" y="190" width="130" height="30" rx="6" fill="#2a2438" stroke="#a855f7"/>
+<text x="115" y="206" text-anchor="middle" fill="#c084fc" font-size="9">online softmax 融合</text>
+<text x="115" y="216" text-anchor="middle" fill="#6b6b80" font-size="6">按 LSE 加权 (fp32)</text>
+<line x1="115" y1="220" x2="115" y2="236" stroke="#a855f7"/>
+<rect x="65" y="236" width="100" height="24" rx="5" fill="#16213a" stroke="#61afef"/>
+<text x="115" y="252" text-anchor="middle" fill="#9ecbff" font-size="9">out_m [s,b,6144]</text>
+<line x1="115" y1="260" x2="115" y2="276" stroke="#61afef"/>
+<rect x="40" y="276" width="70" height="24" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="75" y="291" text-anchor="middle" fill="#d8a0e8" font-size="8">σ(gate)</text>
+<text x="116" y="292" fill="#a855f7" font-size="12">⊙</text>
+<rect x="128" y="276" width="60" height="24" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="158" y="291" text-anchor="middle" fill="#9ecbff" font-size="8">out_m</text>
+<line x1="115" y1="300" x2="115" y2="316" stroke="#a855f7"/>
+<rect x="55" y="316" width="120" height="24" rx="5" fill="#1e1b4b" stroke="#6366f1"/>
+<text x="115" y="332" text-anchor="middle" fill="#c7d2fe" font-size="9">linear_proj →1536</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>双路的核心直觉</h3>
+<div class="key-point"><strong>分而治之：</strong> 近场要精确（语法、局部依赖）→ 用原始 token 的 SWA；远场可粗糙（主题、长程指代）→ 用压缩 memory。两路各算各的 attention，最后融合。</div>
+<div class="key-point"><strong>无损融合：</strong> 关键不是简单相加，而是用 <strong>online softmax</strong> 按各自 log-sum-exp (LSE) 加权——等价于把两路的 KV 拼在一起做一次完整 softmax，数学上无近似（§3）。</div>
+<div class="key-point"><strong>即插即用：</strong> <code>InfiniteAttention</code> 是独立 <code>MegatronModule</code>，A3B 注意力外壳（GQA / QK-Norm / RoPE / 门控 / proj）原样保留，只替换中间 attention 计算，因此能直接复用现成 ckpt 与门控权重。</div>
+<div class="key-point"><strong>退化路径：</strong> 当 <code>yc is None</code>（未提供压缩 memory）或 <code>infinite_swa_only=True</code> 时，直接走 <code>_fa_forward</code> 纯 SWA，行为等同普通滑窗注意力。</div>
+</div>
+</div>
+
+<h2>2. Memory 路径 — 压缩、投影与 head-fold shape 流</h2>
+<p>Memory 路要回答两个问题：<strong>历史怎么压缩成稀疏 KV</strong>，以及 <strong>query 怎么对齐这批压缩 KV</strong>。压缩比 $R$（<code>compress_ratio</code>，默认 4）意味着每 $R$ 个原始 token 折叠成 1 个 memory slot，memory 长度只有原始的 $1/R$。</p>
+<p>压缩源 <code>yc</code> 经 <code>memory_extract</code>（可选 staircase / block_diag / kv_hca / cross_layer）抽取后，过独立的 <code>mem_k_proj / mem_v_proj</code>（<code>ColumnParallelLinear, bias=False</code>）生成 memory 的 K/V，再 <code>mem_k_layernorm</code>（对 head_dim 做 RMSNorm）稳定量纲，最后在位置 <code>R-1::R</code> 上打<strong>完整 RoPE</strong>（每个 memory slot 代表它覆盖的 $R$ 个原始位置里的最后一个）。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># InfiniteAttention.forward — memory 侧</span>
+<span class="cm"># yc: 压缩源 [B, sq, d]</span>
+m = self.<span class="fn">memory_extract</span>(yc)  <span class="cm"># 抽取历史</span>
+
+<span class="cm"># 独立投影 (bias=False, ColumnParallel)</span>
+mk = self.<span class="fn">mem_k_proj</span>(m)  <span class="cm"># [B,Lm,nkv*hd]</span>
+mv = self.<span class="fn">mem_v_proj</span>(m)
+mk = mk.<span class="fn">view</span>(B, Lm, nkv, hd)
+mv = mv.<span class="fn">view</span>(B, Lm, nkv, hd)
+
+<span class="cm"># mem K 单独 RMSNorm (over head_dim)</span>
+mk = self.<span class="fn">mem_k_layernorm</span>(mk)
+
+<span class="cm"># memory 位置 = R-1, 2R-1, 3R-1, ...</span>
+<span class="cm"># (每 slot 取其覆盖段的最后位置)</span>
+pos = q_pos_emb[R-<span class="num">1</span>::R]   <span class="cm"># 步长 R</span>
+mk = <span class="fn">apply_rotary</span>(mk, pos) <span class="cm"># 完整 RoPE</span>
+
+<span class="cm"># --- head-fold: 把 R 折进 head 维 ---</span>
+<span class="cm"># [B, sq, nh, hd]</span>
+<span class="cm">#   → [B, sq//R, nh*R, hd]</span>
+sq_fold = sq // R
+qf = q.<span class="fn">reshape</span>(B, sq_fold, nh*R, hd)
+<span class="cm"># 每个折叠 query-block 一次性</span>
+<span class="cm"># 看齐它对应的 memory slot</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 240 380">
+<text x="120" y="14" text-anchor="middle" fill="#67e8f9" font-size="9">压缩源 yc → memory KV</text>
+<rect x="20" y="24" width="200" height="22" rx="4" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="120" y="38" text-anchor="middle" fill="#67e8f9" font-size="8">yc  [B, sq, d]</text>
+<line x1="120" y1="46" x2="120" y2="60" stroke="#22d3ee"/>
+<rect x="50" y="60" width="140" height="20" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="120" y="74" text-anchor="middle" fill="#c084fc" font-size="8">memory_extract</text>
+<line x1="120" y1="80" x2="120" y2="94" stroke="#a855f7"/>
+<rect x="30" y="94" width="80" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="70" y="108" text-anchor="middle" fill="#9ecbff" font-size="7">mem_k_proj</text>
+<rect x="130" y="94" width="80" height="22" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="170" y="108" text-anchor="middle" fill="#d8a0e8" font-size="7">mem_v_proj</text>
+<text x="120" y="128" text-anchor="middle" fill="#6b6b80" font-size="6">bias=False, ColumnParallel</text>
+<line x1="70" y1="116" x2="70" y2="134" stroke="#61afef"/>
+<rect x="20" y="134" width="100" height="20" rx="4" fill="#2a2438" stroke="#a855f7"/>
+<text x="70" y="148" text-anchor="middle" fill="#c084fc" font-size="7">mem_k_layernorm</text>
+<line x1="70" y1="154" x2="70" y2="170" stroke="#a855f7"/>
+<rect x="20" y="170" width="100" height="22" rx="4" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="70" y="181" text-anchor="middle" fill="#e8b888" font-size="7">RoPE @ R-1::R</text>
+<text x="70" y="190" text-anchor="middle" fill="#6b6b80" font-size="5">步长 R 取段末位置</text>
+<line x1="170" y1="116" x2="170" y2="170" stroke="#c678dd"/>
+<rect x="130" y="170" width="80" height="22" rx="4" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="170" y="184" text-anchor="middle" fill="#67e8f9" font-size="7">mem V</text>
+<text x="120" y="210" text-anchor="middle" fill="#67e8f9" font-size="9">head-fold (压缩比 R=4)</text>
+<rect x="20" y="220" width="200" height="34" rx="4" fill="#11111a" stroke="#14b8a6"/>
+<text x="120" y="234" text-anchor="middle" fill="#5eead4" font-size="7">Q  [B, sq, nh, hd]</text>
+<g stroke="#14b8a6" fill="none">
+<rect x="30" y="240" width="10" height="9"/><rect x="42" y="240" width="10" height="9"/>
+<rect x="54" y="240" width="10" height="9"/><rect x="66" y="240" width="10" height="9"/>
+</g>
+<text x="95" y="248" fill="#6b6b80" font-size="6">每 R=4 个 token</text>
+<line x1="120" y1="254" x2="120" y2="268" stroke="#14b8a6"/>
+<text x="120" y="266" text-anchor="middle" fill="#6b6b80" font-size="6">reshape 折叠</text>
+<rect x="20" y="270" width="200" height="34" rx="4" fill="#0d2e2a" stroke="#5eead4"/>
+<text x="120" y="284" text-anchor="middle" fill="#5eead4" font-size="7">Qf [B, sq//R, nh*R, hd]</text>
+<g stroke="#5eead4" fill="none">
+<rect x="80" y="290" width="40" height="9"/>
+</g>
+<text x="150" y="297" fill="#6b6b80" font-size="6">R 折进 head 维</text>
+<line x1="120" y1="304" x2="120" y2="320" stroke="#5eead4"/>
+<rect x="40" y="320" width="160" height="24" rx="5" fill="#16213a" stroke="#61afef"/>
+<text x="120" y="336" text-anchor="middle" fill="#9ecbff" font-size="8">折叠块 ↔ memory slot 因果 FA</text>
+<text x="120" y="358" text-anchor="middle" fill="#6b6b80" font-size="6">memory 长度 = sq/R, 远场成本降 R 倍</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>shape 流要点</h3>
+<div class="key-point"><strong>压缩比 R：</strong> memory 长度 $L_m = sq/R$。$R=4$ 时远场 KV 数量只有原始 $1/4$，attention 成本随之下降。压缩越狠（coarse 层 <code>coarse_compress_ratio=128</code>）远场越省，但分辨率越低。</div>
+<div class="key-point"><strong>独立 mem 投影：</strong> memory K/V 不复用 <code>linear_qkv</code>，而是单独的 <code>mem_k_proj / mem_v_proj</code>（无 bias），让压缩表示学习自己的 K/V 子空间。<code>_init_mem_kv_from_swa</code> 可从 GQA-交错的 <code>linear_qkv</code> 拷贝 K/V 权重做恒等初始化。</div>
+<div class="key-point"><strong>RoPE 位置 R-1::R：</strong> 第 $j$ 个 memory slot 覆盖原始位置 $[jR, (j{+}1)R)$，取段末 $((j{+}1)R-1)$ 作为它的 RoPE 位置，使压缩 KV 与 query 的相对位置语义对齐。</div>
+<div class="key-point"><strong>head-fold：</strong> 把相邻 $R$ 个 query 折进 head 维 <code>[B,sq,nh,hd]→[B,sq//R,nh·R,hd]</code>，让每个折叠块在一次 FA 调用里对齐到同一组 memory slot，避免 ragged 计算，GPU 友好。</div>
+</div>
+</div>
+
+<h2>3. Online Softmax 融合数学 + seg0 处理</h2>
+<p>两路各自跑一次 FlashAttention，除了输出 <code>out</code> 还会吐出每个 query 的 <strong>log-sum-exp</strong>（LSE，即该 query 那一行 softmax 分母的对数）。融合时不能简单平均，要按 LSE 把两路重新归一——这等价于把 SWA 与 memory 的 KV 拼接后做一次完整 softmax，<strong>数学上无近似</strong>。</p>
+
+<p>记 SWA 路输出/LSE 为 $(\mathbf{o}_{\text{swa}},\,\ell_{\text{swa}})$，memory 路为 $(\mathbf{o}_{\text{mem}},\,\ell_{\text{mem}})$。融合的全局 LSE：</p>
+<p>$\ell_m = \operatorname{logaddexp}(\ell_{\text{swa}},\,\ell_{\text{mem}}) = \log\!\big(e^{\ell_{\text{swa}}} + e^{\ell_{\text{mem}}}\big)$</p>
+<p>两路权重（softmax 分母占比）与最终输出：</p>
+<p>$\sigma_{\text{swa}} = e^{\ell_{\text{swa}} - \ell_m},\quad \sigma_{\text{mem}} = e^{\ell_{\text{mem}} - \ell_m},\quad \sigma_{\text{swa}}+\sigma_{\text{mem}}=1$</p>
+<p>$\mathbf{o}_m = \sigma_{\text{swa}}\cdot\mathbf{o}_{\text{swa}} + \sigma_{\text{mem}}\cdot\mathbf{o}_{\text{mem}}$</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># InfiniteAttentionFunc.forward</span>
+<span class="cm"># Step1: SWA 路 (causal 窗口 FA)</span>
+o_swa, lse_swa = <span class="fn">flash_attn</span>(
+    q, k_swa, v_swa,
+    causal=<span class="kw">True</span>, window=W)
+
+<span class="cm"># Step2: memory 路 (head-fold + 因果 FA)</span>
+qf = <span class="fn">fold</span>(q, R)        <span class="cm"># [B,sq/R,nh*R,hd]</span>
+o_mem, lse_mem = <span class="fn">flash_attn</span>(
+    qf, mem_k, mem_v, causal=<span class="kw">True</span>)
+o_mem = <span class="fn">unfold</span>(o_mem, R)  <span class="cm"># 还原 [B,sq,..]</span>
+
+<span class="cm"># Step2f: seg0 — 前 seg0_tokens 个</span>
+<span class="cm"># 关掉 memory (纯 SWA 已足够)</span>
+o_mem[:, :seg0]  = <span class="num">0</span>
+lse_mem[:, :seg0] = -<span class="fn">inf</span>  <span class="cm"># σ_mem→0</span>
+
+<span class="cm"># Step3: online softmax 融合 (fp32)</span>
+lse_m = <span class="fn">logaddexp</span>(lse_swa, lse_mem)
+s_swa = <span class="fn">exp</span>(lse_swa - lse_m)
+s_mem = <span class="fn">exp</span>(lse_mem - lse_m)
+o_m = s_swa*o_swa + s_mem*o_mem
+<span class="cm"># seg0 处: s_mem=0 → o_m = o_swa</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 240 360">
+<rect x="14" y="14" width="96" height="40" rx="6" fill="#0d2e2a" stroke="#14b8a6"/>
+<text x="62" y="30" text-anchor="middle" fill="#5eead4" font-size="8">o_swa</text>
+<text x="62" y="46" text-anchor="middle" fill="#6b6b80" font-size="7">lse_swa</text>
+<rect x="130" y="14" width="96" height="40" rx="6" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="178" y="30" text-anchor="middle" fill="#67e8f9" font-size="8">o_mem</text>
+<text x="178" y="46" text-anchor="middle" fill="#6b6b80" font-size="7">lse_mem</text>
+<line x1="62" y1="54" x2="100" y2="76" stroke="#14b8a6"/>
+<line x1="178" y1="54" x2="140" y2="76" stroke="#22d3ee"/>
+<rect x="55" y="76" width="130" height="26" rx="6" fill="#2a2438" stroke="#a855f7"/>
+<text x="120" y="89" text-anchor="middle" fill="#c084fc" font-size="8">lse_m = logaddexp</text>
+<text x="120" y="99" text-anchor="middle" fill="#6b6b80" font-size="6">全局 softmax 分母 (fp32)</text>
+<line x1="120" y1="102" x2="120" y2="116" stroke="#a855f7"/>
+<rect x="20" y="116" width="90" height="30" rx="5" fill="#11111a" stroke="#14b8a6"/>
+<text x="65" y="130" text-anchor="middle" fill="#5eead4" font-size="8">σ_swa</text>
+<text x="65" y="142" text-anchor="middle" fill="#6b6b80" font-size="6">exp(lse_swa-lse_m)</text>
+<rect x="130" y="116" width="90" height="30" rx="5" fill="#11111a" stroke="#22d3ee"/>
+<text x="175" y="130" text-anchor="middle" fill="#67e8f9" font-size="8">σ_mem</text>
+<text x="175" y="142" text-anchor="middle" fill="#6b6b80" font-size="6">exp(lse_mem-lse_m)</text>
+<text x="120" y="160" text-anchor="middle" fill="#6b6b80" font-size="7">σ_swa + σ_mem = 1</text>
+<line x1="65" y1="146" x2="105" y2="174" stroke="#14b8a6"/>
+<line x1="175" y1="146" x2="135" y2="174" stroke="#22d3ee"/>
+<rect x="45" y="174" width="150" height="28" rx="6" fill="#16213a" stroke="#61afef"/>
+<text x="120" y="192" text-anchor="middle" fill="#9ecbff" font-size="8">o_m = σ_swa·o_swa + σ_mem·o_mem</text>
+<rect x="20" y="226" width="200" height="118" rx="8" fill="#11111a" stroke="#d19a66" stroke-dasharray="3"/>
+<text x="120" y="244" text-anchor="middle" fill="#e8b888" font-size="9">seg0 区段 (前 seg0_tokens)</text>
+<rect x="34" y="256" width="60" height="70" rx="4" fill="#0d2e2a" stroke="#14b8a6"/>
+<text x="64" y="276" text-anchor="middle" fill="#5eead4" font-size="7">纯 SWA</text>
+<text x="64" y="290" text-anchor="middle" fill="#6b6b80" font-size="6">memory=0</text>
+<text x="64" y="302" text-anchor="middle" fill="#6b6b80" font-size="6">lse_mem=-∞</text>
+<text x="64" y="316" text-anchor="middle" fill="#6b6b80" font-size="6">σ_mem→0</text>
+<text x="108" y="290" fill="#a855f7" font-size="14">→</text>
+<rect x="128" y="256" width="80" height="70" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="168" y="284" text-anchor="middle" fill="#9ecbff" font-size="7">o_m = o_swa</text>
+<text x="168" y="300" text-anchor="middle" fill="#6b6b80" font-size="6">= 完整因果注意力</text>
+<text x="168" y="314" text-anchor="middle" fill="#6b6b80" font-size="6">(W ≥ seg0_tokens)</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么 LSE 加权是无损的</h3>
+<div class="key-point"><strong>softmax 可分块：</strong> 把全部 KV 分成 SWA 块和 memory 块，全局 softmax 分母 $=\sum_{\text{swa}}e^{\cdot}+\sum_{\text{mem}}e^{\cdot}=e^{\ell_{\text{swa}}}+e^{\ell_{\text{mem}}}$。$\sigma$ 就是各块对总分母的贡献占比，加权和恢复出完整 softmax 输出——这正是 FlashAttention 跨块合并的同一套数学。</div>
+<div class="key-point"><strong>fp32 融合：</strong> <code>logaddexp</code> 与 $\exp$ 在 float32 下算，避免 bf16 下 LSE 相减溢出/精度损失。</div>
+<div class="key-point"><strong>seg0 边界：</strong> 序列最前面 <code>seg0_tokens = seg0_fold_size · R</code>（其中 <code>seg0_fold_size = memory_trunk_size // R</code>）个 token 还没有"窗口之外的历史"，memory 无意义。这段直接把 <code>o_mem=0, lse_mem=-∞</code>，融合后 $\sigma_{\text{mem}}=0$，结果退化为纯 SWA。</div>
+<div class="key-point"><strong>正确性断言：</strong> 代码 assert <code>swa_window_size ≥ seg0_tokens</code>，保证 seg0 区段内 SWA 窗口覆盖全部前文，纯 SWA 恰好 = 完整因果注意力，无信息丢失。</div>
+</div>
+</div>
+
+<h2>4. 上下文并行 (Contiguous CP) + Cross-layer Memory + 重计算注意事项</h2>
+<p>长序列要用 Context Parallel (CP) 切分。普通全局 attention 常用 <strong>zigzag</strong> 切分来均衡因果负载，但 Infinite Attention 的 SWA 只需看最近 $W$ 个 token，于是改用更省通信的 <strong>连续切分 (contiguous)</strong>：每个 CP rank 持有一段<strong>连续</strong>的 token，只需向相邻 rank 借窗口跨界的那 <code>W = swa_window_size - 1</code> 个 KV token。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 连续 CP: 只跟相邻 rank 借 W 个 KV</span>
+<span class="cm"># W = swa_window_size - 1</span>
+
+<span class="cm"># BSHD: _P2PSendRecvKVFunc</span>
+k_halo, v_halo = <span class="fn">P2PSendRecvKV</span>(
+    k[:, :W], v[:, :W],   <span class="cm"># 段首 W 个</span>
+    src=rank-<span class="num">1</span>, dst=rank+<span class="num">1</span>)
+k_swa = <span class="fn">cat</span>([k_halo, k], dim=<span class="num">1</span>)
+v_swa = <span class="fn">cat</span>([v_halo, v], dim=<span class="num">1</span>)
+
+<span class="cm"># THD (变长打包): 固定 buffer 防 NCCL hang</span>
+buf = <span class="fn">zeros</span>(W, nkv, hd)   <span class="cm"># 定长</span>
+<span class="fn">P2PSendRecvKVTHD</span>(buf, ...,
+    is_first_seq_continuation=flag)
+<span class="cm"># flag: 本 rank 段首是否延续上一序列</span>
+<span class="cm">#  → 决定是否真的拼接 halo</span>
+
+<span class="cm"># --- cross-layer memory ---</span>
+<span class="cm"># memory_extract 在 checkpoint 区外预算</span>
+mem_out = <span class="fn">memory_extract</span>(yc) <span class="cm"># 不重算</span>
+cross_layer_memory[L+<span class="num">1</span>] = mem_out
+<span class="cm"># 下一层直接复用, 省 recompute OOM</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 240 360">
+<text x="120" y="14" text-anchor="middle" fill="#5eead4" font-size="9">连续切分 (CP=3 示意)</text>
+<rect x="14" y="24" width="66" height="26" rx="4" fill="#0d2e2a" stroke="#14b8a6"/>
+<text x="47" y="40" text-anchor="middle" fill="#5eead4" font-size="8">rank0</text>
+<rect x="86" y="24" width="66" height="26" rx="4" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="119" y="40" text-anchor="middle" fill="#67e8f9" font-size="8">rank1</text>
+<rect x="158" y="24" width="66" height="26" rx="4" fill="#11243a" stroke="#61afef"/>
+<text x="191" y="40" text-anchor="middle" fill="#9ecbff" font-size="8">rank2</text>
+<text x="47" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">tok 0..L/3</text>
+<text x="119" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">L/3..2L/3</text>
+<text x="191" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">2L/3..L</text>
+<path d="M 86 76 Q 70 90 80 76" fill="none"/>
+<line x1="80" y1="50" x2="80" y2="72" stroke="#a855f7" stroke-dasharray="2"/>
+<text x="100" y="84" text-anchor="middle" fill="#c084fc" font-size="7">P2P: 借 W 个 KV →</text>
+<line x1="152" y1="50" x2="152" y2="72" stroke="#a855f7" stroke-dasharray="2"/>
+<text x="60" y="100" text-anchor="middle" fill="#6b6b80" font-size="6">rank1 段首需要 rank0 末 W 个</text>
+<text x="60" y="110" text-anchor="middle" fill="#6b6b80" font-size="6">W = swa_window_size − 1</text>
+<rect x="20" y="124" width="200" height="56" rx="6" fill="#11111a" stroke="#22d3ee" stroke-dasharray="3"/>
+<text x="120" y="140" text-anchor="middle" fill="#67e8f9" font-size="8">THD 变长打包</text>
+<rect x="32" y="148" width="80" height="22" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="72" y="162" text-anchor="middle" fill="#9ecbff" font-size="7">定长 buf [W,..]</text>
+<text x="170" y="156" text-anchor="middle" fill="#6b6b80" font-size="6">所有 rank</text>
+<text x="170" y="166" text-anchor="middle" fill="#6b6b80" font-size="6">收发同尺寸</text>
+<text x="120" y="178" text-anchor="middle" fill="#6b6b80" font-size="5">is_first_seq_continuation 决定是否拼 halo</text>
+<rect x="20" y="194" width="200" height="60" rx="6" fill="#11111a" stroke="#a855f7" stroke-dasharray="3"/>
+<text x="120" y="210" text-anchor="middle" fill="#c084fc" font-size="8">cross-layer memory</text>
+<rect x="30" y="218" width="56" height="26" rx="3" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="58" y="234" text-anchor="middle" fill="#67e8f9" font-size="7">layer L</text>
+<text x="100" y="234" fill="#a855f7" font-size="12">→</text>
+<rect x="120" y="218" width="56" height="26" rx="3" fill="#0c2e36" stroke="#22d3ee"/>
+<text x="148" y="234" text-anchor="middle" fill="#67e8f9" font-size="7">layer L+1</text>
+<text x="194" y="234" text-anchor="middle" fill="#6b6b80" font-size="6">复用</text>
+<rect x="20" y="268" width="200" height="42" rx="6" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="120" y="284" text-anchor="middle" fill="#e8b888" font-size="8">memory_extract 在 checkpoint 区外</text>
+<text x="120" y="300" text-anchor="middle" fill="#6b6b80" font-size="6">避免 activation 重算 → 防 OOM</text>
+<text x="120" y="338" text-anchor="middle" fill="#6b6b80" font-size="6">后端: FA3 (Hopper) / cuDNN fused (B-card) 自动 dispatch</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>CP 与工程注意</h3>
+<div class="key-point"><strong>为什么连续而非 zigzag：</strong> SWA 的依赖是局部的（只看最近 $W$ 个），连续切分下跨界依赖只发生在段边界。每 rank 只需向上游邻居借 $W=\text{window}-1$ 个 KV，通信量 $O(W)$ 而非整圈 ring，远小于全局 attention 的 CP 开销。</div>
+<div class="key-point"><strong>BSHD vs THD：</strong> 定长 batch 用 <code>_P2PSendRecvKVFunc</code> 直接切段首 $W$ 个 KV；变长打包 (THD) 用 <code>_P2PSendRecvKVFuncTHD</code> + 固定尺寸 <code>[W,nkv,hd]</code> buffer，所有 rank 收发同样大小，避免不同长度导致 NCCL 集合通信挂死。</div>
+<div class="key-point"><strong>is_first_seq_continuation：</strong> THD 里多个序列拼在一个 buffer，该 flag 标记本 rank 段首是否是上一序列的延续——只有延续时才真正拼接 halo KV，否则段首是新序列起点不跨界。</div>
+<div class="key-point"><strong>cross-layer memory：</strong> 可选地把上一层算好的 memory 输出经 <code>cross_layer_memory</code> dict 传给下一层复用；<code>memory_extract</code> 在 <strong>checkpoint 重计算区之外</strong>预先算好，避免反向时重算 memory 抽取撑爆激活显存。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.24 · ERNIE A3B + Infinite Attention · Megatron-Bridge (amfp/megatron_bridge_patch)</footer>
+
+</div>
+</body>
+</html>
