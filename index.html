@@ -394,6 +394,16 @@ const DEFAULT_LAYOUT = [
                 "page": "agentfounder.html",
                 "label": "AgentFounder (Agentic CPT)",
                 "color": "#ff6b35"
+            },
+            {
+                "page": "mirothinker.html",
+                "label": "MiroThinker-1.7 & H1",
+                "color": "#8b5cf6"
+            },
+            {
+                "page": "openresearcher.html",
+                "label": "OpenResearcher (离线合成)",
+                "color": "#10b981"
             }
         ]
     },
@@ -1305,6 +1315,8 @@ function renderWelcomeCards(layout) {
         'ernie5_a3b_infinite.html': 'A3B 叠加 Infinite Attention — SWA+压缩Memory双路online-softmax融合, yc压缩R=4+mem RoPE(R-1::R)+head-fold, seg0纯SWA, 连续切分CP借W个KV',
         'vha.html': '自研 Virtual Head Attention — KV头压到2+Share-KV极致省cache, Q-Premix造虚拟头+Linear-Postmix头间交互训练期增强, 推理"吸收"塌成纯GQA-Share-KV-2, 详解GQA优劣对比',
         'agentfounder.html': '阿里 Tongyi Lab AgentFounder — 首创 Agentic CPT 插在 pretrain/post-train 之间消解优化张力, FAS 零监督+HAS 决策空间两种全离线合成, BrowseComp/GAIA/HLE 刷新开源 deep research SOTA',
+        'mirothinker.html': 'MiroMind MiroThinker-1.7 & H1 — "有效交互>交互长度" + 双循环 ReAct + Φ 上下文算子, 四阶段流水线(Mid-train/SFT/DPO/GRPO), Heavy-Duty 模式 Local+Global 双层验证刷新开源+商用 SOTA',
+        'openresearcher.html': 'TIGER-AI-Lab OpenResearcher — 把昂贵的 search-browse 循环搬到离线(corpus 一次性 bootstrap + 全离线多轮合成), search/open/find 三浏览原语, 离线训练泛化到在线 web, 成本 \$0 vs Serper \$5760',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'lt_longtracerl.html': '证据散布三大Pipeline — LongTraceRL(分层干扰128K+GRPO) / ACC(Agent轨迹编译SFT) / LONGBLOCKS(三类任务统一框架)',
         'lt_long_align.html': '长上下文对齐入门 — LongAlign(Self-Instruct+Packing+Loss加权) + LongLoRA(S²-Attn+LoRA扩展4K→100K)',
@@ -1348,6 +1360,8 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'openresearcher.html',
+        'mirothinker.html',
         'agentfounder.html',
         'vha.html',
         'ernie5_a3b_infinite.html',

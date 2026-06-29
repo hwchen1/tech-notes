@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenResearcher — Fully Open Offline Deep Research Trajectory Synthesis</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #10b981, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #10b981; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #10b9810a; border: 1px solid #10b98122; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #34d399; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #0e2a22; color: #34d399; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #101f1a; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>OpenResearcher — Fully Open Offline Deep Research Trajectory Synthesis</h1>
+<p class="subtitle">TIGER-AI-Lab (TAMU / Waterloo 等) · arXiv 2603.20278 (2026-03) | 全开源可复现的长程 deep research 轨迹合成流水线 | 核心: 把昂贵的 search-browse 循环搬到离线 — 一次性在线 bootstrap 建库 + 离线多轮合成 | 三原语 search/open/find over 15M FineWeb + 10K gold docs | GPT-OSS-120B 当 teacher 合成 97K+ 轨迹 (100+ tool call 长尾) | SFT 30B-A3B → BrowseComp-Plus 54.8% (+34.0)</p>
+
+<h2>1. 病根与解法 — 把昂贵的 search-browse 循环搬到离线</h2>
+<p>训练 deep research agent 需要<strong>长程轨迹</strong>(交织 search / 证据聚合 / 多步推理)。但现有数据流水线几乎都依赖<strong>商用 web API</strong>(Google Search 等),带来三个致命问题:① <strong>贵</strong>——每条失败的搜索路径也照样烧 API 钱;② <strong>不稳定不可复现</strong>——活的 web 一直在变,同一流水线跑两次结果不同;③ <strong>难分析</strong>——内部 search 事件依赖变动环境,benchmark 也不暴露稳定的 gold-document 标注,无法精确分析"证据何时被检索/打开/错过"。</p>
+<p><strong>解法两个核心想法:</strong>① <strong>解耦</strong>语料构建与轨迹生成——做一次性在线 bootstrap 收集 answer-supporting 文档、建离线语料+搜索引擎,然后整个多轮合成循环<strong>全程离线</strong>;② 用三个<strong>最小浏览原语</strong> <code>search</code> / <code>open</code> / <code>find</code> 显式建模浏览行为,让 teacher 不只学"检索什么",还学"怎么查看文档、怎么定位证据"。结果:成本归零($0 vs Serper $5,760)、完全确定可复现、无速率限制可大规模并行。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># OpenResearcher: 离线轨迹合成三阶段</span>
+
+<span class="cm"># ===== ① QA 收集 =====</span>
+<span class="cm"># 选 MiroVerse-v0.1 (需长程多跳的难题)</span>
+qa = sample(MiroVerse, 10%)   <span class="cm"># ~6K QA</span>
+qa = normalize_answer(qa)     <span class="cm"># 简洁可验证</span>
+<span class="cm"># 原始轨迹不可用 → 全部从头重新生成</span>
+
+<span class="cm"># ===== ② 离线语料 (一次性在线 bootstrap) =====</span>
+<span class="kw">for</span> q <span class="kw">in</span> qa:                  <span class="cm"># answer-guided 检索</span>
+    query = q.question + q.answer  <span class="cm"># 拼答案提召回</span>
+    gold += serper_search(query)   <span class="cm"># 仅此处用在线 API</span>
+gold = clean_dedup(gold)      <span class="cm"># 10K gold docs</span>
+corpus = gold + fineweb_15M   <span class="cm"># 加 15M 干扰文档(~10T tok)</span>
+index  = FAISS(Qwen3_Embed_8B(corpus))
+
+<span class="cm"># ===== ③ 离线轨迹合成 =====</span>
+<span class="cm"># GPT-OSS-120B teacher, 不给参考答案</span>
+traj = teacher.solve(q, tools=[search, open, find],
+                     engine=offline_index)
+<span class="cm"># 过滤: 超长/malformed/未出答案 → 97K+ 轨迹</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 360">
+<text x="110" y="14" text-anchor="middle" fill="#ef9999" font-size="9">传统: 全程在线 API ✗</text>
+<rect x="30" y="22" width="160" height="34" rx="5" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="110" y="34" text-anchor="middle" fill="#fca5a5" font-size="6.5">每步都调 Google/Serper API</text>
+<text x="110" y="45" text-anchor="middle" fill="#6b6b80" font-size="6">贵 · 不可复现 · 难分析</text>
+<text x="110" y="53" text-anchor="middle" fill="#6b6b80" font-size="6">失败路径也烧钱</text>
+<line x1="110" y1="56" x2="110" y2="70" stroke="#10b981"/>
+<text x="110" y="80" text-anchor="middle" fill="#34d399" font-size="9">OpenResearcher: 解耦</text>
+<rect x="20" y="88" width="180" height="40" rx="6" fill="#2a2418" stroke="#f7931e"/>
+<text x="110" y="101" text-anchor="middle" fill="#fbbf24" font-size="7.5">一次性在线 bootstrap</text>
+<text x="110" y="113" text-anchor="middle" fill="#6b6b80" font-size="6">answer-guided 检索 gold docs</text>
+<text x="110" y="123" text-anchor="middle" fill="#6b6b80" font-size="6">10K gold (仅此处碰在线 API)</text>
+<line x1="110" y1="128" x2="110" y2="140" stroke="#10b981"/>
+<rect x="20" y="140" width="180" height="46" rx="6" fill="#1a2030" stroke="#06b6d4"/>
+<text x="110" y="154" text-anchor="middle" fill="#67e8f9" font-size="7.5">离线语料 + 搜索引擎</text>
+<text x="110" y="166" text-anchor="middle" fill="#6b6b80" font-size="6">10K gold + 15M FineWeb 干扰</text>
+<text x="110" y="176" text-anchor="middle" fill="#6b6b80" font-size="6">Qwen3-Embed-8B + FAISS 稠密检索</text>
+<text x="110" y="184" text-anchor="middle" fill="#6b6b80" font-size="6">≈10T tokens</text>
+<line x1="110" y1="186" x2="110" y2="198" stroke="#10b981"/>
+<rect x="20" y="198" width="180" height="46" rx="6" fill="#1a2e2a" stroke="#10b981"/>
+<text x="110" y="212" text-anchor="middle" fill="#34d399" font-size="7.5">离线多轮合成 (全程不碰在线)</text>
+<text x="110" y="224" text-anchor="middle" fill="#6b6b80" font-size="6">GPT-OSS-120B teacher + 3 原语</text>
+<text x="110" y="234" text-anchor="middle" fill="#6b6b80" font-size="6">不给参考答案, 自己 search 出来</text>
+<text x="110" y="242" text-anchor="middle" fill="#6b6b80" font-size="6">→ 97K+ 轨迹 (100+ call 长尾)</text>
+<line x1="110" y1="244" x2="110" y2="256" stroke="#10b981"/>
+<rect x="45" y="256" width="130" height="24" rx="5" fill="#0e2a22" stroke="#34d399"/>
+<text x="110" y="272" text-anchor="middle" fill="#34d399" font-size="8">SFT → 30B-A3B student</text>
+<rect x="20" y="296" width="180" height="54" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="312" text-anchor="middle" fill="#34d399" font-size="8">离线三大红利</text>
+<text x="110" y="327" text-anchor="middle" fill="#6b6b80" font-size="6.5">成本 $0 (vs Serper $5.7K) · 无速率限制</text>
+<text x="110" y="339" text-anchor="middle" fill="#6b6b80" font-size="6.5">完全确定可复现 · gold 标注可精确分析</text>
+<text x="110" y="348" text-anchor="middle" fill="#6b6b80" font-size="6.5">→ 长程合成首次在全开源下可行</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>关键 insight</h3>
+<div class="key-point"><strong>解耦是关键:</strong> 把"建库"(一次性、需在线)和"合成轨迹"(海量、全离线)拆开。在线 API 只在 bootstrap 阶段碰一次收集 gold docs,之后所有多轮搜索都打本地 FAISS → 成本/可复现/可分析全部解决。</div>
+<div class="key-point"><strong>gold + 干扰共存:</strong> 语料 = 10K gold docs(保证证据可检索)+ 15M FineWeb(当干扰项,模拟真实 web 的噪声与歧义)。这样离线环境既"答得出"又"不简单"。</div>
+<div class="key-point"><strong>从头重生轨迹:</strong> MiroVerse 自带的部分轨迹不可直接监督(证据未必支撑答案、trace 退化)。只用干净 QA 对,让 teacher <strong>不看答案</strong>从头 search 出来 → 才是真实长程行为。</div>
+<div class="key-point"><strong>成本对比震撼:</strong> 合成 97K 轨迹含 5.76M 次搜索,Serper 要 $5,760、SerpAPI 要 $28,800,离线检索器 <strong>$0</strong>。这才让"大规模长程合成"在全开源下首次成为可能。</div>
+</div>
+</div>
+
+<h2>2. 三浏览原语 search / open / find — 从"检索"到"真浏览"</h2>
+<p>大多数 agentic search 系统把 search 当成"发一个 query、拿几条 snippet、直接在上面推理"——这种抽象在 deep research 上撑不住,也和人类真实研究方式相差甚远(人会:发广查 → 打开有希望的页 → 略读定位关键段落 → 据部分证据改写 query 再迭代)。OpenResearcher 用<strong>三个最小原语</strong>显式建模这套流程,逐级把焦点从"语料"收窄到"文档"再到"证据":<code>search</code>(返回 top-K 标题/URL/snippet,广覆盖)→ <code>open</code>(取整页全文,模拟点进网页)→ <code>find</code>(页内精确字符串匹配,做实体查找/事实核验)。</p>
+<p>消融 (RQ4) 强力证明三原语缺一不可:<strong>仅 search</strong> 准确率仅 43.86%、gold 命中 1.45%;<strong>+open</strong> 跃升到 56.39%(证据访问质变);<strong>三原语全开</strong> 达 62.17%,gold 命中升到 53.37%,且首次命中更早(20.6→17.2 轮)、tool call 和 token 双降。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 三原语: 多尺度证据发现</span>
+
+<span class="cm"># search — 语料级广覆盖</span>
+results = search(query, top_k=K)
+<span class="cm"># → [(title, url, snippet), ...]</span>
+<span class="cm"># 识别候选源, 但只有 snippet (不全)</span>
+
+<span class="cm"># open — 文档级精读</span>
+page = open(url)
+<span class="cm"># → 整页全文, 模拟点进网页</span>
+<span class="cm"># 关键: 把 gold 从 "搜到" 变成 "打开"</span>
+
+<span class="cm"># find — 证据级定位</span>
+hits = find(page, "MIT")
+<span class="cm"># → 页内精确字符串匹配</span>
+<span class="cm"># 实体查找 / 事实核验 / 假设 grounding</span>
+
+<span class="cm"># 焦点逐级收窄:</span>
+<span class="cm">#   corpus → document → evidence</span>
+
+<span class="cm"># 合成约束:</span>
+<span class="cm">#   只用这3个工具 · 每次 tool call 前先推理</span>
+<span class="cm">#   不给参考答案 · 自信才终止</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 350">
+<rect x="20" y="14" width="180" height="58" rx="6" fill="#1a2030" stroke="#06b6d4"/>
+<text x="40" y="28" fill="#67e8f9" font-size="8">search</text>
+<text x="40" y="40" fill="#6b6b80" font-size="6">发 query → top-K 候选</text>
+<rect x="30" y="46" width="160" height="9" rx="2" fill="#0e1b2a" stroke="#3b3b55"/>
+<text x="34" y="53" fill="#6b6b80" font-size="5.5">title · url · snippet ×K (只有摘要)</text>
+<rect x="30" y="58" width="160" height="9" rx="2" fill="#0e1b2a" stroke="#3b3b55"/>
+<text x="34" y="65" fill="#6b6b80" font-size="5.5">语料级广覆盖, 识别候选源</text>
+<line x1="110" y1="72" x2="110" y2="84" stroke="#10b981"/>
+<text x="200" y="80" text-anchor="end" fill="#6b6b80" font-size="6">焦点收窄 ↓</text>
+<rect x="20" y="84" width="180" height="58" rx="6" fill="#1a2e2a" stroke="#10b981"/>
+<text x="40" y="98" fill="#34d399" font-size="8">open</text>
+<text x="40" y="110" fill="#6b6b80" font-size="6">点进 URL → 整页全文</text>
+<rect x="30" y="116" width="160" height="20" rx="2" fill="#0e1f1a" stroke="#3b3b55"/>
+<text x="110" y="125" text-anchor="middle" fill="#6b6b80" font-size="5.5">文档级精读 (最大增益来源)</text>
+<text x="110" y="133" text-anchor="middle" fill="#34d399" font-size="5.5">P(correct|open-hit)=86.7% &gt; search-hit 61.8%</text>
+<line x1="110" y1="142" x2="110" y2="154" stroke="#10b981"/>
+<rect x="20" y="154" width="180" height="52" rx="6" fill="#2a2418" stroke="#f7931e"/>
+<text x="40" y="168" fill="#fbbf24" font-size="8">find</text>
+<text x="40" y="180" fill="#6b6b80" font-size="6">页内精确匹配 "MIT"</text>
+<rect x="30" y="186" width="160" height="14" rx="2" fill="#1f1a0e" stroke="#3b3b55"/>
+<text x="110" y="195" text-anchor="middle" fill="#6b6b80" font-size="5.5">证据级定位: 实体查找/事实核验</text>
+<rect x="20" y="222" width="180" height="120" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="238" text-anchor="middle" fill="#34d399" font-size="8">RQ4 工具消融 (BC+)</text>
+<text x="34" y="254" fill="#6b6b80" font-size="6.5">仅 search</text>
+<rect x="92" y="248" width="44" height="8" rx="2" fill="#3b1d1d"/><text x="140" y="254" fill="#ef9999" font-size="6.5">43.9%</text>
+<text x="34" y="272" fill="#6b6b80" font-size="6.5">+open</text>
+<rect x="92" y="266" width="57" height="8" rx="2" fill="#2a2418"/><text x="153" y="272" fill="#fbbf24" font-size="6.5">56.4%</text>
+<text x="34" y="290" fill="#6b6b80" font-size="6.5">三原语</text>
+<rect x="92" y="284" width="63" height="8" rx="2" fill="#1a2e1a"/><text x="159" y="290" fill="#34d399" font-size="6.5">62.2%</text>
+<text x="110" y="308" text-anchor="middle" fill="#6b6b80" font-size="6">open 带来最大跃升 (证据访问质变)</text>
+<text x="110" y="320" text-anchor="middle" fill="#6b6b80" font-size="6">find 在 retrieval 成功后仍有额外增益</text>
+<text x="110" y="332" text-anchor="middle" fill="#6b6b80" font-size="6">且更早命中 + 更省 token/call</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>原语关键点</h3>
+<div class="key-point"><strong>search ≠ deep research:</strong> 只发 query 拿 snippet 是浅层抽象。真实研究是"广查 → 打开 → 定位 → 迭代"的多尺度过程,三原语正是把这个过程显式化。</div>
+<div class="key-point"><strong>open 是质变点:</strong> 仅 search 时 gold 命中只有 1.45%——snippet 根本不够。加上 open 后 gold 命中飙到 51%,准确率 +12.5 点。RQ5 进一步证明:<strong>P(对|打开 gold)=86.7% 远高于 P(对|搜到 gold)=61.8%</strong>,"搜到"不等于"看到"。</div>
+<div class="key-point"><strong>find 锦上添花:</strong> 即便检索已成功,页内精确定位仍能再提准确率、并让首次命中更早、token 更省。证据 localization 本身有独立价值。</div>
+<div class="key-point"><strong>逐级收窄:</strong> corpus → document → evidence 三级漏斗,对应三原语。不同工具组合 = 不同信息发现尺度,这是 deep research agent 设计的核心抽象。</div>
+</div>
+</div>
+
+<h2>3. 受控分析与结果 — 离线训练竟泛化到在线 web</h2>
+<p>因为环境完全离线且全程可观测(语料/检索后端/浏览动作全固定),OpenResearcher 能做活 web 上做不了的<strong>受控分析</strong>,回答 5 个 deep research 流水线设计的关键问题 (RQ1-5)。最反直觉的结论:仅在<strong>离线合成轨迹上 SFT</strong>(无 RL、无任何在线训练),不仅在离线 BrowseComp-Plus 上从 20.8%→<strong>54.8%</strong>(+34.0,超 GPT-4.1/Claude-4-Opus),还<strong>泛化到活 web</strong> benchmark(BrowseComp 26.3 / GAIA 64.1 / xbench 65.0),全面碾压同类开源 agent(ASearcher 5.2/52.8/42.0)。训练用 Megatron-LM、8×H100 约 8 小时、256K ctx 预打包、347 步、GBS=64。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># RQ1-5: 受控分析关键发现</span>
+
+<span class="cm"># RQ1: 答案对错是必要的过滤信号吗? → 不是!</span>
+correct_only:  54.81   <span class="cm"># 三者几乎相同</span>
+incorrect_only:55.06   <span class="cm"># 失败轨迹照样有监督价值</span>
+all_traj:      54.46   <span class="cm"># (search结构/工具序/停止行为)</span>
+
+<span class="cm"># RQ2: 一次性在线 bootstrap 必要吗? → 必要!</span>
+with_gold:    gold_hit 29.5  BC+ 54.81
+without_gold: gold_hit  1.7  BC+  6.35  <span class="cm"># 崩!</span>
+
+<span class="cm"># RQ3: 多少 turn 预算够? → ~100 轮后 plateau</span>
+
+<span class="cm"># RQ4: 浏览工具重要吗? → search&lt;+open&lt;+find</span>
+<span class="cm">#   43.9% → 56.4% → 62.2%</span>
+
+<span class="cm"># RQ5: 搜到 gold 就答对吗? → 不!打开才行</span>
+P(correct | search_hit) = <span class="num">61.8</span>%
+P(correct | open_hit)   = <span class="num">86.7</span>%
+P(search_hit | correct) = <span class="num">99.4</span>%  <span class="cm"># 证据暴露≈必要</span>
+
+<span class="cm"># 失败轨迹 tool call 近2倍 (71.7 vs 38.4)</span>
+<span class="cm"># → 失败源于"搜索漂移"而非探索不足</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 350">
+<text x="110" y="14" text-anchor="middle" fill="#34d399" font-size="9">主结果 (BrowseComp-Plus)</text>
+<text x="30" y="32" fill="#6b6b80" font-size="6.5">Nemotron base</text>
+<rect x="100" y="26" width="21" height="8" rx="2" fill="#3b1d1d"/><text x="125" y="32" fill="#ef9999" font-size="6.5">20.8</text>
+<text x="30" y="46" fill="#6b6b80" font-size="6.5">GPT-4.1</text>
+<rect x="100" y="40" width="36" height="8" rx="2" fill="#2a2418"/><text x="140" y="46" fill="#fbbf24" font-size="6.5">36.4</text>
+<text x="30" y="60" fill="#6b6b80" font-size="6.5">Tongyi-DR</text>
+<rect x="100" y="54" width="44" height="8" rx="2" fill="#2a2418"/><text x="148" y="60" fill="#fbbf24" font-size="6.5">44.5</text>
+<text x="30" y="74" fill="#34d399" font-size="6.5">OpenResearcher</text>
+<rect x="100" y="68" width="55" height="8" rx="2" fill="#1a2e1a"/><text x="159" y="74" fill="#34d399" font-size="6.5">54.8</text>
+<text x="110" y="90" text-anchor="middle" fill="#6b6b80" font-size="6">仅离线 SFT, +34.0 over base</text>
+<line x1="10" y1="98" x2="210" y2="98" stroke="#1e1e30"/>
+<text x="110" y="112" text-anchor="middle" fill="#06b6d4" font-size="8.5">泛化到活 web (零在线训练)</text>
+<text x="30" y="128" fill="#6b6b80" font-size="6.5">BrowseComp</text>
+<rect x="100" y="122" width="26" height="7" rx="2" fill="#1a2030"/><text x="130" y="128" fill="#67e8f9" font-size="6">26.3</text>
+<text x="135" y="128" fill="#6b6b80" font-size="5.5">(开源最强仅5.2)</text>
+<text x="30" y="142" fill="#6b6b80" font-size="6.5">GAIA</text>
+<rect x="100" y="136" width="64" height="7" rx="2" fill="#1a2030"/><text x="168" y="142" fill="#67e8f9" font-size="6">64.1</text>
+<text x="30" y="156" fill="#6b6b80" font-size="6.5">xbench</text>
+<rect x="100" y="150" width="65" height="7" rx="2" fill="#1a2030"/><text x="169" y="156" fill="#67e8f9" font-size="6">65.0</text>
+<line x1="10" y1="166" x2="210" y2="166" stroke="#1e1e30"/>
+<text x="110" y="180" text-anchor="middle" fill="#f7931e" font-size="8">成功 vs 失败轨迹</text>
+<rect x="30" y="188" width="74" height="40" rx="5" fill="#1a2e1a" stroke="#10b981"/>
+<text x="67" y="200" text-anchor="middle" fill="#34d399" font-size="6.5">成功 56.7%</text>
+<text x="67" y="211" text-anchor="middle" fill="#6b6b80" font-size="6">avg 38.4 call</text>
+<text x="67" y="221" text-anchor="middle" fill="#6b6b80" font-size="6">集中 10-40 轮</text>
+<rect x="116" y="188" width="74" height="40" rx="5" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="153" y="200" text-anchor="middle" fill="#fca5a5" font-size="6.5">失败 43.3%</text>
+<text x="153" y="211" text-anchor="middle" fill="#6b6b80" font-size="6">avg 71.7 call</text>
+<text x="153" y="221" text-anchor="middle" fill="#6b6b80" font-size="6">中位 79, 反复搜</text>
+<rect x="20" y="244" width="180" height="98" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="260" text-anchor="middle" fill="#34d399" font-size="8">两个反直觉结论</text>
+<text x="110" y="276" text-anchor="middle" fill="#6b6b80" font-size="6.5">① 失败轨迹也有训练价值 (RQ1)</text>
+<text x="110" y="287" text-anchor="middle" fill="#6b6b80" font-size="6.5">监督的是 search 结构/工具序/停止</text>
+<text x="110" y="301" text-anchor="middle" fill="#6b6b80" font-size="6.5">② 离线 SFT 泛化到活 web</text>
+<text x="110" y="312" text-anchor="middle" fill="#6b6b80" font-size="6.5">高质量可复现合成 = 可迁移信号</text>
+<text x="110" y="326" text-anchor="middle" fill="#6b6b80" font-size="6.5">失败 = 搜索漂移 (query 没问对)</text>
+<text x="110" y="337" text-anchor="middle" fill="#6b6b80" font-size="6.5">而非探索不足 → 该改检索而非加步</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>分析关键点</h3>
+<div class="key-point"><strong>RQ1 — 失败轨迹也有用:</strong> correct-only / incorrect-only / all 三种过滤下游准确率几乎一样(54.8/55.1/54.5,差&lt;0.6 点)。监督信号其实藏在 <strong>search 结构、工具调用顺序、证据查看、停止行为</strong>里,而非答案对错本身。</div>
+<div class="key-point"><strong>RQ2 — bootstrap 不可省:</strong> 去掉 gold docs,gold 命中 29.5%→1.7%、轨迹准确率 56.9%→43.8%、下游 BC+ 54.8%→<strong>6.35%</strong> 直接崩盘。语料覆盖是离线合成的硬前提。</div>
+<div class="key-point"><strong>RQ5 — 搜到 ≠ 答对:</strong> P(对|搜到)=61.8% 但 P(对|打开)=86.7%;同时 P(搜到|对)=99.4%。即证据暴露几乎是必要条件,但<strong>不充分</strong>——这把"检索失败"和"推理失败"清晰区分开。</div>
+<div class="key-point"><strong>失败 = 搜索漂移:</strong> 失败轨迹 tool call 近 2 倍(71.7 vs 38.4),且多出来的主要是 <strong>search</strong>(48.7 vs 22.1)而非 open/find。说明难题的瓶颈是<strong>query 没问对、反复重写</strong>,不是步数不够——这正是设计显式浏览原语的动机。</div>
+</div>
+</div>
+
+<h2>4. 一句话总结</h2>
+<p>OpenResearcher 是<strong>第一个全开源、可复现的 deep research 轨迹合成流水线</strong>:用"一次性在线 bootstrap 建库 + 离线多轮合成"的解耦设计,把 search-browse 循环成本压到 $0,配合 search/open/find 三原语显式建模真实浏览,用 GPT-OSS-120B 合成 97K+ 长程轨迹。仅靠这些离线轨迹 SFT 一个 30B-A3B,就能在离线和活 web 两端都<strong>媲美甚至超越商用 deep research 系统</strong>。它和 <a style="color:#a78bfa" href="agentfounder.html">AgentFounder</a>(全离线合成 agent 数据)、<a style="color:#a78bfa" href="mirothinker.html">MiroThinker</a>(其 MiroVerse 正是本文 QA 来源)同属"<strong>用合成数据扩 deep research agent</strong>"这条主线,但独特点在于<strong>把整个搜索环境也开源化、离线化、可分析化</strong>。</p>
+
+<footer>Generated 2026.06.29 · OpenResearcher 解读 · arXiv 2603.20278 · TIGER-AI-Lab</footer>
+
+</div>
+</body>
+</html>
