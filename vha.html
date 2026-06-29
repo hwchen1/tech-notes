@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VHA — Virtual Head Attention</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f59e0b, #ef4444); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f59e0b; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f59e0b0a; border: 1px solid #f59e0b22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #fbbf24; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #2a1f0a; color: #fbbf24; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #1f1810; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>VHA — Virtual Head Attention</h1>
+<p class="subtitle">自研 Virtual Head Attention | KV 头压到 2 + Share-KV 极致省 KVCache | Q-Premix(差异化旋转造虚拟头) + Linear-Postmix(低秩头间交互) 训练期增强 | 推理"吸收"塌成纯 GQA-Share-KV-2 | 相比 MLA: Loss↓0.005, 推理吞吐+12.5%, 解码+15%</p>
+
+<h2>1. 核心思路 — 在 GQA 谱系上"压到底再补回来"</h2>
+<p>VHA 的出发点是 attention 的经典权衡：<strong>KV 头越少 → KVCache 越小、解码越快，但表达力越弱</strong>。MHA / GQA / MQA 是这条轴上的三个点。VHA 把 KV 头直接压到 <strong>2</strong>（比常见 GQA-8 还狠），并用 <strong>Share-KV</strong>（K/V 共用投影）把 cache 再砍一半，然后用两个<strong>纯线性</strong>轻量模块（Premix / Postmix）在训练期把丢掉的表达力补回来。关键在于：这两个模块推理时可被"吸收"进 $W_Q$、$W_O$，部署态退化成一个<strong>没有任何额外算子</strong>的 GQA-Share-KV-2。</p>
+
+<table>
+<tr><th>方案</th><th>KV 头数</th><th>KVCache</th><th>表达力来源</th><th>推理额外算子</th></tr>
+<tr><td>MHA</td><td>$n_q$ (=Q头)</td><td>最大</td><td>每 Q 头独立 KV</td><td>无</td></tr>
+<tr><td>GQA</td><td>$n_{kv}$ (如 8)</td><td>中</td><td>组共享，组数决定上限</td><td>无</td></tr>
+<tr><td>MQA</td><td>1</td><td>极小</td><td>全共享，质量掉</td><td>无</td></tr>
+<tr><td>MLA</td><td>latent $c_{kv}$</td><td>小</td><td>低秩压缩 KV</td><td><strong>有</strong>(推理需升维 + RoPE 解耦)</td></tr>
+<tr><td><strong>VHA</strong></td><td><strong>2 + Share-KV</strong></td><td><strong>最小</strong></td><td>Premix 造虚拟头 + Postmix 头间交互 + 大 head_dim</td><td><strong>无</strong>(线性吸收后)</td></tr>
+</table>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># VHA 训练态 forward (概念伪代码)</span>
+<span class="cm"># X: [s, b, d]   d = hidden</span>
+
+<span class="cm"># --- Q 路径: 投影后 Premix ---</span>
+Q = <span class="fn">W_Q</span>(X)              <span class="cm"># [s,b, H'q*d']  半数真实Q头</span>
+<span class="cm"># Premix: 差异化旋转 → 虚拟全数Q头</span>
+<span class="kw">for</span> g <span class="kw">in</span> groups:          <span class="cm"># 每组一个 W_g^premix</span>
+    Q_hat[g] = Q @ <span class="fn">W_premix</span>[g]  <span class="cm"># [s,b, Hq*d]</span>
+Q_hat = <span class="fn">RoPE</span>(Q_hat)       <span class="cm"># 注意: 在 Premix 之后</span>
+
+<span class="cm"># --- KV 路径: Share-KV (K=V 投影) ---</span>
+KV = <span class="fn">W_KV</span>(X)             <span class="cm"># [s,b, Hkv*d]  Hkv=2</span>
+K = V = <span class="fn">RoPE</span>(KV)         <span class="cm"># 共享, cache 减半</span>
+
+<span class="cm"># --- 注意力 (就是 GQA: 2 KV组) ---</span>
+Y = <span class="fn">Attention</span>(Q_hat, K, V) <span class="cm"># [s,b, Hq*d]</span>
+
+<span class="cm"># --- 输出: Postmix 低秩头间交互 ---</span>
+<span class="cm"># Y' = Y + Y·A·Bᵀ = Y·(I + ABᵀ)</span>
+Y_p = Y + (Y @ A) @ B.T   <span class="cm"># A:[Hq,r] B:[Hq,r]</span>
+out = <span class="fn">W_O</span>(Y_p)           <span class="cm"># [s,b, d]</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 400">
+<!-- X -->
+<rect x="80" y="8" width="60" height="22" rx="4" fill="#2a1f0a" stroke="#f59e0b"/>
+<text x="110" y="23" text-anchor="middle" fill="#fcd34d" font-size="9">X [s,b,d]</text>
+<line x1="110" y1="30" x2="110" y2="44" stroke="#f59e0b"/>
+<!-- split to WQ / WKV -->
+<line x1="110" y1="44" x2="55" y2="56" stroke="#61afef"/>
+<line x1="110" y1="44" x2="165" y2="56" stroke="#98c379"/>
+<rect x="20" y="56" width="80" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="60" y="71" text-anchor="middle" fill="#9ecbff" font-size="8">W_Q (半数Q头)</text>
+<rect x="128" y="56" width="72" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="164" y="68" text-anchor="middle" fill="#b5e890" font-size="8">W_KV</text>
+<text x="164" y="76" text-anchor="middle" fill="#6b6b80" font-size="6">Hkv=2 共享</text>
+<line x1="60" y1="78" x2="60" y2="92" stroke="#61afef"/>
+<line x1="164" y1="78" x2="164" y2="160" stroke="#98c379"/>
+<!-- Premix -->
+<rect x="14" y="92" width="92" height="26" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="60" y="105" text-anchor="middle" fill="#d8a0e8" font-size="8">Premix 旋转</text>
+<text x="60" y="114" text-anchor="middle" fill="#6b6b80" font-size="6">→ 虚拟全数Q头</text>
+<line x1="60" y1="118" x2="60" y2="132" stroke="#c678dd"/>
+<rect x="20" y="132" width="80" height="20" rx="4" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="60" y="146" text-anchor="middle" fill="#e8b888" font-size="8">RoPE</text>
+<line x1="60" y1="152" x2="60" y2="166" stroke="#d19a66"/>
+<!-- attention -->
+<rect x="40" y="166" width="140" height="26" rx="5" fill="#16213a" stroke="#61afef"/>
+<text x="110" y="180" text-anchor="middle" fill="#9ecbff" font-size="9">Attention (GQA, 2 KV组)</text>
+<text x="110" y="189" text-anchor="middle" fill="#6b6b80" font-size="6">Y [s,b,Hq·d]</text>
+<line x1="110" y1="192" x2="110" y2="208" stroke="#6366f1"/>
+<!-- Postmix -->
+<rect x="30" y="208" width="160" height="34" rx="5" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="110" y="222" text-anchor="middle" fill="#d8a0e8" font-size="8">Postmix 低秩头间交互</text>
+<text x="110" y="234" text-anchor="middle" fill="#6b6b80" font-size="7">Y' = Y·(I + A Bᵀ)</text>
+<line x1="110" y1="242" x2="110" y2="256" stroke="#c678dd"/>
+<!-- WO -->
+<rect x="60" y="256" width="100" height="24" rx="5" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="110" y="272" text-anchor="middle" fill="#fca5a5" font-size="9">W_O → [s,b,d]</text>
+<!-- annotation box -->
+<rect x="20" y="300" width="180" height="80" rx="6" fill="#11111a" stroke="#3b3b55" stroke-dasharray="3"/>
+<text x="110" y="318" text-anchor="middle" fill="#fbbf24" font-size="8">两个紫色块 = 纯线性</text>
+<text x="110" y="334" text-anchor="middle" fill="#6b6b80" font-size="7">Premix 吸收进 W_Q</text>
+<text x="110" y="348" text-anchor="middle" fill="#6b6b80" font-size="7">Postmix 吸收进 W_O</text>
+<text x="110" y="364" text-anchor="middle" fill="#6b6b80" font-size="7">推理后 → 纯 GQA-Share-KV-2</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>三件套各补什么</h3>
+<div class="key-point"><strong>Share-KV (省):</strong> K 和 V 共用一份投影，KVCache 在"KV=2"基础上再减半。省下的参数预算用来<strong>增大 head_dim</strong>，把单头容量补回来。</div>
+<div class="key-point"><strong>Premix (补组间差异):</strong> 只算半数真实 Q 头，对每组施加不同的旋转矩阵 $W_g^{premix}$ 扩充出"虚拟"全数 Q 头。解决 GQA "多个 Q 头被迫看同一份 KV、组内没区分度"的痛点。</div>
+<div class="key-point"><strong>Postmix (补头间交互):</strong> 残差分支把头维信息低秩压缩($r$)再扩张，做 head 之间的重组融合：$Y'=Y(I+AB^\top)$。GQA 各头输出本来相互独立，这一步让它们互相利用。</div>
+<div class="key-point"><strong>关键约束:</strong> Premix/Postmix 都<strong>必须是纯线性</strong>（无激活），这是后面"推理吸收"成立的前提，也是表达力的天花板。</div>
+</div>
+</div>
+
+<h2>2. "推理吸收" — VHA 的命门，到底能不能吸收？</h2>
+<p>VHA "推理零开销" 的全部依据是<strong>吸收 (absorb / fold)</strong>：把训练时的额外线性层，推理前用矩阵乘法<strong>预先合并</strong>进已有的 $W_Q$、$W_O$，让它推理时不再作为独立算子存在。原理只有一句话——<strong>线性 × 线性 = 线性</strong>，两个矩阵可提前乘成一个，靠的是结合律，前向输出<strong>完全不变</strong>。</p>
+
+<p>Premix 吸收（放在 RoPE 之前才成立）：$\;\hat{Q}_{i,g} = (X W_Q)\,W_g^{premix} = X\,\big(\underbrace{W_Q W_g^{premix}}_{\text{离线预乘}}\big)$</p>
+<p>Postmix 吸收（作用在 $W_O$ 之前）：$\;\text{out} = Y'\,W_O = Y\,(I + A B^\top)\,W_O = Y\,\big[\underbrace{(I+AB^\top)W_O}_{\text{离线预乘}}\big]$</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 推理前的一次性 fold (离线)</span>
+<span class="cm"># ---- Premix 吸收进 W_Q ----</span>
+<span class="kw">for</span> g <span class="kw">in</span> groups:
+    <span class="cm"># 静态权重，可提前乘</span>
+    W_Q_fold[g] = W_Q @ <span class="fn">W_premix</span>[g]
+<span class="cm"># 推理时一步出虚拟Q头，Premix 消失</span>
+
+<span class="cm"># ---- Postmix 吸收进 W_O ----</span>
+<span class="cm"># (I + A Bᵀ) 是 [Hq,Hq] 静态矩阵</span>
+W_O_fold = (<span class="fn">eye</span>(Hq) + A @ B.T) @ W_O
+<span class="cm"># 推理时 out = Y @ W_O_fold，Postmix 消失</span>
+
+<span class="cm"># ===== 推理态 forward (吸收后) =====</span>
+Q = <span class="fn">W_Q_fold</span>(X)         <span class="cm"># 直接出虚拟Q头</span>
+Q = <span class="fn">RoPE</span>(Q)
+K = V = <span class="fn">RoPE</span>(<span class="fn">W_KV</span>(X))  <span class="cm"># Share-KV</span>
+Y = <span class="fn">Attention</span>(Q, K, V)  <span class="cm"># 纯 GQA</span>
+out = <span class="fn">W_O_fold</span>(Y)       <span class="cm"># 无 Postmix 算子</span>
+<span class="cm"># → 完全是 GQA-Share-KV-2，零额外算子</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 240 380">
+<text x="60" y="14" text-anchor="middle" fill="#fbbf24" font-size="9">训练态</text>
+<rect x="20" y="22" width="80" height="18" rx="3" fill="#16213a" stroke="#61afef"/>
+<text x="60" y="35" text-anchor="middle" fill="#9ecbff" font-size="7">W_Q</text>
+<line x1="60" y1="40" x2="60" y2="50" stroke="#61afef"/>
+<rect x="20" y="50" width="80" height="18" rx="3" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="60" y="63" text-anchor="middle" fill="#d8a0e8" font-size="7">Premix</text>
+<line x1="60" y1="68" x2="60" y2="78" stroke="#c678dd"/>
+<rect x="20" y="78" width="80" height="18" rx="3" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="60" y="91" text-anchor="middle" fill="#e8b888" font-size="7">RoPE</text>
+<text x="60" y="112" text-anchor="middle" fill="#6b6b80" font-size="6">Premix 在 RoPE 前</text>
+<text x="60" y="122" text-anchor="middle" fill="#6b6b80" font-size="6">→ 可与 W_Q 预乘</text>
+<text x="120" y="60" text-anchor="middle" fill="#f59e0b" font-size="18">⇒</text>
+<text x="120" y="75" text-anchor="middle" fill="#6b6b80" font-size="6">fold</text>
+<text x="185" y="14" text-anchor="middle" fill="#fbbf24" font-size="9">推理态</text>
+<rect x="145" y="36" width="80" height="22" rx="3" fill="#1a2e1a" stroke="#98c379"/>
+<text x="185" y="48" text-anchor="middle" fill="#b5e890" font-size="7">W_Q_fold</text>
+<text x="185" y="56" text-anchor="middle" fill="#6b6b80" font-size="6">=W_Q·W_premix</text>
+<line x1="185" y1="58" x2="185" y2="70" stroke="#98c379"/>
+<rect x="145" y="70" width="80" height="18" rx="3" fill="#3b2d1d" stroke="#d19a66"/>
+<text x="185" y="83" text-anchor="middle" fill="#e8b888" font-size="7">RoPE</text>
+<text x="185" y="104" text-anchor="middle" fill="#6b6b80" font-size="6">Premix 算子消失</text>
+<line x1="10" y1="135" x2="230" y2="135" stroke="#1e1e30"/>
+<text x="120" y="155" text-anchor="middle" fill="#fbbf24" font-size="9">吸收成立的 3 个硬条件</text>
+<rect x="20" y="166" width="200" height="26" rx="4" fill="#11111a" stroke="#98c379"/>
+<text x="120" y="180" text-anchor="middle" fill="#b5e890" font-size="7">① 纯线性 (中间无激活函数)</text>
+<text x="120" y="189" text-anchor="middle" fill="#6b6b80" font-size="6">否则复合非线性，乘不到一起</text>
+<rect x="20" y="198" width="200" height="26" rx="4" fill="#11111a" stroke="#98c379"/>
+<text x="120" y="212" text-anchor="middle" fill="#b5e890" font-size="7">② 权重静态 (不随输入变化)</text>
+<text x="120" y="221" text-anchor="middle" fill="#6b6b80" font-size="6">否则无法离线预乘</text>
+<rect x="20" y="230" width="200" height="26" rx="4" fill="#11111a" stroke="#98c379"/>
+<text x="120" y="244" text-anchor="middle" fill="#b5e890" font-size="7">③ 不被 RoPE/非线性从中间隔断</text>
+<text x="120" y="253" text-anchor="middle" fill="#6b6b80" font-size="6">所以 Premix 刻意放 RoPE 前</text>
+<rect x="20" y="270" width="200" height="40" rx="5" fill="#2a1f0a" stroke="#f59e0b"/>
+<text x="120" y="286" text-anchor="middle" fill="#fcd34d" font-size="8">VHA 满足三条 → 吸收无损</text>
+<text x="120" y="300" text-anchor="middle" fill="#6b6b80" font-size="6">推理塌成 GQA-Share-KV-2</text>
+<text x="120" y="328" text-anchor="middle" fill="#6b6b80" font-size="7">代价: 模块被锁死为线性</text>
+<text x="120" y="340" text-anchor="middle" fill="#6b6b80" font-size="7">= 表达力天花板</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>吸收是真的，但有前提</h3>
+<div class="key-point"><strong>能吸收，因为被刻意设计成可吸收。</strong> 不是魔法——它是一个等价变换，要满足三条：①模块纯线性 ②权重静态 ③不被 RoPE/非线性隔断。</div>
+<div class="key-point"><strong>RoPE 的位置是关键设计：</strong> Premix 放在 $W_Q$ 之后、RoPE <strong>之前</strong>，所以 $W_Q W_g^{premix}$ 先 fold 再过 RoPE，没问题。若 Premix 跨在 RoPE 两侧，RoPE 卡中间就吸收失败。</div>
+<div class="key-point"><strong>换个设计就吸收不了：</strong> 给 Premix/Postmix 加激活函数、或用数据依赖的动态权重、或放到 RoPE 后面——任一出现，"推理零开销" 立刻破功。</div>
+<div class="key-point"><strong>本质交易：</strong> 为了可吸收，两个模块被锁死为线性，表达力上限受限。这正是 VHA 用"训练期表达力"换"推理期零开销"的成交点。</div>
+</div>
+</div>
+
+<h2>3. VHA vs GQA — 优劣势对比</h2>
+<p>把 VHA 放回 GQA 的坐标系：推理态它<strong>就是</strong> GQA（KV=2 + Share-KV），所以推理侧的好处全是 GQA 极致压缩带来的；训练态它比 GQA 多两个线性模块，代价也都压在训练侧。下表逐项对照。</p>
+
+<table>
+<tr><th>维度</th><th>标准 GQA</th><th>VHA</th><th>谁更优</th></tr>
+<tr><td>KVCache</td><td>由 KV 头数决定 (如 8 头)</td><td>KV=2 + Share-KV，再减半</td><td><strong>VHA</strong> (cache 最低)</td></tr>
+<tr><td>推理吞吐 / 解码</td><td>基线</td><td>cache 更小 → 吞吐 +12.5%、解码 +15%</td><td><strong>VHA</strong></td></tr>
+<tr><td>同 cache 下质量</td><td>组数少则组内无区分度</td><td>Premix 补组间差异 + Postmix 补头间交互</td><td><strong>VHA</strong></td></tr>
+<tr><td>推理额外算子</td><td>无</td><td>无 (线性吸收后)</td><td>平手</td></tr>
+<tr><td>训练复杂度</td><td>低，标准实现</td><td>多 2 套线性层 + 旋转矩阵，调参重</td><td><strong>GQA</strong></td></tr>
+<tr><td>表达力上限</td><td>受组数限制</td><td>受"模块必须线性"限制 (不能加激活)</td><td>各有天花板</td></tr>
+<tr><td>kernel / 生态</td><td>成熟 (FA, cuDNN)</td><td>自研，Premix/Postmix 要自己写融合</td><td><strong>GQA</strong></td></tr>
+<tr><td>信息瓶颈</td><td>KV 头数即上限</td><td>真实 KV=2，线性补偿仍受此约束</td><td><strong>GQA</strong> (头多时)</td></tr>
+</table>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># ===== 优势 (相对 GQA) =====</span>
+<span class="cm"># 推理侧三连，全来自极致压缩:</span>
+KVCache       = <span class="num">最低</span>   <span class="cm"># KV=2 + Share</span>
+推理吞吐       = +<span class="num">12.5%</span>
+解码速度       = +<span class="num">15%</span>
+质量(同cache)  = <span class="num">更高</span> <span class="cm"># 训练期补偿</span>
+推理额外算子   = <span class="num">0</span>      <span class="cm"># 线性吸收</span>
+vs_MLA_Loss   = -<span class="num">0.005</span> <span class="cm"># 更低</span>
+
+<span class="cm"># ===== 劣势 (相对 GQA) =====</span>
+训练复杂度     = <span class="kw">高</span>   <span class="cm"># 多2套线性+旋转</span>
+表达力上限     = <span class="kw">受限</span> <span class="cm"># 模块必须纯线性</span>
+                       <span class="cm"># 加激活就吸收不了</span>
+信息瓶颈       = <span class="kw">真实KV=2</span>
+                       <span class="cm"># 线性补偿≤真实头上限</span>
+kernel生态     = <span class="kw">弱</span>   <span class="cm"># 自研, 需手写融合</span>
+收益依赖配置   = <span class="kw">是</span>   <span class="cm"># 形状/硬件相关</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 240 360">
+<text x="120" y="16" text-anchor="middle" fill="#fbbf24" font-size="10">复杂度从推理挪到训练</text>
+<!-- training side -->
+<rect x="14" y="30" width="100" height="150" rx="8" fill="#11111a" stroke="#ef4444" stroke-dasharray="3"/>
+<text x="64" y="46" text-anchor="middle" fill="#fca5a5" font-size="9">训练期 (付代价)</text>
+<rect x="26" y="56" width="76" height="22" rx="4" fill="#16213a" stroke="#61afef"/>
+<text x="64" y="70" text-anchor="middle" fill="#9ecbff" font-size="7">GQA 主干</text>
+<rect x="26" y="84" width="76" height="22" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="64" y="98" text-anchor="middle" fill="#d8a0e8" font-size="7">+ Premix</text>
+<rect x="26" y="112" width="76" height="22" rx="4" fill="#2e1a2e" stroke="#c678dd"/>
+<text x="64" y="126" text-anchor="middle" fill="#d8a0e8" font-size="7">+ Postmix</text>
+<rect x="26" y="140" width="76" height="22" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="64" y="151" text-anchor="middle" fill="#b5e890" font-size="7">Share-KV</text>
+<text x="64" y="160" text-anchor="middle" fill="#6b6b80" font-size="6">+大 head_dim</text>
+<!-- absorb arrow -->
+<line x1="114" y1="105" x2="150" y2="105" stroke="#f59e0b" stroke-width="2"/>
+<text x="132" y="98" text-anchor="middle" fill="#f59e0b" font-size="14">→</text>
+<text x="132" y="118" text-anchor="middle" fill="#6b6b80" font-size="6">吸收</text>
+<!-- inference side -->
+<rect x="150" y="56" width="80" height="100" rx="8" fill="#11111a" stroke="#98c379" stroke-dasharray="3"/>
+<text x="190" y="72" text-anchor="middle" fill="#b5e890" font-size="9">推理期 (赚干净)</text>
+<rect x="160" y="82" width="60" height="26" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="190" y="95" text-anchor="middle" fill="#b5e890" font-size="7">纯 GQA</text>
+<text x="190" y="104" text-anchor="middle" fill="#6b6b80" font-size="6">KV=2 Share</text>
+<text x="190" y="126" text-anchor="middle" fill="#fbbf24" font-size="7">零额外算子</text>
+<text x="190" y="138" text-anchor="middle" fill="#6b6b80" font-size="6">cache 最低</text>
+<text x="190" y="150" text-anchor="middle" fill="#6b6b80" font-size="6">吞吐+12.5%</text>
+<!-- bottom: tradeoff bar -->
+<line x1="10" y1="200" x2="230" y2="200" stroke="#1e1e30"/>
+<text x="120" y="220" text-anchor="middle" fill="#fbbf24" font-size="9">本质权衡轴</text>
+<rect x="20" y="232" width="200" height="20" rx="4" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="120" y="245" text-anchor="middle" fill="#fca5a5" font-size="7">训练: 更复杂 + 表达力被锁线性</text>
+<rect x="20" y="258" width="200" height="20" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="120" y="271" text-anchor="middle" fill="#b5e890" font-size="7">推理: 最省 + 最快 + 质量不掉</text>
+<rect x="20" y="290" width="200" height="44" rx="5" fill="#2a1f0a" stroke="#f59e0b"/>
+<text x="120" y="306" text-anchor="middle" fill="#fcd34d" font-size="8">值不值 = 训练成本付得起吗</text>
+<text x="120" y="320" text-anchor="middle" fill="#6b6b80" font-size="6">长上下文 / 大 batch 部署: 极划算</text>
+<text x="120" y="330" text-anchor="middle" fill="#6b6b80" font-size="6">已是 GQA-8 想再压: 收益需重验</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>对比结论</h3>
+<div class="key-point"><strong>VHA 赢在推理：</strong> 推理态等价 GQA-Share-KV-2，是这条轴上 cache 最低的点，吞吐 +12.5% / 解码 +15%，且靠训练期补偿做到"同 cache 下质量比普通 GQA 高"。</div>
+<div class="key-point"><strong>GQA 赢在简单与生态：</strong> 标准实现、成熟 kernel、无训练额外负担。VHA 的 Premix 旋转 / Postmix 低秩需要自己写融合 kernel，否则训练反而可能变慢。</div>
+<div class="key-point"><strong>共同的天花板，但来源不同：</strong> GQA 表达力受"组数"限；VHA 受"模块必须线性"限——一旦想加非线性增强，吸收就失效，零开销卖点没了。真实 KV=2 也意味着信息瓶颈仍在。</div>
+<div class="key-point"><strong>一句话：</strong> VHA 把复杂度从推理挪到训练——<strong>推理端赚得干净，训练端付得起就值</strong>。长上下文、大 batch 高频部署场景收益最大；KV 头本就不多时，再压到 2 的边际收益与质量风险要重新验证。</div>
+</div>
+</div>
+
+<footer>Generated 2026.06.29 · VHA (Virtual Head Attention) · 自研注意力变体笔记</footer>
+
+</div>
+</body>
+</html>
