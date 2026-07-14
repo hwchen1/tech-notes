@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLM-5 — from Vibe Coding to Agentic Engineering</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #38bdf8, #2563eb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #38bdf8; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #38bdf80a; border: 1px solid #38bdf822; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #7dd3fc; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #16283e; color: #7dd3fc; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #131a24; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>GLM-5 — from Vibe Coding to Agentic Engineering</h1>
+<p class="subtitle">Z.ai (Zhipu) · arXiv 2602.15763 (2026-02) | 744B MoE / 40B active · 256 experts · 80 层 · 28.5T tokens · 200K context | 范式转向: 从"要片段粘贴"的 vibe coding → 交给 repo+terminal 放手一小时的 agentic engineering | 架构 MLA+Muon Split + MTP 参数共享 + DSA 稀疏注意力 | 全异步 Agentic RL (slime + TITO + 双侧 IS) | SWE-bench / Terminal-Bench / BrowseComp 逼近 Claude Opus 4.5</p>
+
+<h2>1. 核心范式 — 从 Vibe Coding 到 Agentic Engineering + ARC 三合一</h2>
+<p><strong>Vibe Coding</strong> = 向模型要一段代码片段然后粘贴;<strong>Agentic Engineering</strong> = 把<strong>整个 repo + 一个 terminal</strong> 交给模型,放手一小时让它自主完成端到端软件工程任务(读代码库 → 定位 issue → 改多文件 → 跑测试 → 迭代)。GLM-5 就是为后者而生:延续 GLM-4.5 把 <strong>Agentic / Reasoning / Coding (ARC)</strong> 三类能力统一进单个 MoE 的路线,并把重心从"被动知识库"推向"主动问题求解器"。</p>
+<p>规模上 GLM-5 扩到 <strong>256 experts</strong>,同时把层数<strong>降到 80 层</strong>以减少 expert parallelism 的通信开销,得到 <strong>744B 总参 / 40B 激活</strong>(相比 GLM-4.5 的 355B/32B 翻倍总量)。预训练 <strong>28.5T tokens</strong>,上下文分三段渐进扩展:<strong>32K (1T) → 128K (500B) → 200K (50B)</strong>。SFT 起支持三种<strong>思考特性</strong>:Interleaved Thinking(每次回复/工具调用前都思考)、Preserved Thinking(coding agent 多轮里保留全部 thinking 块、复用推理不重推)、Turn-level Thinking(逐轮开关思考,轻任务省延迟、重任务开思考)。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 两种范式对比</span>
+
+<span class="cm"># ❌ Vibe Coding (被动)</span>
+user: <span class="st">"给我一个快排函数"</span>
+model: <span class="st">"def quicksort(a): ..."</span>
+<span class="cm"># 人负责: 集成 / 调试 / 跑测试</span>
+
+<span class="cm"># ✅ Agentic Engineering (自主)</span>
+env  = Repo(<span class="st">"github.com/x/y"</span>) + Terminal()
+task = <span class="st">"修复 issue #1234, 让测试通过"</span>
+<span class="kw">while</span> <span class="kw">not</span> done:
+    thought = model.think(ctx)     <span class="cm"># 规划</span>
+    action  = model.act(ctx)       <span class="cm"># bash/edit/read</span>
+    obs     = env.run(action)      <span class="cm"># F2P/P2P 测试反馈</span>
+    ctx = update(ctx, obs)
+<span class="cm"># 人只在最后 review PR</span>
+
+<span class="cm"># ARC 三合一进单个 MoE:</span>
+<span class="cm">#   Agentic + Reasoning + Coding</span>
+<span class="cm"># 744B total / 40B active · 256 experts · 80 层</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 340">
+<text x="110" y="14" text-anchor="middle" fill="#7dd3fc" font-size="9">范式跃迁</text>
+<rect x="14" y="24" width="92" height="46" rx="5" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="60" y="40" text-anchor="middle" fill="#fca5a5" font-size="7.5">Vibe Coding</text>
+<text x="60" y="52" text-anchor="middle" fill="#6b6b80" font-size="6">要片段 → 人来集成</text>
+<text x="60" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">单轮 · 被动</text>
+<rect x="114" y="24" width="92" height="46" rx="5" fill="#12283e" stroke="#38bdf8"/>
+<text x="160" y="40" text-anchor="middle" fill="#7dd3fc" font-size="7.5">Agentic Eng.</text>
+<text x="160" y="52" text-anchor="middle" fill="#6b6b80" font-size="6">给 repo+terminal</text>
+<text x="160" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">长程 · 自主放手</text>
+<line x1="110" y1="70" x2="110" y2="84" stroke="#38bdf8"/>
+<text x="110" y="96" text-anchor="middle" fill="#7dd3fc" font-size="8.5">ARC 统一 MoE</text>
+<rect x="30" y="104" width="52" height="26" rx="4" fill="#1e1838" stroke="#a78bfa"/>
+<text x="56" y="120" text-anchor="middle" fill="#c4b5fd" font-size="6.5">Agentic</text>
+<rect x="84" y="104" width="52" height="26" rx="4" fill="#16283e" stroke="#38bdf8"/>
+<text x="110" y="120" text-anchor="middle" fill="#7dd3fc" font-size="6.5">Reasoning</text>
+<rect x="138" y="104" width="52" height="26" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="164" y="120" text-anchor="middle" fill="#b5e890" font-size="6.5">Coding</text>
+<line x1="110" y1="130" x2="110" y2="142" stroke="#38bdf8"/>
+<rect x="34" y="142" width="152" height="32" rx="5" fill="#11111a" stroke="#2563eb"/>
+<text x="110" y="156" text-anchor="middle" fill="#7dd3fc" font-size="7">744B total · 40B active</text>
+<text x="110" y="167" text-anchor="middle" fill="#6b6b80" font-size="6.5">256 experts · 80 层 (少层省 EP 通信)</text>
+<text x="110" y="188" text-anchor="middle" fill="#7dd3fc" font-size="8">上下文渐进扩展</text>
+<rect x="24" y="194" width="56" height="24" rx="4" fill="#16283e" stroke="#38bdf8"/>
+<text x="52" y="205" text-anchor="middle" fill="#7dd3fc" font-size="6.5">32K</text>
+<text x="52" y="214" text-anchor="middle" fill="#6b6b80" font-size="5.5">1T tok</text>
+<rect x="82" y="194" width="56" height="24" rx="4" fill="#16283e" stroke="#38bdf8"/>
+<text x="110" y="205" text-anchor="middle" fill="#7dd3fc" font-size="6.5">128K</text>
+<text x="110" y="214" text-anchor="middle" fill="#6b6b80" font-size="5.5">500B tok</text>
+<rect x="140" y="194" width="56" height="24" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="168" y="205" text-anchor="middle" fill="#b5e890" font-size="6.5">200K</text>
+<text x="168" y="214" text-anchor="middle" fill="#6b6b80" font-size="5.5">50B tok</text>
+<text x="110" y="236" text-anchor="middle" fill="#7dd3fc" font-size="8">三种思考特性</text>
+<rect x="20" y="242" width="180" height="14" rx="3" fill="#1e1838" stroke="#8b5cf6"/>
+<text x="110" y="252" text-anchor="middle" fill="#c4b5fd" font-size="6">Interleaved: 每步回复/工具前都思考</text>
+<rect x="20" y="258" width="180" height="14" rx="3" fill="#1e1838" stroke="#8b5cf6"/>
+<text x="110" y="268" text-anchor="middle" fill="#c4b5fd" font-size="6">Preserved: 多轮保留 thinking, 复用不重推</text>
+<rect x="20" y="274" width="180" height="14" rx="3" fill="#1e1838" stroke="#8b5cf6"/>
+<text x="110" y="284" text-anchor="middle" fill="#c4b5fd" font-size="6">Turn-level: 逐轮开关思考 (省延迟/提精度)</text>
+<text x="110" y="304" text-anchor="middle" fill="#6b6b80" font-size="6">28.5T tokens 预训练预算</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>核心主张</h3>
+<div class="key-point"><strong>Vibe → Agentic:</strong> LLM 的价值从"给你一段代码"升级为"独立完成一整个工程任务"。评测也随之从片段正确率转向端到端的 Build/Instance/Check 成功率。</div>
+<div class="key-point"><strong>256 experts + 80 层:</strong> 反常识地<strong>减层增专家</strong>——层数少 → EP 跨设备通信轮次少;专家多 → 总容量大而激活稀疏。744B 总参但每 token 只激活 40B。</div>
+<div class="key-point"><strong>200K 上下文:</strong> 比 GLM-4.5 的 128K 再进一步,专为超长文档 + 多文件代码库设计,是 agentic engineering "读整个 repo" 的前提。</div>
+<div class="key-point"><strong>Preserved Thinking:</strong> 借鉴 Claude Opus 4.5,coding agent 多轮里不丢弃历史 thinking,避免每轮重新推导 → 长程任务上信息一致、更稳。</div>
+</div>
+</div>
+
+<h2>2. 架构四件套 — MLA+Muon Split · MTP 参数共享 · DSA 稀疏注意力</h2>
+<p><strong>① MLA + Muon Split:</strong> Multi-latent Attention (MLA) 用低秩 KV 省显存、加速长文,但实验发现 576 维 latent KV 的 MLA 在 Muon 优化器下<strong>打不过</strong> GQA-8(2048 维 KV)。解法是改造 Muon:不再对整块上投影矩阵 $W^{UQ},W^{UK},W^{UV}$ 做正交化,而是<strong>按 head 拆成小矩阵分别正交化</strong>(Muon Split),让不同 head 的投影权重以不同尺度更新 → 补齐到 GQA-8 水平,且训练中 attention logits 天然稳定、无需 clipping。<strong>② MLA-256:</strong> 把 head dim 从 192 提到 256、head 数减 1/3,保持训练算力/参数量不变的同时<strong>降低解码算力</strong>。<strong>③ MTP 参数共享:</strong> 训练时共享 3 个 MTP 层参数(而非 DeepSeek-V3 单层),draft 模型显存与 DSV3 持平但提升接受率——accept length <strong>2.76 > DSV3.2 的 2.55</strong>。</p>
+<p><strong>④ DSA (DeepSeek Sparse Attention):</strong> 把稠密 $O(L^2)$ 注意力换成<strong>内容感知的细粒度 token 选择</strong>(不是滑窗那种固定模式,而是"看内容"决定哪些 token 重要)。关键是<strong>不从头训</strong>——从稠密 base 做 Continued Pre-Training:先 <strong>dense warm-up</strong>(1000 步,每步 14 条 202,752-token 序列,LR 5e-3),再 <strong>sparse adaptation</strong>(仅 20B tokens,远小于 DSV3.2 的 943.7B)。长文 benchmark(MQ/MV-NIAH-128k、HotpotQA)≈ MLA,而长序列注意力算力降 <strong>1.5–2×</strong> → 128K 上下文用一半 GPU 成本跑。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># ① Muon Split: 按 head 独立正交化</span>
+<span class="cm"># 原始: 整块 W^UQ/W^UK/W^UV 一起正交化</span>
+<span class="cm"># Split: 拆成各 head 的小矩阵分别做</span>
+<span class="kw">for</span> h <span class="kw">in</span> heads:
+    W_h = orthogonalize(W_up[h])   <span class="cm"># 各头独立尺度</span>
+<span class="cm"># → MLA 追平 GQA-8, logits 稳定无需 clip</span>
+
+<span class="cm"># ② MLA-256: head_dim 192→256, heads×2/3</span>
+<span class="cm">#   训练算力/参数不变, 解码算力↓</span>
+
+<span class="cm"># ③ MTP 参数共享 (预测下 3 token)</span>
+mtp_layers = share_params(n=<span class="num">3</span>)   <span class="cm"># 显存持平 DSV3</span>
+<span class="cm"># accept_len: GLM-5 2.76 > DSV3.2 2.55</span>
+
+<span class="cm"># ④ DSA Continued Pre-Training (两阶段)</span>
+warmup   = train(steps=<span class="num">1000</span>, seq=<span class="num">202752</span>, lr=<span class="num">5e-3</span>)
+sparse_ad = train(tokens=<span class="num">20e9</span>)      <span class="cm"># ≪ DSV3.2 943.7B</span>
+<span class="cm"># dynamic top-k token 选择, 非固定滑窗</span>
+<span class="cm"># 长文≈MLA, attn 算力 ↓1.5-2× @128K</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 350">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">DSA: 稠密 → 动态稀疏</text>
+<text x="52" y="30" text-anchor="middle" fill="#6b6b80" font-size="6.5">稠密 O(L²)</text>
+<rect x="24" y="34" width="56" height="56" rx="3" fill="#3b1d1d" stroke="#ef4444"/>
+<line x1="24" y1="48" x2="80" y2="48" stroke="#7a2a2a"/><line x1="24" y1="62" x2="80" y2="62" stroke="#7a2a2a"/><line x1="24" y1="76" x2="80" y2="76" stroke="#7a2a2a"/>
+<line x1="38" y1="34" x2="38" y2="90" stroke="#7a2a2a"/><line x1="52" y1="34" x2="52" y2="90" stroke="#7a2a2a"/><line x1="66" y1="34" x2="66" y2="90" stroke="#7a2a2a"/>
+<text x="52" y="102" text-anchor="middle" fill="#fca5a5" font-size="6">128K 上算力爆炸</text>
+<text x="168" y="30" text-anchor="middle" fill="#6b6b80" font-size="6.5">DSA top-k</text>
+<rect x="140" y="34" width="56" height="56" rx="3" fill="#12283e" stroke="#38bdf8"/>
+<rect x="140" y="34" width="14" height="14" fill="#1e5a8a"/><rect x="168" y="48" width="14" height="14" fill="#1e5a8a"/><rect x="154" y="62" width="14" height="14" fill="#1e5a8a"/><rect x="182" y="76" width="14" height="14" fill="#1e5a8a"/><rect x="140" y="76" width="14" height="14" fill="#1e5a8a"/>
+<text x="168" y="102" text-anchor="middle" fill="#7dd3fc" font-size="6">选内容重要的 token</text>
+<line x1="80" y1="62" x2="140" y2="62" stroke="#38bdf8" stroke-dasharray="2"/>
+<text x="110" y="58" text-anchor="middle" fill="#7dd3fc" font-size="6">算力↓1.5-2×</text>
+<text x="110" y="122" text-anchor="middle" fill="#7dd3fc" font-size="8">Continued Pre-Training</text>
+<rect x="20" y="128" width="82" height="34" rx="4" fill="#2a2308" stroke="#d19a66"/>
+<text x="61" y="141" text-anchor="middle" fill="#e0b070" font-size="6.5">dense warm-up</text>
+<text x="61" y="151" text-anchor="middle" fill="#6b6b80" font-size="5.5">1000 步 · lr 5e-3</text>
+<text x="61" y="159" text-anchor="middle" fill="#6b6b80" font-size="5.5">seq 202,752</text>
+<rect x="110" y="128" width="86" height="34" rx="4" fill="#12283e" stroke="#38bdf8"/>
+<text x="153" y="141" text-anchor="middle" fill="#7dd3fc" font-size="6.5">sparse adapt</text>
+<text x="153" y="151" text-anchor="middle" fill="#6b6b80" font-size="5.5">20B tok</text>
+<text x="153" y="159" text-anchor="middle" fill="#6b6b80" font-size="5.5">≪ DSV3.2 943.7B</text>
+<line x1="102" y1="145" x2="110" y2="145" stroke="#38bdf8"/>
+<text x="110" y="180" text-anchor="middle" fill="#7dd3fc" font-size="8">长文表现 DSA ≈ MLA (Table 3)</text>
+<rect x="20" y="188" width="176" height="70" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+<text x="34" y="201" fill="#6b6b80" font-size="6">MQ-NIAH-128k</text><text x="120" y="201" fill="#7dd3fc" font-size="6">100 / 100</text>
+<text x="34" y="214" fill="#6b6b80" font-size="6">MV-NIAH-128k</text><text x="120" y="214" fill="#7dd3fc" font-size="6">95.5 / 97.0 ↑</text>
+<text x="34" y="227" fill="#6b6b80" font-size="6">SQuAD-128k</text><text x="120" y="227" fill="#7dd3fc" font-size="6">79.7 / 86.0 ↑</text>
+<text x="34" y="240" fill="#6b6b80" font-size="6">HotpotQA-128k</text><text x="120" y="240" fill="#7dd3fc" font-size="6">66.3 / 63.0</text>
+<text x="107" y="253" text-anchor="middle" fill="#5c6370" font-size="5.5">(MLA / DSA)</text>
+<text x="110" y="276" text-anchor="middle" fill="#7dd3fc" font-size="8">MLA-256 + Muon Split</text>
+<text x="110" y="290" text-anchor="middle" fill="#6b6b80" font-size="6">head_dim 192→256, heads ×2/3</text>
+<text x="110" y="301" text-anchor="middle" fill="#6b6b80" font-size="6">训练算力不变, 解码更省</text>
+<text x="110" y="318" text-anchor="middle" fill="#7dd3fc" font-size="8">MTP × 3 层共享</text>
+<text x="110" y="332" text-anchor="middle" fill="#6b6b80" font-size="6">accept length 2.76 &gt; DSV3.2 2.55</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么这么设计</h3>
+<div class="key-point"><strong>Muon Split 补 MLA 的坑:</strong> MLA 省显存但精度掉;整块正交化让各 head 被迫同尺度更新。按 head 拆开后各自适配 → 追平 GQA-8,还顺带稳住了 attention logits。</div>
+<div class="key-point"><strong>DSA 走 continued pretraining:</strong> 从头训稀疏注意力成本天文数字。从稠密 base 只花 20B tokens 适配(DSV3.2 用了 943.7B),就证明"长文里 90% 注意力项是冗余的"。</div>
+<div class="key-point"><strong>MLA-256 是硬件考量:</strong> DSV3 的 head 数按 H800 roofline 选,换硬件就不合适。加大 head dim、减 head 数,在不动训练成本的前提下砍解码计算。</div>
+<div class="key-point"><strong>MTP 参数共享:</strong> 训练用 3 层预测下 3 token 但共享参数 → 显存不涨、消除训推 draft 不一致,推测解码接受率反超 DSV3.2。</div>
+</div>
+</div>
+
+<h2>3. Agentic RL 基础设施 — 全异步解耦 · slime · TITO · 双侧重要性采样</h2>
+<p>长程 agentic 任务的 rollout 是<strong>重长尾</strong>的(有的轨迹几步就结束,有的要几百步),同步 RL 会因等最慢的轨迹产生大量 GPU bubble。GLM-5 用<strong>全异步解耦</strong>:训练引擎与推理引擎<strong>分处不同 GPU</strong>,推理引擎持续生成轨迹,攒够阈值就打包送训练引擎更新;每 $K$ 次梯度更新把新权重推回推理引擎,并<strong>重置优化器</strong>以应对 rollout policy 变化。算法用 group-wise policy optimization,对每个问题 $x$ 采 $K$ 条轨迹,以组内均值为 baseline:$L(\theta)=\mathbb{E}_{x}\big[\frac1K\sum_i(r(x,y_i)-\bar r(x))\big]$,且<strong>只对模型生成的 token 算 loss</strong>,环境反馈不计入。</p>
+<p>异步带来严重 off-policy 问题(一条轨迹可能由多个模型版本生成)。两个关键工程:<strong>① TITO Gateway (Token-in-Token-out):</strong> 直接消费推理引擎产出的原始 token 流,而非把文本 re-tokenize——避免 token 边界/空白/特殊符错位破坏 action-reward 对齐。<strong>② Direct 双侧重要性采样:</strong> 精确追踪 $\pi_{\theta_{old}}$ 需要存海量历史 checkpoint,不现实;于是用 rollout 时的 log-prob 作行为代理 $r_t(\theta)=\pi_\theta/\pi_{rollout}$(丢弃 $\pi_{\theta_{old}}$),并做<strong>双侧对称 clip</strong>:落在 $[1-\epsilon_\ell,\,1+\epsilon_h]$ 之外的 token 直接 mask 出梯度(比 PPO 非对称裁剪更稳,类似 IcePop 但更简)。多任务侧由 <strong>slime</strong> 的 Server-based Multi-Task Rollout Orchestrator 调度,各任务以微服务注册、统一 message-list 表示,支持 <strong>>1k 并发 rollout</strong> + 动态采样比。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 全异步解耦: 推理/训练分 GPU</span>
+<span class="kw">while</span> <span class="kw">True</span>:                         <span class="cm"># 推理引擎 (持续)</span>
+    traj = rollout(pi_rollout, env)   <span class="cm"># 长尾轨迹</span>
+    buffer.push(traj)                 <span class="cm"># TITO: 存 token IDs</span>
+
+<span class="kw">if</span> len(buffer) >= threshold:          <span class="cm"># 训练引擎</span>
+    batch = buffer.drain()
+    theta = update(theta, batch)      <span class="cm"># 每 K 步...</span>
+    push_weights(theta -> rollout)    <span class="cm"># ...同步权重</span>
+    reset_optimizer()                 <span class="cm"># 应对 policy 漂移</span>
+
+<span class="cm"># group-wise 优势 (只算模型 token)</span>
+<span class="cm"># L = E_x[ 1/K Σ_i (r_i - mean(r)) ]</span>
+
+<span class="cm"># 双侧对称 clip 的 IS ratio</span>
+r_t = exp(logp_theta - logp_rollout)  <span class="cm"># 丢 π_old</span>
+<span class="kw">if</span> r_t &lt; <span class="num">1</span>-eps_l <span class="kw">or</span> r_t &gt; <span class="num">1</span>+eps_h:
+    mask(token)                       <span class="cm"># 出界 → 不回传梯度</span>
+<span class="cm"># L = E_t[ f(r_t,eps_l,eps_h)·Â_t·logπ ]</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 350">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">全异步 Agentic RL</text>
+<rect x="16" y="22" width="88" height="70" rx="5" fill="#12283e" stroke="#38bdf8"/>
+<text x="60" y="35" text-anchor="middle" fill="#7dd3fc" font-size="7">推理引擎 (GPU-A)</text>
+<rect x="26" y="42" width="68" height="12" rx="2" fill="#16283e" stroke="#2563eb"/><text x="60" y="51" text-anchor="middle" fill="#9ecbff" font-size="5.5">rollout 轨迹1 (短)</text>
+<rect x="26" y="56" width="68" height="18" rx="2" fill="#16283e" stroke="#2563eb"/><text x="60" y="67" text-anchor="middle" fill="#9ecbff" font-size="5.5">轨迹2 (长尾)</text>
+<rect x="26" y="76" width="68" height="10" rx="2" fill="#16283e" stroke="#2563eb"/><text x="60" y="84" text-anchor="middle" fill="#9ecbff" font-size="5.5">TITO: token IDs</text>
+<rect x="116" y="22" width="88" height="70" rx="5" fill="#1e1838" stroke="#a78bfa"/>
+<text x="160" y="35" text-anchor="middle" fill="#c4b5fd" font-size="7">训练引擎 (GPU-B)</text>
+<text x="160" y="50" text-anchor="middle" fill="#6b6b80" font-size="6">攒够 batch → 更新 θ</text>
+<text x="160" y="62" text-anchor="middle" fill="#6b6b80" font-size="6">group-wise 优势</text>
+<text x="160" y="74" text-anchor="middle" fill="#6b6b80" font-size="6">reset optimizer</text>
+<line x1="104" y1="60" x2="116" y2="60" stroke="#38bdf8"/><text x="110" y="57" text-anchor="middle" fill="#7dd3fc" font-size="5">batch→</text>
+<path d="M160 92 L160 100 L60 100 L60 92" fill="none" stroke="#a78bfa" stroke-dasharray="2"/>
+<text x="110" y="110" text-anchor="middle" fill="#c4b5fd" font-size="5.5">每 K 步 push 权重 + reset opt</text>
+<text x="110" y="126" text-anchor="middle" fill="#6b6b80" font-size="6">↑ 消长尾 bubble, GPU 满载</text>
+<line x1="110" y1="132" x2="110" y2="142" stroke="#38bdf8"/>
+<text x="110" y="153" text-anchor="middle" fill="#7dd3fc" font-size="8">双侧对称 clip (token 级)</text>
+<line x1="30" y1="200" x2="190" y2="200" stroke="#3b3b55"/>
+<line x1="70" y1="164" x2="70" y2="236" stroke="#98c379" stroke-dasharray="3"/><text x="70" y="248" text-anchor="middle" fill="#98c379" font-size="6">1-ε_ℓ</text>
+<line x1="150" y1="164" x2="150" y2="236" stroke="#98c379" stroke-dasharray="3"/><text x="150" y="248" text-anchor="middle" fill="#98c379" font-size="6">1+ε_h</text>
+<rect x="70" y="188" width="80" height="24" rx="3" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="203" text-anchor="middle" fill="#b5e890" font-size="6">信任区内: 正常回传</text>
+<circle cx="45" cy="200" r="3" fill="#ef4444"/><text x="45" y="176" text-anchor="middle" fill="#fca5a5" font-size="5.5">出界 mask</text>
+<circle cx="178" cy="200" r="3" fill="#ef4444"/><text x="178" y="176" text-anchor="middle" fill="#fca5a5" font-size="5.5">出界 mask</text>
+<text x="110" y="266" text-anchor="middle" fill="#6b6b80" font-size="6">r_t = π_θ / π_rollout (丢 π_old)</text>
+<text x="110" y="284" text-anchor="middle" fill="#7dd3fc" font-size="8">slime 多任务编排</text>
+<rect x="24" y="292" width="172" height="46" rx="5" fill="#11111a" stroke="#2a2a3a"/>
+<text x="110" y="305" text-anchor="middle" fill="#7dd3fc" font-size="6.5">Multi-Task Rollout Orchestrator</text>
+<rect x="34" y="311" width="44" height="20" rx="3" fill="#16283e" stroke="#2563eb"/><text x="56" y="323" text-anchor="middle" fill="#9ecbff" font-size="5.5">SWE svc</text>
+<rect x="88" y="311" width="44" height="20" rx="3" fill="#16283e" stroke="#2563eb"/><text x="110" y="323" text-anchor="middle" fill="#9ecbff" font-size="5.5">Terminal</text>
+<rect x="142" y="311" width="44" height="20" rx="3" fill="#16283e" stroke="#2563eb"/><text x="164" y="323" text-anchor="middle" fill="#9ecbff" font-size="5.5">Search</text>
+<text x="110" y="346" text-anchor="middle" fill="#6b6b80" font-size="5.5">&gt;1k 并发 · 统一 message-list · 动态采样比</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>异步 RL 的三个坑</h3>
+<div class="key-point"><strong>长尾 → bubble:</strong> agentic 轨迹长度极不均衡,同步训练卡在最慢那条。解耦推理/训练到不同 GPU,推理不停生成、训练攒批更新 → GPU 利用率拉满。</div>
+<div class="key-point"><strong>TITO 防错位:</strong> 若把 rollout 文本 re-tokenize,token 边界/空白/特殊符会漂,破坏 action↔reward 的步级对齐。直接吃原始 token 流,保证采样即所学。</div>
+<div class="key-point"><strong>丢弃 π_old:</strong> 异步下一条轨迹跨多个模型版本,精确 π_old 要存一堆 checkpoint。改用 rollout log-prob 当代理,消掉一次额外推理。</div>
+<div class="key-point"><strong>双侧对称 clip:</strong> 不同于 PPO 单侧裁剪,落在信任区外的 token 直接 mask 掉梯度,防极端 policy 偏离引发的不稳定——比 IcePop 更简。</div>
+</div>
+</div>
+
+<h2>4. 环境规模化 + 效果 — 从真实 issue 到端到端 SWE SOTA</h2>
+<p>RL 要好,环境要多要真。<strong>SWE 环境:</strong> 采集真实 Issue–PR 对,规则+LLM 双重过滤,分类为 bug fix / feature / refactor;用 <strong>RepoLaunch</strong> 自动分析依赖、构建可执行环境、生成测试命令,LLM 生成日志解析函数抽取 <strong>Fail-to-Pass (F2P) / Pass-to-Pass (P2P)</strong> 用例 → 构建 <strong>>10k 可验证环境</strong>,覆盖 9 种语言(Python/Java/Go/C/C++/JS/TS/PHP/Ruby)。<strong>Terminal 环境:</strong> 三阶段合成(task draft 生成 → 构造 agent 实例化进 Harbor → 迭代优化)。此外还有 Search 任务(含长程 search agent 的上下文管理)和 Slide 生成(拒绝采样 + masking refinement)。mid-training 侧放宽 repo 过滤但强化单 issue 质量,得到 ~10M issue–PR 对、~160B unique tokens。</p>
+<p><strong>结果:</strong> GLM-5 在 8 个 agentic/reasoning/coding benchmark(HLE、SWE-bench Verified、SWE-bench Multilingual、Terminal-Bench 2.0、BrowseComp、MCP-Atlas、$\tau^2$-Bench、Vending Bench 2)上刷新开源 SOTA,并在真实端到端编码上逼近 Claude Opus 4.5。内部 <strong>CC-Bench-V2</strong> 显示,GLM-5 在前端/后端/长程任务上全面超越 GLM-4.7,Build 成功率多项达 100%,长程 Repo Exploration (65.6) 甚至反超 Opus 4.5 (64.5)。</p>
+
+<table>
+<tr><th>CC-Bench-V2 (真实工程任务)</th><th>指标</th><th>GLM-5</th><th>GLM-4.7</th><th>Claude Opus 4.5</th></tr>
+<tr><td>前端 HTML</td><td>ISR / CSR</td><td>38.9 / 76.3</td><td>35.4 / 64.9</td><td>52.2 / 82.2</td></tr>
+<tr><td>前端 React</td><td>ISR / CSR</td><td>34.6 / 71.0</td><td>17.2 / 49.4</td><td>39.7 / 70.7</td></tr>
+<tr><td>前端 Vue</td><td>ISR / CSR</td><td>32.7 / 77.1</td><td>24.5 / 53.8</td><td>46.9 / 74.3</td></tr>
+<tr><td>Build (React/Vue/Svelte/Next)</td><td>BSR</td><td>100/100/100/95</td><td>65/70/60/70</td><td>95/100/90/80</td></tr>
+<tr><td>后端 Engineering</td><td>Pass@1</td><td>25.8</td><td>19.6</td><td>26.9</td></tr>
+<tr><td>长程 Repo Exploration</td><td>Pass@1</td><td><strong>65.6</strong></td><td>47.8</td><td>64.5</td></tr>
+<tr><td>长程 Chained Tasks</td><td>Pass@1</td><td>52.3</td><td>43.0</td><td>61.6</td></tr>
+</table>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># SWE 环境规模化 (RepoLaunch)</span>
+<span class="kw">for</span> (issue, pr) <span class="kw">in</span> real_issue_pr_pairs:   <span class="cm"># ~10M 对</span>
+    env = RepoLaunch(repo)          <span class="cm"># 自动装依赖</span>
+    tests = gen_test_cmds(env)
+    parse = llm_log_parser(tests)   <span class="cm"># 语言感知</span>
+    F2P, P2P = extract(parse)       <span class="cm"># 可验证信号</span>
+<span class="cm"># → &gt;10k 环境 · 9 语言 (Py/Java/Go/C/C++/JS/TS/PHP/Ruby)</span>
+
+<span class="cm"># Terminal 环境: 3 阶段合成</span>
+draft  = llm_brainstorm(seed_tasks)   <span class="cm"># 任务草稿</span>
+task   = construct_agent(draft, Harbor)<span class="cm"># 实例化</span>
+task   = iterate_optimize(task)        <span class="cm"># 迭代优化</span>
+
+<span class="cm"># 数据: 放宽 repo 过滤 + 强化单 issue 质量</span>
+<span class="cm">#   ~160B unique tokens (issue-PR 部分)</span>
+
+<span class="cm"># 评测口径 (示例)</span>
+<span class="cm">#   SWE-bench: OpenHands, 200K ctx, T=0.7</span>
+<span class="cm">#   Terminal-Bench 2.0: Terminus, 128K, 2h/task</span>
+<span class="cm">#   BrowseComp: 无 ctx 管理时留最近 5 turn</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 320">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">环境规模化流水线</text>
+<rect x="20" y="22" width="80" height="30" rx="4" fill="#11111a" stroke="#2563eb"/>
+<text x="60" y="34" text-anchor="middle" fill="#9ecbff" font-size="6.5">真实 Issue-PR</text>
+<text x="60" y="45" text-anchor="middle" fill="#6b6b80" font-size="5.5">~10M 对 · 双重过滤</text>
+<line x1="100" y1="37" x2="120" y2="37" stroke="#38bdf8"/>
+<rect x="120" y="22" width="80" height="30" rx="4" fill="#12283e" stroke="#38bdf8"/>
+<text x="160" y="34" text-anchor="middle" fill="#7dd3fc" font-size="6.5">RepoLaunch</text>
+<text x="160" y="45" text-anchor="middle" fill="#6b6b80" font-size="5.5">装依赖+测试命令</text>
+<line x1="110" y1="52" x2="110" y2="62" stroke="#38bdf8"/>
+<rect x="34" y="62" width="152" height="26" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="110" y="74" text-anchor="middle" fill="#b5e890" font-size="6.5">LLM 日志解析 → F2P / P2P 用例</text>
+<text x="110" y="84" text-anchor="middle" fill="#6b6b80" font-size="5.5">&gt;10k 可验证环境 · 9 语言</text>
+<line x1="110" y1="88" x2="110" y2="98" stroke="#38bdf8"/>
+<rect x="34" y="98" width="152" height="20" rx="4" fill="#1e1838" stroke="#a78bfa"/>
+<text x="110" y="111" text-anchor="middle" fill="#c4b5fd" font-size="6.5">全异步 Agentic RL (slime)</text>
+<text x="110" y="132" text-anchor="middle" fill="#7dd3fc" font-size="8">8 benchmark 逼近前沿</text>
+<text x="110" y="146" text-anchor="middle" fill="#6b6b80" font-size="5.5">vs DSV3.2 · Opus4.5 · Gemini3Pro · GPT-5.2</text>
+<rect x="20" y="152" width="180" height="16" rx="2" fill="#11111a" stroke="#2a2a3a"/><text x="26" y="163" fill="#6b6b80" font-size="6">SWE-bench Verified</text>
+<rect x="20" y="170" width="180" height="16" rx="2" fill="#11111a" stroke="#2a2a3a"/><text x="26" y="181" fill="#6b6b80" font-size="6">SWE-bench Multilingual</text>
+<rect x="20" y="188" width="180" height="16" rx="2" fill="#11111a" stroke="#2a2a3a"/><text x="26" y="199" fill="#6b6b80" font-size="6">Terminal-Bench 2.0</text>
+<rect x="20" y="206" width="180" height="16" rx="2" fill="#11111a" stroke="#2a2a3a"/><text x="26" y="217" fill="#6b6b80" font-size="6">BrowseComp · MCP-Atlas</text>
+<rect x="20" y="224" width="180" height="16" rx="2" fill="#11111a" stroke="#2a2a3a"/><text x="26" y="235" fill="#6b6b80" font-size="6">HLE · τ²-Bench · Vending Bench 2</text>
+<text x="110" y="258" text-anchor="middle" fill="#7dd3fc" font-size="8">CC-Bench-V2 亮点</text>
+<rect x="20" y="264" width="86" height="22" rx="3" fill="#1a2e1a" stroke="#98c379"/><text x="63" y="274" text-anchor="middle" fill="#b5e890" font-size="6">Build 多项 100%</text><text x="63" y="283" text-anchor="middle" fill="#6b6b80" font-size="5.5">全面碾压 GLM-4.7</text>
+<rect x="110" y="264" width="90" height="22" rx="3" fill="#12283e" stroke="#38bdf8"/><text x="155" y="274" text-anchor="middle" fill="#7dd3fc" font-size="6">Repo Explore 65.6</text><text x="155" y="283" text-anchor="middle" fill="#6b6b80" font-size="5.5">&gt; Opus 4.5 (64.5)</text>
+<text x="110" y="304" text-anchor="middle" fill="#6b6b80" font-size="6">开源模型与专有前沿差距持续收窄</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>工程要点 &amp; 定位</h3>
+<div class="key-point"><strong>可验证是关键:</strong> F2P/P2P 测试给出<strong>客观 reward</strong>,不靠 LLM-judge 主观打分。>10k 真实环境让 agentic RL 有足够多样、可执行的信号。</div>
+<div class="key-point"><strong>长程反超:</strong> Repo Exploration (65.6) 超过 Opus 4.5——正是 200K 上下文 + Preserved Thinking + 长程 RL 的组合拳,验证了 "agentic engineering" 主线。</div>
+<div class="key-point"><strong>仍有差距:</strong> 前端 ISR 与 Chained Tasks 上 Opus 4.5 仍领先,论文坦承"开源与专有前沿差距在收窄,但竞赛远未结束"。</div>
+<div class="key-point"><strong>与本系列呼应:</strong> agentic 数据合成见 <a href="agentfounder.html" style="color:#7dd3fc">AgentFounder</a> / <a href="openresearcher.html" style="color:#7dd3fc">OpenResearcher</a>;长程 agent 交互与验证见 <a href="mirothinker.html" style="color:#7dd3fc">MiroThinker</a>。DSA 在下一代 GLM-5.2 上进一步演进为 IndexShare(跨层共享 indexer)。</div>
+</div>
+</div>
+
+<footer>Generated 2026.07.14 · GLM-5 解读 · arXiv 2602.15763 · Z.ai (Zhipu AI)</footer>
+</div>
+</body>
+</html>
