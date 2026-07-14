@@ -40,7 +40,7 @@ footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; col
 <div class="container">
 
 <h1>GLM-5 — from Vibe Coding to Agentic Engineering</h1>
-<p class="subtitle">Z.ai (Zhipu) · arXiv 2602.15763 (2026-02) | 744B MoE / 40B active · 256 experts · 80 层 · 28.5T tokens · 200K context | 范式转向: 从"要片段粘贴"的 vibe coding → 交给 repo+terminal 放手一小时的 agentic engineering | 架构 MLA+Muon Split + MTP 参数共享 + DSA 稀疏注意力 | 全异步 Agentic RL (slime + TITO + 双侧 IS) | SWE-bench / Terminal-Bench / BrowseComp 逼近 Claude Opus 4.5</p>
+<p class="subtitle">Z.ai (Zhipu) · arXiv 2602.15763 (2026-02) | 744B MoE / 40B active · 256 experts · 80 层 · 28.5T tokens · 200K context | 范式转向: 从"要片段粘贴"的 vibe coding → 交给 repo+terminal 放手一小时的 agentic engineering | 架构 MLA+Muon Split + MTP 参数共享 + DSA 稀疏注意力 | 全链路训练: 预训练/Mid-training → SFT(202K ctx+3思考) → Reasoning RL(GRPO+IcePop) → Agentic RL(全异步+slime) → General RL(混合奖励) → 跨阶段蒸馏防遗忘 | SWE-bench / Terminal-Bench / BrowseComp 逼近 Claude Opus 4.5</p>
 
 <h2>1. 核心范式 — 从 Vibe Coding 到 Agentic Engineering + ARC 三合一</h2>
 <p><strong>Vibe Coding</strong> = 向模型要一段代码片段然后粘贴;<strong>Agentic Engineering</strong> = 把<strong>整个 repo + 一个 terminal</strong> 交给模型,放手一小时让它自主完成端到端软件工程任务(读代码库 → 定位 issue → 改多文件 → 跑测试 → 迭代)。GLM-5 就是为后者而生:延续 GLM-4.5 把 <strong>Agentic / Reasoning / Coding (ARC)</strong> 三类能力统一进单个 MoE 的路线,并把重心从"被动知识库"推向"主动问题求解器"。</p>
@@ -190,7 +190,217 @@ sparse_ad = train(tokens=<span class="num">20e9</span>)      <span class="cm"># 
 </div>
 </div>
 
-<h2>3. Agentic RL 基础设施 — 全异步解耦 · slime · TITO · 双侧重要性采样</h2>
+<h2>3. 预训练 & Mid-training — 数据构造与 28.5T 预算分配</h2>
+<p>GLM-5 base 分两大阶段:<strong>Pre-training</strong>(通用语言 + 代码,建知识底座)与 <strong>Mid-training</strong>(拉长上下文 + 灌 agentic/长文能力),总预算 <strong>28.5T tokens</strong>(pre-training 约 27T,mid-training 约 1.55T)。<strong>预训练数据三大源:</strong> ① <strong>Web</strong> — 在 GLM-4.5 管线上新增基于句向量的 DCLM 分类器捞高质量数据,再用 <strong>World Knowledge 分类器</strong>(Wikipedia + LLM 标注训练)从中低质数据里蒸馏长尾知识;② <strong>Code</strong> — 刷新代码托管平台快照 + 更多含码网页,fuzzy-dedup 后<strong>唯一 token 增加 28%</strong>,修 Software Heritage 元数据对齐、给低资源语言(Scala/Swift/Lua)单独训分类器;③ <strong>Math/Science</strong> — 用 LLM 打教育性分,长文档用 chunk-and-aggregate 提升打分精度,<strong>严格排除合成/AI 生成/模板数据</strong>。</p>
+<p><strong>Mid-training 结构:</strong> 上下文三段渐进 <strong>32K (1T) → 128K (500B) → 200K (50B)</strong>,长文档与合成 agent 轨迹在后段上采样。<strong>SWE 数据:</strong> 沿用"repo 级代码文件 + commit diff + issue + PR + 相关源文件拼成统一序列"的范式,<strong>放宽 repo 级过滤</strong>扩大候选池 → 约 <strong>10M issue–PR 对</strong>,同时<strong>强化单 issue 质量过滤</strong>降噪,并为每对检索更多相关文件;过滤后 issue–PR 部分约 <strong>160B 唯一 token</strong>。<strong>长文数据:</strong> 自然数据(书/论文/文档,PPL+去重+长度多级过滤,知识密集域上采样)+ 合成数据(借鉴 NextLong/EntropyLong,把高相似文本 interleaved packing 构造长程依赖抗 lost-in-the-middle;200K 段加少量 MRCR-like 多变体强化多轮召回)。训练用 Muon,LR:pre-train 0→2e-4 warmup 后 cos decay 到 4e-5,mid-training 线性 4e-5→1e-5。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 预训练数据构造 (三源)</span>
+web  = DCLM_sent_emb(raw)          <span class="cm"># 句向量捞优质</span>
+web += WorldKnowledge_cls(mid_low) <span class="cm"># 蒸馏长尾知识</span>
+code = refresh_snapshots()         <span class="cm"># +28% unique tok</span>
+code = fix_swh_metadata(code)      <span class="cm"># 低资源语言分类器</span>
+math = llm_edu_score(web,books,papers)  <span class="cm"># chunk-aggregate</span>
+assert no_synthetic(math)          <span class="cm"># 严禁 AI/模板</span>
+
+<span class="cm"># Mid-training: 上下文渐进 + 数据量</span>
+ctx_32k  = train(tokens=<span class="num">1e12</span>)     <span class="cm"># 1T</span>
+ctx_128k = train(tokens=<span class="num">500e9</span>)    <span class="cm"># 500B</span>
+ctx_200k = train(tokens=<span class="num">50e9</span>)     <span class="cm"># 50B</span>
+
+<span class="cm"># SWE 数据: repo+diff+issue+PR 拼序列</span>
+pairs = relax_repo_filter()        <span class="cm"># ~10M issue-PR</span>
+pairs = strengthen_issue_filter(pairs)
+<span class="cm"># → ~160B unique tokens (issue-PR 部分)</span>
+
+<span class="cm"># 长文: 自然 + 合成</span>
+long = filter(books+papers, PPL, dedup, len)
+long += interleaved_pack(similar)  <span class="cm"># NextLong 抗中间遗忘</span>
+long += MRCR_like(n_variants) <span class="cm"># @200K 多轮召回</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 340">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">28.5T 预算 & 数据流</text>
+<rect x="16" y="22" width="86" height="66" rx="5" fill="#12283e" stroke="#38bdf8"/>
+<text x="59" y="34" text-anchor="middle" fill="#7dd3fc" font-size="7">Pre-training ~27T</text>
+<rect x="24" y="40" width="70" height="12" rx="2" fill="#16283e" stroke="#2563eb"/><text x="59" y="49" text-anchor="middle" fill="#9ecbff" font-size="5.5">Web +World Knowledge</text>
+<rect x="24" y="54" width="70" height="12" rx="2" fill="#16283e" stroke="#2563eb"/><text x="59" y="63" text-anchor="middle" fill="#9ecbff" font-size="5.5">Code +28% unique</text>
+<rect x="24" y="68" width="70" height="12" rx="2" fill="#16283e" stroke="#2563eb"/><text x="59" y="77" text-anchor="middle" fill="#9ecbff" font-size="5.5">Math 无合成</text>
+<rect x="118" y="22" width="86" height="66" rx="5" fill="#1e1838" stroke="#a78bfa"/>
+<text x="161" y="34" text-anchor="middle" fill="#c4b5fd" font-size="7">Mid-training ~1.55T</text>
+<text x="161" y="47" text-anchor="middle" fill="#6b6b80" font-size="6">SWE ~10M issue-PR</text>
+<text x="161" y="58" text-anchor="middle" fill="#6b6b80" font-size="6">~160B unique tok</text>
+<text x="161" y="69" text-anchor="middle" fill="#6b6b80" font-size="6">长文 自然+合成</text>
+<text x="161" y="80" text-anchor="middle" fill="#6b6b80" font-size="6">agent 轨迹上采样</text>
+<line x1="102" y1="55" x2="118" y2="55" stroke="#38bdf8"/>
+<text x="110" y="104" text-anchor="middle" fill="#7dd3fc" font-size="8">上下文渐进扩展</text>
+<rect x="20" y="112" width="52" height="34" rx="4" fill="#16283e" stroke="#38bdf8"/>
+<text x="46" y="125" text-anchor="middle" fill="#7dd3fc" font-size="8">32K</text><text x="46" y="138" text-anchor="middle" fill="#6b6b80" font-size="6">1T tok</text>
+<rect x="84" y="112" width="52" height="34" rx="4" fill="#16283e" stroke="#38bdf8"/>
+<text x="110" y="125" text-anchor="middle" fill="#7dd3fc" font-size="8">128K</text><text x="110" y="138" text-anchor="middle" fill="#6b6b80" font-size="6">500B tok</text>
+<rect x="148" y="112" width="52" height="34" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="174" y="125" text-anchor="middle" fill="#b5e890" font-size="8">200K</text><text x="174" y="138" text-anchor="middle" fill="#6b6b80" font-size="6">50B tok</text>
+<line x1="72" y1="129" x2="84" y2="129" stroke="#38bdf8"/><line x1="136" y1="129" x2="148" y2="129" stroke="#98c379"/>
+<text x="110" y="166" text-anchor="middle" fill="#7dd3fc" font-size="8">长文合成技巧</text>
+<rect x="20" y="172" width="180" height="15" rx="3" fill="#1e1838" stroke="#8b5cf6"/><text x="110" y="182" text-anchor="middle" fill="#c4b5fd" font-size="6">interleaved packing → 抗 lost-in-the-middle</text>
+<rect x="20" y="189" width="180" height="15" rx="3" fill="#1e1838" stroke="#8b5cf6"/><text x="110" y="199" text-anchor="middle" fill="#c4b5fd" font-size="6">MRCR-like @200K → 多轮召回</text>
+<text x="110" y="220" text-anchor="middle" fill="#7dd3fc" font-size="8">效果</text>
+<rect x="20" y="226" width="180" height="40" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+<text x="110" y="239" text-anchor="middle" fill="#b5e890" font-size="6.5">200K 段反哺 128K 窗口内表现也提升</text>
+<text x="110" y="251" text-anchor="middle" fill="#6b6b80" font-size="6">数据多样性↑ → 长文性能单调↑</text>
+<text x="110" y="262" text-anchor="middle" fill="#6b6b80" font-size="6">支撑 "读整个 repo" 的 agentic engineering</text>
+<text x="110" y="286" text-anchor="middle" fill="#7dd3fc" font-size="7.5">LR schedule (Muon)</text>
+<text x="110" y="300" text-anchor="middle" fill="#6b6b80" font-size="6">pre-train: 0→2e-4 warmup → cos 4e-5</text>
+<text x="110" y="312" text-anchor="middle" fill="#6b6b80" font-size="6">mid-train: 线性 4e-5 → 1e-5</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>数据构造要点</h3>
+<div class="key-point"><strong>World Knowledge 分类器:</strong> 不是简单丢掉中低质数据,而是用 Wikipedia+LLM 标注训分类器,从"垃圾堆"里精捞长尾知识——扩大有效知识覆盖而非只提纯。</div>
+<div class="key-point"><strong>Math 严禁合成:</strong> 数学/科学数据<strong>坚决不用</strong>合成/AI 生成/模板数据,只保留 LLM 判为高教育性的真实内容。抵制"合成数据污染推理"的风险。</div>
+<div class="key-point"><strong>SWE 放宽 repo/收紧 issue:</strong> repo 级过滤放松以扩池到 ~10M 对,但单 issue 质量收紧降噪——广度靠 repo,信噪比靠 issue 双向调。</div>
+<div class="key-point"><strong>200K 反哺 128K:</strong> 在 128K 基础上再加 200K 段,连 128K 窗口内的表现都变强——长上下文训练的收益能"下溢"到短窗口。</div>
+</div>
+</div>
+
+<h2>4. SFT — 多任务对齐 · 三种思考特性 · 错误段 masking</h2>
+<p>Post-training 第一步是<strong>多任务 SFT</strong>,把 base 变成会思考、会用工具的助手。相比 GLM-4.5,GLM-5 <strong>大幅扩充 Agent 与 Coding 数据规模</strong>。<strong>SFT 语料三大类:</strong> ① <strong>General Chat</strong>(QA、写作、角色扮演、翻译、多轮、长文交互);② <strong>Reasoning</strong>(数学/编程/科学推理);③ <strong>Coding Agent</strong>(前后端工程代码、tool calling、coding agent、search agent、通用 agent)。上下文在 SFT 阶段拉到 <strong>202,752 tokens</strong>,配新 chat template 支持三种思考特性。</p>
+<p><strong>数据构造(按类别):</strong> General Chat 优化为更精炼的回复风格,角色扮演按 instruction following / 表达力 / 创造力 / 逻辑一致性 / 长对话一致性 五维自动+人工过滤。Reasoning 中逻辑题<strong>构造可验证问题 + 拒绝采样</strong>合成高质数据;数学/科学做<strong>难度过滤,只留 GLM-4.7 都觉难的题</strong>。Coding/Agent <strong>大量构建执行环境</strong>获取高质轨迹(重真实场景 + 长程任务),再用 expert RL + 拒绝采样精修。关键技巧:轨迹里的<strong>错误段落保留但在 loss 中 mask 掉</strong> → 让模型学会"纠错行为"而不强化错误动作。此外 SFT 阶段应用 <strong>INT4 QAT</strong>(量化感知训练),配自研量化 kernel 保证训推 bitwise 一致。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># SFT 语料三大类 (Agent/Coding 大扩)</span>
+corpus = {
+  <span class="st">"general_chat"</span>: [qa, write, roleplay, mt, long],
+  <span class="st">"reasoning"</span>:    [math, code, science],
+  <span class="st">"coding_agent"</span>: [fe, be, tool_call, agents],
+}
+max_ctx = <span class="num">202752</span>   <span class="cm"># SFT 阶段上下文</span>
+
+<span class="cm"># 数据构造 (按类别)</span>
+logic = reject_sampling(verifiable_problems)
+math  = filter(only_hard_for(<span class="st">"GLM-4.7"</span>))  <span class="cm"># 难度过滤</span>
+code  = build_exec_envs() -> collect_traj()
+code  = expert_rl(code) + reject_sampling(code)
+
+<span class="cm"># 错误段 masking: 学纠错但不强化错误</span>
+<span class="kw">for</span> seg <span class="kw">in</span> trajectory:
+    <span class="kw">if</span> seg.is_error:
+        loss_mask[seg] = <span class="num">0</span>   <span class="cm"># 保留上下文, 不回传</span>
+
+<span class="cm"># 三种思考特性 (新 chat template)</span>
+<span class="cm">#  Interleaved: 每次 response/tool 前思考</span>
+<span class="cm">#  Preserved:   多轮保留 thinking 复用</span>
+<span class="cm">#  Turn-level:  逐轮开关思考</span>
+
+qat = INT4_QAT()   <span class="cm"># 训推 bitwise 一致 kernel</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 330">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">SFT: 数据 → 对齐</text>
+<rect x="14" y="22" width="60" height="40" rx="4" fill="#12283e" stroke="#38bdf8"/><text x="44" y="38" text-anchor="middle" fill="#7dd3fc" font-size="6.5">General Chat</text><text x="44" y="50" text-anchor="middle" fill="#6b6b80" font-size="5.5">5 维过滤</text>
+<rect x="80" y="22" width="60" height="40" rx="4" fill="#16283e" stroke="#2563eb"/><text x="110" y="38" text-anchor="middle" fill="#9ecbff" font-size="6.5">Reasoning</text><text x="110" y="48" text-anchor="middle" fill="#6b6b80" font-size="5.5">难度过滤</text><text x="110" y="57" text-anchor="middle" fill="#6b6b80" font-size="5.5">拒绝采样</text>
+<rect x="146" y="22" width="60" height="40" rx="4" fill="#1a2e1a" stroke="#98c379"/><text x="176" y="38" text-anchor="middle" fill="#b5e890" font-size="6.5">Coding Agent</text><text x="176" y="48" text-anchor="middle" fill="#6b6b80" font-size="5.5">执行环境</text><text x="176" y="57" text-anchor="middle" fill="#6b6b80" font-size="5.5">大扩规模</text>
+<text x="110" y="78" text-anchor="middle" fill="#7dd3fc" font-size="8">错误段 masking</text>
+<rect x="20" y="84" width="180" height="30" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+<rect x="28" y="92" width="30" height="14" rx="2" fill="#1a2e1a" stroke="#98c379"/><text x="43" y="102" text-anchor="middle" fill="#b5e890" font-size="5.5">正确</text>
+<rect x="62" y="92" width="30" height="14" rx="2" fill="#3b1d1d" stroke="#ef4444"/><text x="77" y="102" text-anchor="middle" fill="#fca5a5" font-size="5.5">错误</text>
+<rect x="96" y="92" width="30" height="14" rx="2" fill="#1a2e1a" stroke="#98c379"/><text x="111" y="102" text-anchor="middle" fill="#b5e890" font-size="5.5">纠正</text>
+<text x="150" y="98" fill="#6b6b80" font-size="5.5">错误段:保留</text><text x="150" y="107" fill="#6b6b80" font-size="5.5">但 loss=0</text>
+<text x="110" y="130" text-anchor="middle" fill="#7dd3fc" font-size="8">三种思考特性 (max 202,752 ctx)</text>
+<rect x="20" y="136" width="180" height="15" rx="3" fill="#1e1838" stroke="#8b5cf6"/><text x="110" y="146" text-anchor="middle" fill="#c4b5fd" font-size="6">Interleaved · 每步先思考</text>
+<rect x="20" y="153" width="180" height="15" rx="3" fill="#1e1838" stroke="#8b5cf6"/><text x="110" y="163" text-anchor="middle" fill="#c4b5fd" font-size="6">Preserved · 多轮保留复用</text>
+<rect x="20" y="170" width="180" height="15" rx="3" fill="#1e1838" stroke="#8b5cf6"/><text x="110" y="180" text-anchor="middle" fill="#c4b5fd" font-size="6">Turn-level · 逐轮开关</text>
+<text x="110" y="202" text-anchor="middle" fill="#7dd3fc" font-size="8">INT4 QAT</text>
+<rect x="30" y="208" width="160" height="26" rx="4" fill="#2a2308" stroke="#d19a66"/>
+<text x="110" y="220" text-anchor="middle" fill="#e0b070" font-size="6.5">量化感知训练 @ SFT 阶段</text>
+<text x="110" y="230" text-anchor="middle" fill="#6b6b80" font-size="5.5">自研 kernel: 训练/推理 bitwise 一致</text>
+<text x="110" y="252" text-anchor="middle" fill="#7dd3fc" font-size="8">效果</text>
+<rect x="20" y="258" width="180" height="52" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+<text x="110" y="271" text-anchor="middle" fill="#b5e890" font-size="6.5">获得可思考 + 会用工具的助手基座</text>
+<text x="110" y="283" text-anchor="middle" fill="#6b6b80" font-size="6">长程/多轮 coding agent 行为更稳定</text>
+<text x="110" y="295" text-anchor="middle" fill="#6b6b80" font-size="6">为后续 RL 提供高质冷启动轨迹</text>
+<text x="110" y="306" text-anchor="middle" fill="#6b6b80" font-size="6">低精度部署精度损失最小化</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>SFT 的巧思</h3>
+<div class="key-point"><strong>错误段 masking:</strong> 不删含错轨迹,而是把错误 token 的 loss 置零、保留在上下文中。模型看到"错→纠"的完整序列却只学纠正动作 → 天然习得<strong>自我纠错</strong>,这是 agent 长程任务的关键能力。</div>
+<div class="key-point"><strong>难度过滤:</strong> 数学/科学只留 GLM-4.7 都难的题,避免用简单题浪费 SFT 预算——把监督信号集中在"能力边界"上。</div>
+<div class="key-point"><strong>三种思考特性:</strong> Interleaved 提指令遵循;Preserved 借鉴 Opus 4.5,多轮不丢 thinking;Turn-level 让轻任务省延迟、重任务开思考——延迟与精度可控权衡。</div>
+<div class="key-point"><strong>SFT 阶段就上 QAT:</strong> INT4 量化感知训练放在 SFT 而非事后,配 bitwise 一致 kernel,低精度部署几乎无损。</div>
+</div>
+</div>
+
+<h2>5. Reasoning RL — GRPO + IcePop (去 KL) · 四域混训 · DSA RL 洞见</h2>
+<p><strong>算法骨架:</strong> 在 GRPO 上叠加 <strong>IcePop</strong> 缓解<strong>训推失配</strong>(采样用的 inference policy 与更新用的 training policy 分布不一致)。显式区分 $\pi^{\text{train}}$(算梯度)与 $\pi^{\text{infer}}$(采轨迹),并<strong>移除 KL 正则项</strong>以加速 RL 提升。核心是 $\operatorname{pop}$ 算子:当训推失配比 $\rho_{i,t}$ 偏离太远就把该 token 的贡献<strong>直接置零</strong>,只在 $[1/\beta,\beta]$ 信任区内正常回传。超参 $\beta=2,\ \epsilon_{\text{low}}=0.2,\ \epsilon_{\text{high}}=0.28$,<strong>完全 on-policy,group size 32、batch size 32</strong>。</p>
+<p>$$\mathcal{L}(\theta)=-\mathbb{E}_{x,\{y_i\}\sim\pi^{\text{infer}}_{\theta_{old}}}\Big[\tfrac{1}{G}\textstyle\sum_{i=1}^{G}\tfrac{1}{|y_i|}\sum_{t=1}^{|y_i|}\operatorname{pop}(\rho_{i,t},1/\beta,\beta)\cdot\min\big(r_{i,t}\hat{A}_{i,t},\ \operatorname{clip}(r_{i,t},1-\epsilon_{low},1+\epsilon_{high})\hat{A}_{i,t}\big)\Big]$$</p>
+<p>其中失配比 $\rho_{i,t}=\pi^{\text{train}}_{\theta_{old}}/\pi^{\text{infer}}_{\theta_{old}}$,PPO 比率 $r_{i,t}=\pi^{\text{train}}_\theta/\pi^{\text{train}}_{\theta_{old}}$,组归一化优势 $\hat{A}_{i,t}=(R_i-\operatorname{mean}(R))/\operatorname{std}(R)$,而 $\operatorname{pop}(\rho,1/\beta,\beta)=\rho$ 当 $1/\beta\le\rho\le\beta$,否则 $0$。<strong>四域混训:</strong> 数学 / 科学 / 代码 / 工具集成推理 (TIR)。数学科学做<strong>难度过滤</strong>——只留 GLM-4.7 极少答对或答不出、但更强 teacher(GPT-5.2 xhigh / Gemini 3 Pro)能解的题;代码来自 Codeforces / TACO / SYNTHETIC-2-RL(竞赛)+ 内部拆解到最小实现(科学编码);TIR 复用数学科学难子集 + 与标注商共建"必须用工具"的 STEM 题。各域<strong>专属 judge 出二元 outcome reward</strong>,四域大致均衡混合。<strong>DSA RL 洞见:</strong> indexer 的 top-k($k{=}2048$)必须<strong>确定性</strong>——用 <code>torch.topk</code>(略慢但确定)而非 SGLang 的非确定 CUDA top-k,否则几步后熵崩、性能骤降;RL 中默认<strong>冻结 indexer 参数</strong>。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># GRPO + IcePop (去 KL), 完全 on-policy</span>
+<span class="cm"># 区分两个 policy:</span>
+pi_train   <span class="cm"># 算梯度</span>
+pi_infer   <span class="cm"># 采样轨迹 → 二者分布有失配</span>
+
+rho = pi_train_old / pi_infer_old   <span class="cm"># 训推失配比</span>
+r   = pi_train / pi_train_old       <span class="cm"># PPO 比率</span>
+A   = (R - mean(R)) / std(R)        <span class="cm"># 组归一化优势</span>
+
+<span class="kw">def</span> <span class="fn">pop</span>(rho, beta):        <span class="cm"># β=2</span>
+    <span class="kw">return</span> rho <span class="kw">if</span> (1/beta &lt;= rho &lt;= beta) <span class="kw">else</span> <span class="num">0</span>
+<span class="cm"># 失配太大 → 该 token 贡献置零 (比裁剪更硬)</span>
+
+loss = -mean( pop(rho,beta) *
+        min(r*A, clip(r, 1-<span class="num">0.2</span>, 1+<span class="num">0.28</span>)*A) )
+<span class="cm"># group_size=32, batch_size=32</span>
+
+<span class="cm"># 四域混训 + 二元 reward</span>
+domains = [math, science, code, TIR]
+math = filter(hard_for_glm47 & solvable_by_gpt52)
+reward = domain_judge(traj)   <span class="cm"># binary outcome</span>
+
+<span class="cm"># DSA RL: indexer top-k 必须确定性</span>
+idx = torch.topk(scores, k=<span class="num">2048</span>)  <span class="cm"># 非 CUDA topk</span>
+freeze(indexer)               <span class="cm"># RL 中冻结</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 340">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">pop 算子: 失配硬门控</text>
+<line x1="20" y1="70" x2="200" y2="70" stroke="#3b3b55"/>
+<line x1="70" y1="30" x2="70" y2="100" stroke="#98c379" stroke-dasharray="3"/><text x="70" y="112" text-anchor="middle" fill="#98c379" font-size="6">1/β=0.5</text>
+<line x1="150" y1="30" x2="150" y2="100" stroke="#98c379" stroke-dasharray="3"/><text x="150" y="112" text-anchor="middle" fill="#98c379" font-size="6">β=2</text>
+<rect x="70" y="52" width="80" height="18" rx="3" fill="#1a2e1a" stroke="#98c379"/><text x="110" y="64" text-anchor="middle" fill="#b5e890" font-size="6">信任区: pop=ρ 正常</text>
+<circle cx="45" cy="70" r="3" fill="#ef4444"/><text x="45" y="44" text-anchor="middle" fill="#fca5a5" font-size="5.5">ρ小→0</text>
+<circle cx="178" cy="70" r="3" fill="#ef4444"/><text x="178" y="44" text-anchor="middle" fill="#fca5a5" font-size="5.5">ρ大→0</text>
+<text x="110" y="128" text-anchor="middle" fill="#6b6b80" font-size="6">去 KL 项 → 加速 RL; on-policy g=32 b=32</text>
+<text x="110" y="146" text-anchor="middle" fill="#7dd3fc" font-size="8">四域混训 (均衡)</text>
+<rect x="16" y="152" width="44" height="26" rx="3" fill="#16283e" stroke="#38bdf8"/><text x="38" y="164" text-anchor="middle" fill="#7dd3fc" font-size="6">数学</text><text x="38" y="174" text-anchor="middle" fill="#6b6b80" font-size="5">难度过滤</text>
+<rect x="64" y="152" width="44" height="26" rx="3" fill="#16283e" stroke="#38bdf8"/><text x="86" y="164" text-anchor="middle" fill="#7dd3fc" font-size="6">科学</text><text x="86" y="174" text-anchor="middle" fill="#6b6b80" font-size="5">难度过滤</text>
+<rect x="112" y="152" width="44" height="26" rx="3" fill="#1a2e1a" stroke="#98c379"/><text x="134" y="164" text-anchor="middle" fill="#b5e890" font-size="6">代码</text><text x="134" y="174" text-anchor="middle" fill="#6b6b80" font-size="5">CF/TACO</text>
+<rect x="160" y="152" width="44" height="26" rx="3" fill="#1e1838" stroke="#a78bfa"/><text x="182" y="164" text-anchor="middle" fill="#c4b5fd" font-size="6">TIR</text><text x="182" y="174" text-anchor="middle" fill="#6b6b80" font-size="5">用工具</text>
+<text x="110" y="192" text-anchor="middle" fill="#6b6b80" font-size="5.5">难度: GLM-4.7 难 & GPT-5.2/Gemini3 可解</text>
+<text x="110" y="214" text-anchor="middle" fill="#7dd3fc" font-size="8">DSA RL 稳定性</text>
+<rect x="20" y="220" width="86" height="40" rx="4" fill="#3b1d1d" stroke="#ef4444"/>
+<text x="63" y="233" text-anchor="middle" fill="#fca5a5" font-size="6">CUDA topk (非确定)</text>
+<text x="63" y="245" text-anchor="middle" fill="#6b6b80" font-size="5.5">几步后熵崩</text>
+<text x="63" y="254" text-anchor="middle" fill="#6b6b80" font-size="5.5">性能骤降</text>
+<rect x="114" y="220" width="86" height="40" rx="4" fill="#1a2e1a" stroke="#98c379"/>
+<text x="157" y="233" text-anchor="middle" fill="#b5e890" font-size="6">torch.topk (确定)</text>
+<text x="157" y="245" text-anchor="middle" fill="#6b6b80" font-size="5.5">k=2048 · 略慢</text>
+<text x="157" y="254" text-anchor="middle" fill="#6b6b80" font-size="5.5">RL 显著增益</text>
+<text x="110" y="278" text-anchor="middle" fill="#6b6b80" font-size="6">默认冻结 indexer 参数, 防不稳定学习</text>
+<text x="110" y="298" text-anchor="middle" fill="#7dd3fc" font-size="8">效果</text>
+<text x="110" y="312" text-anchor="middle" fill="#6b6b80" font-size="6">四域各自稳定且显著增益</text>
+<text x="110" y="324" text-anchor="middle" fill="#6b6b80" font-size="6">混训不掉点, 推理深度提升</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>Reasoning RL 关键</h3>
+<div class="key-point"><strong>pop 比 clip 更硬:</strong> PPO 的 clip 只是限制梯度幅度,pop 直接把失配超界的 token <strong>置零</strong>。异步/训推分布不一致时,这能挡住噪声梯度污染更新。</div>
+<div class="key-point"><strong>去掉 KL:</strong> IcePop 原版有 KL 正则,GLM-5 移除以<strong>加速</strong> RL 提升——pop 门控已提供稳定性,KL 反而拖慢收敛。</div>
+<div class="key-point"><strong>难度过滤定位能力边界:</strong> 只训"自己难、更强模型可解"的题——太简单没增益,太难无正样本。这是把 RL 预算花在刀刃上的通用配方。</div>
+<div class="key-point"><strong>确定性 top-k 是 DSA RL 命门:</strong> indexer 选 token 若非确定,训推选中的 token 不同 → 类似 MoE 路由不一致,熵崩。用 torch.topk + 冻结 indexer 换来稳定。</div>
+</div>
+</div>
+
+<h2>6. Agentic RL 基础设施 — 全异步解耦 · slime · TITO · 双侧重要性采样</h2>
 <p>长程 agentic 任务的 rollout 是<strong>重长尾</strong>的(有的轨迹几步就结束,有的要几百步),同步 RL 会因等最慢的轨迹产生大量 GPU bubble。GLM-5 用<strong>全异步解耦</strong>:训练引擎与推理引擎<strong>分处不同 GPU</strong>,推理引擎持续生成轨迹,攒够阈值就打包送训练引擎更新;每 $K$ 次梯度更新把新权重推回推理引擎,并<strong>重置优化器</strong>以应对 rollout policy 变化。算法用 group-wise policy optimization,对每个问题 $x$ 采 $K$ 条轨迹,以组内均值为 baseline:$L(\theta)=\mathbb{E}_{x}\big[\frac1K\sum_i(r(x,y_i)-\bar r(x))\big]$,且<strong>只对模型生成的 token 算 loss</strong>,环境反馈不计入。</p>
 <p>异步带来严重 off-policy 问题(一条轨迹可能由多个模型版本生成)。两个关键工程:<strong>① TITO Gateway (Token-in-Token-out):</strong> 直接消费推理引擎产出的原始 token 流,而非把文本 re-tokenize——避免 token 边界/空白/特殊符错位破坏 action-reward 对齐。<strong>② Direct 双侧重要性采样:</strong> 精确追踪 $\pi_{\theta_{old}}$ 需要存海量历史 checkpoint,不现实;于是用 rollout 时的 log-prob 作行为代理 $r_t(\theta)=\pi_\theta/\pi_{rollout}$(丢弃 $\pi_{\theta_{old}}$),并做<strong>双侧对称 clip</strong>:落在 $[1-\epsilon_\ell,\,1+\epsilon_h]$ 之外的 token 直接 mask 出梯度(比 PPO 非对称裁剪更稳,类似 IcePop 但更简)。多任务侧由 <strong>slime</strong> 的 Server-based Multi-Task Rollout Orchestrator 调度,各任务以微服务注册、统一 message-list 表示,支持 <strong>>1k 并发 rollout</strong> + 动态采样比。</p>
 
@@ -259,7 +469,73 @@ r_t = exp(logp_theta - logp_rollout)  <span class="cm"># 丢 π_old</span>
 </div>
 </div>
 
-<h2>4. 环境规模化 + 效果 — 从真实 issue 到端到端 SWE SOTA</h2>
+<h2>7. General RL + On-Policy 跨阶段蒸馏 — 人味对齐与防遗忘</h2>
+<p><strong>General RL 结构:</strong> 把优化目标拆成三个互补维度 —— ① <strong>Foundational Correctness</strong>(基础正确性:指令遵循失败、逻辑矛盾、事实错误、知识幻觉、语言不流畅,把错误率压到可用基线,是一切后续优化的前提);② <strong>Emotional Intelligence</strong>(情商:共情、有洞察、接近自然人类交流);③ <strong>Task-Specific Quality</strong>(任务专项质量:写作、文本处理、主客观 QA、角色扮演、翻译,从"正确"提到"高质")。<strong>数据/奖励构造:</strong> 用<strong>混合奖励系统</strong>组合三类信号 —— rule-based(精确可解释但只覆盖可规则化的)、ORM 输出奖励模型(低方差高效但易 reward hacking)、GRM 生成式奖励模型(抗刷分但方差高),三者互补取长补短。<strong>人在环风格对齐:</strong> 显式引入<strong>高质量人写回复</strong>作为风格/质量锚点,纠正纯模型优化收敛到的"模型味"(啰嗦、公式化、缺人类文笔的细腻)。</p>
+<p><strong>On-Policy 跨阶段蒸馏(最后一步,防遗忘):</strong> 多阶段顺序 RL 会<strong>累积遗忘</strong>早先能力,故最终阶段做 on-policy 蒸馏,快速找回 SFT / Reasoning RL / General RL 阶段的技能。<strong>结构:</strong> 前面各阶段的<strong>最终 checkpoint 当 teacher</strong>,prompt 从对应 teacher 的 RL 训练集按比例混采;把 Eq.1 里的优势项<strong>替换</strong>为 teacher 与 student 的 log 概率比(sg = stop gradient / detach):</p>
+<p>$$\hat{A}_{i,t}=\operatorname{sg}\!\Big[\log\frac{\pi^{\text{infer}}_{\theta_{\text{teacher}}}(y_{i,t}\mid x,y_{i,\lt t})}{\pi^{\text{train}}_{\theta}(y_{i,t}\mid x,y_{i,\lt t})}\Big]$$</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># General RL: 三维目标</span>
+objectives = [
+  <span class="st">"foundational_correctness"</span>,  <span class="cm"># 压错误率 (前提)</span>
+  <span class="st">"emotional_intelligence"</span>,    <span class="cm"># 共情/自然</span>
+  <span class="st">"task_specific_quality"</span>,      <span class="cm"># 正确→高质</span>
+]
+
+<span class="cm"># 混合奖励系统 (取长补短)</span>
+reward = blend(
+  rule_based,   <span class="cm"># 精确/可解释, 覆盖窄</span>
+  ORM,          <span class="cm"># 低方差高效, 易被 hack</span>
+  GRM,          <span class="cm"># 抗刷分, 方差高</span>
+)
+<span class="cm"># 人在环: 注入专家人写回复当风格锚</span>
+data += expert_human_responses  <span class="cm"># 去 "模型味"</span>
+
+<span class="cm"># On-Policy 跨阶段蒸馏 (最后一步防遗忘)</span>
+teachers = [ckpt_sft, ckpt_reason_rl, ckpt_general_rl]
+prompts  = mix(t.rl_trainset <span class="kw">for</span> t <span class="kw">in</span> teachers)
+
+<span class="cm"># 用 log 概率比替换 Eq.1 的优势项</span>
+A = sg( log(pi_teacher_infer / pi_student_train) )
+<span class="cm"># 复用 Reasoning RL 的 loss 骨架, 换 Â</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 220 330">
+<text x="110" y="13" text-anchor="middle" fill="#7dd3fc" font-size="9">General RL 三维 + 混合奖励</text>
+<rect x="14" y="22" width="60" height="30" rx="4" fill="#16283e" stroke="#2563eb"/><text x="44" y="34" text-anchor="middle" fill="#9ecbff" font-size="6">基础正确性</text><text x="44" y="45" text-anchor="middle" fill="#6b6b80" font-size="5">压错误率</text>
+<rect x="80" y="22" width="60" height="30" rx="4" fill="#1e1838" stroke="#a78bfa"/><text x="110" y="34" text-anchor="middle" fill="#c4b5fd" font-size="6">情商</text><text x="110" y="45" text-anchor="middle" fill="#6b6b80" font-size="5">共情自然</text>
+<rect x="146" y="22" width="60" height="30" rx="4" fill="#1a2e1a" stroke="#98c379"/><text x="176" y="34" text-anchor="middle" fill="#b5e890" font-size="6">专项质量</text><text x="176" y="45" text-anchor="middle" fill="#6b6b80" font-size="5">正确→高质</text>
+<text x="110" y="68" text-anchor="middle" fill="#7dd3fc" font-size="8">混合奖励 (三合一)</text>
+<rect x="18" y="74" width="56" height="24" rx="3" fill="#11111a" stroke="#2a2a3a"/><text x="46" y="84" text-anchor="middle" fill="#9ecbff" font-size="5.5">rule-based</text><text x="46" y="93" text-anchor="middle" fill="#6b6b80" font-size="5">精确窄</text>
+<rect x="82" y="74" width="56" height="24" rx="3" fill="#11111a" stroke="#2a2a3a"/><text x="110" y="84" text-anchor="middle" fill="#9ecbff" font-size="5.5">ORM</text><text x="110" y="93" text-anchor="middle" fill="#6b6b80" font-size="5">低方差/易hack</text>
+<rect x="146" y="74" width="56" height="24" rx="3" fill="#11111a" stroke="#2a2a3a"/><text x="174" y="84" text-anchor="middle" fill="#9ecbff" font-size="5.5">GRM</text><text x="174" y="93" text-anchor="middle" fill="#6b6b80" font-size="5">抗hack/方差高</text>
+<text x="110" y="114" text-anchor="middle" fill="#6b6b80" font-size="6">+ 人写回复锚点 → 去 "模型味"</text>
+<line x1="110" y1="120" x2="110" y2="130" stroke="#38bdf8"/>
+<text x="110" y="142" text-anchor="middle" fill="#7dd3fc" font-size="8">On-Policy 跨阶段蒸馏</text>
+<rect x="14" y="150" width="56" height="26" rx="3" fill="#12283e" stroke="#38bdf8"/><text x="42" y="162" text-anchor="middle" fill="#7dd3fc" font-size="6">SFT ckpt</text><text x="42" y="171" text-anchor="middle" fill="#6b6b80" font-size="5">teacher</text>
+<rect x="82" y="150" width="56" height="26" rx="3" fill="#12283e" stroke="#38bdf8"/><text x="110" y="162" text-anchor="middle" fill="#7dd3fc" font-size="6">Reason RL</text><text x="110" y="171" text-anchor="middle" fill="#6b6b80" font-size="5">teacher</text>
+<rect x="150" y="150" width="56" height="26" rx="3" fill="#12283e" stroke="#38bdf8"/><text x="178" y="162" text-anchor="middle" fill="#7dd3fc" font-size="6">General RL</text><text x="178" y="171" text-anchor="middle" fill="#6b6b80" font-size="5">teacher</text>
+<line x1="42" y1="176" x2="110" y2="190" stroke="#a78bfa"/><line x1="110" y1="176" x2="110" y2="190" stroke="#a78bfa"/><line x1="178" y1="176" x2="110" y2="190" stroke="#a78bfa"/>
+<rect x="60" y="190" width="100" height="26" rx="4" fill="#1e1838" stroke="#a78bfa"/>
+<text x="110" y="202" text-anchor="middle" fill="#c4b5fd" font-size="6.5">student θ (on-policy)</text>
+<text x="110" y="211" text-anchor="middle" fill="#6b6b80" font-size="5.5">Â = sg[log πₜ/π_θ]</text>
+<text x="110" y="234" text-anchor="middle" fill="#7dd3fc" font-size="8">效果</text>
+<rect x="20" y="240" width="180" height="60" rx="4" fill="#11111a" stroke="#2a2a3a"/>
+<text x="110" y="253" text-anchor="middle" fill="#b5e890" font-size="6.5">找回顺序 RL 中被冲淡的能力</text>
+<text x="110" y="265" text-anchor="middle" fill="#6b6b80" font-size="6">推理锐度 + 通才能力兼得</text>
+<text x="110" y="277" text-anchor="middle" fill="#6b6b80" font-size="6">缓解多阶段累积遗忘 (catastrophic forgetting)</text>
+<text x="110" y="289" text-anchor="middle" fill="#6b6b80" font-size="6">回复更 "人味", 少模型腔</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么要这两步</h3>
+<div class="key-point"><strong>三维分层:</strong> 基础正确性是<strong>地基</strong>(错了再漂亮也误导),情商与专项质量是<strong>上层建筑</strong>。先保证可用,再谈好用——目标解耦让奖励设计各司其职。</div>
+<div class="key-point"><strong>三奖励互补:</strong> rule-based 精确但窄、ORM 高效但易被 hack、GRM 抗 hack 但方差大。单用任何一个都翻车,混合才能兼顾精度/效率/鲁棒。</div>
+<div class="key-point"><strong>人写回复当锚:</strong> 纯模型自优化会收敛到"模型腔"(啰嗦、模板化)。注入专家人类回复作风格锚点,把分布往"自然人类表达"拉。</div>
+<div class="key-point"><strong>跨阶段蒸馏防遗忘:</strong> 顺序做 Reasoning→Agentic→General RL 会冲淡早先能力。最后用各阶段 final ckpt 当 teacher 做 on-policy 蒸馏,用 log 概率比当优势,快速找回全部技能。</div>
+</div>
+</div>
+
+<h2>8. 环境规模化 + 效果 — 从真实 issue 到端到端 SWE SOTA</h2>
 <p>RL 要好,环境要多要真。<strong>SWE 环境:</strong> 采集真实 Issue–PR 对,规则+LLM 双重过滤,分类为 bug fix / feature / refactor;用 <strong>RepoLaunch</strong> 自动分析依赖、构建可执行环境、生成测试命令,LLM 生成日志解析函数抽取 <strong>Fail-to-Pass (F2P) / Pass-to-Pass (P2P)</strong> 用例 → 构建 <strong>>10k 可验证环境</strong>,覆盖 9 种语言(Python/Java/Go/C/C++/JS/TS/PHP/Ruby)。<strong>Terminal 环境:</strong> 三阶段合成(task draft 生成 → 构造 agent 实例化进 Harbor → 迭代优化)。此外还有 Search 任务(含长程 search agent 的上下文管理)和 Slide 生成(拒绝采样 + masking refinement)。mid-training 侧放宽 repo 过滤但强化单 issue 质量,得到 ~10M issue–PR 对、~160B unique tokens。</p>
 <p><strong>结果:</strong> GLM-5 在 8 个 agentic/reasoning/coding benchmark(HLE、SWE-bench Verified、SWE-bench Multilingual、Terminal-Bench 2.0、BrowseComp、MCP-Atlas、$\tau^2$-Bench、Vending Bench 2)上刷新开源 SOTA,并在真实端到端编码上逼近 Claude Opus 4.5。内部 <strong>CC-Bench-V2</strong> 显示,GLM-5 在前端/后端/长程任务上全面超越 GLM-4.7,Build 成功率多项达 100%,长程 Repo Exploration (65.6) 甚至反超 Opus 4.5 (64.5)。</p>
 
