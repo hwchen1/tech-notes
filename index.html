@@ -528,6 +528,11 @@ const DEFAULT_LAYOUT = [
                 "page": "vha.html",
                 "label": "VHA (Virtual Head Attention)",
                 "color": "#f59e0b"
+            },
+            {
+                "page": "kimi_k3.html",
+                "label": "Kimi K3 (2.8T · KDA · 1M)",
+                "color": "#a855f7"
             }
         ]
     },
@@ -1316,6 +1321,7 @@ function renderWelcomeCards(layout) {
         'nemotron3_ultra.html': 'NVIDIA 550B MoE (55B Active) — Hybrid Mamba-Transformer, LatentMoE, MOPD 多教师蒸馏, 1M Context, 5× 吞吐',
         'glm5_1.html': '744B/40B MoE — MLA-256 + Muon Split + DSA (Continued PT 20B tokens), 异步 Agent RL "Slime", SWE-Bench Pro #1',
         'glm5_2.html': '744B/40B MoE — 同架构 + 1M Context (5x) + RoPE θ 8M + DSA Indexer 共享优化, Agentic Coding 专用, MIT 开源',
+        'kimi_k3.html': 'Moonshot 2.8T/~32B MoE — 首个开放 3T 级 · KDA 混合线性注意力(3:1 Gated MLA) + Attention Residuals + Stable LatentMoE(16/896 Quantile Balancing) + SiTU + Per-Head Muon, 1M Context 原生视觉, MXFP4/8 QAT, Terminal-Bench/BrowseComp 领先',
         'ernie5_a3b.html': '百度 30B-A3B 细粒度 MoE — 门控 GQA(48Q/4KV)+QK-Norm+交错RoPE, 128专家top-8+1共享, sigmoid aux-free路由, MTP×1, FP8+DeepEP',
         'ernie5_a3b_infinite.html': 'A3B 叠加 Infinite Attention — SWA+压缩Memory双路online-softmax融合, yc压缩R=4+mem RoPE(R-1::R)+head-fold, seg0纯SWA, 连续切分CP借W个KV',
         'vha.html': '自研 Virtual Head Attention — KV头压到2+Share-KV极致省cache, Q-Premix造虚拟头+Linear-Postmix头间交互训练期增强, 推理"吸收"塌成纯GQA-Share-KV-2, 详解GQA优劣对比',
@@ -1366,6 +1372,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'kimi_k3.html',
         'glm5.html',
         'openresearcher.html',
         'mirothinker.html',
