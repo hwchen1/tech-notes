@@ -404,6 +404,11 @@ const DEFAULT_LAYOUT = [
                 "page": "openresearcher.html",
                 "label": "OpenResearcher (离线合成)",
                 "color": "#10b981"
+            },
+            {
+                "page": "davinci_env.html",
+                "label": "daVinci-Env / OpenSWE (环境合成)",
+                "color": "#34d399"
             }
         ]
     },
@@ -1328,6 +1333,7 @@ function renderWelcomeCards(layout) {
         'agentfounder.html': '阿里 Tongyi Lab AgentFounder — 首创 Agentic CPT 插在 pretrain/post-train 之间消解优化张力, FAS 零监督+HAS 决策空间两种全离线合成, BrowseComp/GAIA/HLE 刷新开源 deep research SOTA',
         'mirothinker.html': 'MiroMind MiroThinker-1.7 & H1 — "有效交互>交互长度" + 双循环 ReAct + Φ 上下文算子, 四阶段流水线(Mid-train/SFT/DPO/GRPO), Heavy-Duty 模式 Local+Global 双层验证刷新开源+商用 SOTA',
         'openresearcher.html': 'TIGER-AI-Lab OpenResearcher — 把昂贵的 search-browse 循环搬到离线(corpus 一次性 bootstrap + 全离线多轮合成), search/open/find 三浏览原语, 离线训练泛化到在线 web, 成本 \$0 vs Serper \$5760',
+        'davinci_env.html': 'GAIR daVinci-Env/OpenSWE — 迄今最大全透明 SWE 环境合成(45,320 Docker 环境/12.8k Python 仓库), 四智能体迭代流水线(探索+Dockerfile+评测脚本+测试分析)+双向验证, 64 节点集群/预建镜像+镜像复用5×, 通过率1~2/4难度筛选, ~\$1.47M, OpenSWE-32B/72B 达 62.4/66.0 SWE-Bench Verified(Qwen2.5 SOTA), log-linear 无饱和+跨域正迁移',
         'glm5.html': 'Z.ai GLM-5 (744B/40B MoE) — 从 vibe coding 到 agentic engineering, MLA+Muon Split + MTP参数共享 + DSA 稀疏注意力(20B tok continued pretrain), 全异步 Agentic RL (slime+TITO+双侧IS), SWE/Terminal-Bench 逼近 Claude Opus 4.5',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'lt_longtracerl.html': '证据散布三大Pipeline — LongTraceRL(分层干扰128K+GRPO) / ACC(Agent轨迹编译SFT) / LONGBLOCKS(三类任务统一框架)',
@@ -1372,6 +1378,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'davinci_env.html',
         'kimi_k3.html',
         'glm5.html',
         'openresearcher.html',
