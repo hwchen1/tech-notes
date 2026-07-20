@@ -419,6 +419,11 @@ const DEFAULT_LAYOUT = [
                 "page": "cwm.html",
                 "label": "CWM (代码世界模型)",
                 "color": "#06b6d4"
+            },
+            {
+                "page": "swe_evolution.html",
+                "label": "补丁→长程→自主构建 (演进)",
+                "color": "#f43f5e"
             }
         ]
     },
@@ -1346,6 +1351,7 @@ function renderWelcomeCards(layout) {
         'davinci_env.html': 'GAIR daVinci-Env/OpenSWE — 迄今最大全透明 SWE 环境合成(45,320 Docker 环境/12.8k Python 仓库), 四智能体迭代流水线(探索+Dockerfile+评测脚本+测试分析)+双向验证, 64 节点集群/预建镜像+镜像复用5×, 通过率1~2/4难度筛选, ~\$1.47M, OpenSWE-32B/72B 达 62.4/66.0 SWE-Bench Verified(Qwen2.5 SOTA), log-linear 无饱和+跨域正迁移',
         'ssr.html': 'Meta/CWM Self-play SWE-RL — 单一 LLM 策略靠 prompt 切换"造bug挑战者↔修bug求解者", 共享参数联合RL自进化; 极简数据(只需装好依赖的Docker仓库,无需人类issue/测试/框架先验); bug=五件套artifact(inject/weaken/script/parser/files), test_weaken反转=形式化规格; 高阶bug来自求解者失败尝试; 对抗奖励(挑战者要难s↓/求解者要易s↑, 最优p*≈0.2); 基座CWM-sft-32B, SWE-bench Verified +10.4/Pro +7.8, 全程超人类数据基线',
         'cwm.html': 'Meta FAIR CWM(代码世界模型) — 32B dense/局部全局注意力3:1(8k/131k)/单张80G H100; 核心让LLM学代码执行动态而非静态文本, mid-training灌入Python逐行执行轨迹(状态=局部变量/动作=代码行, 自定义token, 120M函数级+仓库级+自然语言75M)+ForagerAgent Docker智能体轨迹3M(mutate-fix/issue-fix, 不按成败过滤); RepoAgent+Activ造>35k可执行镜像; 三段训练8T+5T+SFT+联合GRPO变体RL(四类环境/自举30→43); SWE-bench Verified 65.8(tts)/53.9, CruxEval-O 94, 独有执行轨迹/终止(HaltEval 0.94)/复杂度预测(BigOBench)评测; neural debugger愿景, 开放权重供研究',
+        'swe_evolution.html': '补丁→长程→自主构建 · SWE 智能体任务 Horizon 演进综述 — 以"任务时间跨度"为主轴串三阶段: ①补丁生成(SWE-bench Verified, 条件采样 p(patch|issue,repo), 世界静态/oracle外包) ②长程工程(SWE-Bench Pro/DeepSWE/Terminal-Bench, 闭环控制 aₜ=π(sₜ)/sₜ₊₁=f, 状态维护+错误恢复, CWM 落差 65.8 vs 26.3) ③自主构建(SSR/Agent0 自博弈自出题自判分+CWM 世界模型脑内 rollout, 自定义 done); 四件套=长上下文+多轮工具+分层规划+自我验证, agentic 而非补丁, 佐 davinci 跨域外溢 +12.2/+8.9; 未来五线=多agent软件工厂/持续自演化/human-in-loop边界(money-movement guard)/可验证瓶颈/经济与对齐. 交叉链接 cwm+ssr+davinci_env',
         'glm5.html': 'Z.ai GLM-5 (744B/40B MoE) — 从 vibe coding 到 agentic engineering, MLA+Muon Split + MTP参数共享 + DSA 稀疏注意力(20B tok continued pretrain), 全异步 Agentic RL (slime+TITO+双侧IS), SWE/Terminal-Bench 逼近 Claude Opus 4.5',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'lt_longtracerl.html': '证据散布三大Pipeline — LongTraceRL(分层干扰128K+GRPO) / ACC(Agent轨迹编译SFT) / LONGBLOCKS(三类任务统一框架)',
@@ -1390,6 +1396,7 @@ function renderWelcomeCards(layout) {
     }
     collectItems(layout);
     const createdOrder = [
+        'swe_evolution.html',
         'cwm.html',
         'ssr.html',
         'davinci_env.html',

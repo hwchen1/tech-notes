@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>补丁 → 长程 → 自主构建 — SWE 智能体的任务 Horizon 演进与未来</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #f43f5e, #fb7185); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #f43f5e; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #f43f5e0a; border: 1px solid #f43f5e22; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #fda4af; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #3f1220; color: #fda4af; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #1f1216; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+.nov { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 20px; margin-right: 6px; vertical-align: middle; letter-spacing: 0.3px; }
+.nov-new { background: #f43f5e22; color: #fda4af; border: 1px solid #f43f5e55; }
+.nov-scale { background: #61afef22; color: #93c5fd; border: 1px solid #61afef55; }
+.nov-combo { background: #5c637022; color: #9ca3af; border: 1px solid #5c637055; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>补丁 → 长程 → 自主构建</h1>
+<p class="subtitle">SWE 智能体的任务 Horizon 演进与未来 · 综述笔记 (2026-07) | 以"任务时间跨度"为主轴, 串起三个阶段: ① 补丁生成(SWE-bench Verified, 单文件条件采样) → ② 长程工程(SWE-Bench Pro / DeepSWE / Terminal-Bench, 企业级闭环) → ③ 自主构建(SSR / Agent0 自博弈, 从零造软件). 核心论点: 从补丁到构建不是"更大的补丁", 而是 conditional generation → closed-loop control 的范式切换, 需要 长上下文 + 多轮工具 + 分层规划 + 自我验证 四件套, 并以"代码世界模型"为底座. 末章展望自主构建之后: 软件工厂 / 持续自演化 / human-in-the-loop 边界 / 经济与对齐. 交叉链接 cwm.html · ssr.html · davinci_env.html</p>
+
+<h2>1. 主轴:任务 Horizon 决定一切</h2>
+<p>看 SWE 智能体的演进,最有解释力的不是"模型多大"或"分数多高",而是<strong>任务的时间跨度 (task horizon)</strong>——完成一个任务需要多少步自主决策、维持多久的状态一致性。Horizon 一拉长,能力要求就发生质变。整条演进线可以压缩成一根轴:补丁 → 长程 → 自主构建。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 用 horizon 定义三个阶段</span>
+<span class="kw">def</span> <span class="fn">stage</span>(H):            <span class="cm"># H = 期望自主决策步数</span>
+    <span class="kw">if</span> H &lt; <span class="num">1e2</span>:   <span class="kw">return</span> <span class="st">"补丁生成"</span>    <span class="cm"># 定位+局部手术</span>
+    <span class="kw">if</span> H &lt; <span class="num">1e3</span>:   <span class="kw">return</span> <span class="st">"长程工程"</span>    <span class="cm"># 跨模块+环境闭环</span>
+    <span class="kw">return</span> <span class="st">"自主构建"</span>                <span class="cm"># 需求→架构→交付</span>
+
+<span class="cm"># 每阶段的代表评测 &amp; 任务形态</span>
+stages = {
+  <span class="st">"补丁"</span>: (<span class="st">"SWE-bench Verified"</span>, <span class="st">"给 issue 改几个文件"</span>),
+  <span class="st">"长程"</span>: (<span class="st">"SWE-Bench Pro / DeepSWE"</span>, <span class="st">"企业级/数天量级"</span>),
+  <span class="st">"构建"</span>: (<span class="st">"SSR / Agent0 自博弈"</span>,   <span class="st">"从零造软件"</span>),
+}
+
+<span class="cm"># 判据: 谁来决定"下一步做什么 / 做完没"</span>
+who_decides_next_step = <span class="st">"外部 oracle"</span>   <span class="cm"># 补丁</span>
+who_decides_done      = <span class="st">"agent 自己"</span>    <span class="cm"># 构建 ← 分水岭</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 340 210" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#fb7185"/></marker></defs>
+<line x1="24" y1="150" x2="316" y2="150" stroke="#fb7185" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="316" y="170" fill="#fb7185" font-size="9" text-anchor="end">task horizon →</text>
+<rect x="24" y="112" width="86" height="30" rx="6" fill="#17131f" stroke="#61afef"/>
+<text x="67" y="127" fill="#61afef" font-size="9" text-anchor="middle">补丁生成</text>
+<text x="67" y="138" fill="#6b6b80" font-size="7" text-anchor="middle">10~100 turn</text>
+<rect x="128" y="90" width="94" height="52" rx="6" fill="#17131f" stroke="#c678dd"/>
+<text x="175" y="106" fill="#c678dd" font-size="9" text-anchor="middle">长程工程</text>
+<text x="175" y="118" fill="#6b6b80" font-size="7" text-anchor="middle">数百~上千 turn</text>
+<text x="175" y="132" fill="#6b6b80" font-size="7" text-anchor="middle">状态维护</text>
+<rect x="240" y="62" width="94" height="80" rx="6" fill="#3f1220" stroke="#f43f5e"/>
+<text x="287" y="80" fill="#fda4af" font-size="9" text-anchor="middle">自主构建</text>
+<text x="287" y="94" fill="#6b6b80" font-size="7" text-anchor="middle">无明确终点</text>
+<text x="287" y="106" fill="#6b6b80" font-size="7" text-anchor="middle">自定目标</text>
+<text x="287" y="118" fill="#6b6b80" font-size="7" text-anchor="middle">自我验证</text>
+<text x="287" y="130" fill="#6b6b80" font-size="7" text-anchor="middle">规划记忆</text>
+<text x="170" y="28" fill="#e0e0ea" font-size="10" text-anchor="middle">能力要求随 horizon 阶梯式跃升</text>
+<line x1="67" y1="150" x2="67" y2="45" stroke="#2a2a3a" stroke-dasharray="2 3"/>
+<line x1="287" y1="150" x2="287" y2="45" stroke="#2a2a3a" stroke-dasharray="2 3"/>
+<text x="180" y="196" fill="#f43f5e" font-size="8" text-anchor="middle">分水岭: "做完没" 由谁判定</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么用 horizon 当轴</h3>
+<p><strong>Horizon 是压力测试的真正变量</strong>:同一个模型,horizon 越长,越暴露"状态漂移、目标遗忘、错误累积"这些补丁任务里根本不出现的问题。分数只是果,horizon 才是因。</p>
+<p><strong>阶梯而非连续</strong>:每跨一档,主要瓶颈整体换一次——从"会不会改"到"撑不撑得住"再到"知不知道要做什么"。</p>
+<div class="key-point"><span class="nov nov-new">核心判据</span>一个任务能被"生成→提交→外部 oracle 判分"一次闭合,就还是<strong>补丁范式</strong>;一旦需要 agent 自己决定下一步、自己判断是否做完,就跨进了 <strong>agentic 自主构建</strong>。本笔记后续都围绕这条判据展开。</div>
+</div>
+</div>
+
+<h2>2. 阶段一 · 补丁生成:条件采样</h2>
+<p>最早的 SWE 能力本质是<strong>条件生成</strong>:给定 issue 和一份静态仓库快照,生成一段 patch 使隐藏测试通过。代表评测是 <strong>SWE-bench Verified</strong>(500 条人工核验、可解的单/少文件任务)。这里 repo 是只读输入,agent 不改变世界、只产出一次答案,判分完全外包给 fail-to-pass 测试。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 补丁 = 一次条件采样 (世界是静态的)</span>
+patch ~ p(patch | issue, repo_snapshot)
+
+<span class="cm"># 典型 Agentless / 定点手术流程</span>
+files  = <span class="fn">localize</span>(issue, repo)      <span class="cm"># ① 定位</span>
+edit   = <span class="fn">generate_edit</span>(files, issue)  <span class="cm"># ② 局部修改</span>
+result = <span class="fn">run_hidden_tests</span>(edit)     <span class="cm"># ③ 外部 oracle</span>
+<span class="cm"># 无第 ④ 步: agent 不判断"做完没"</span>
+
+<span class="cm"># 评分 (外部给定, 无需自我验证)</span>
+resolved = fail2pass <span class="kw">and</span> <span class="kw">not</span> pass2fail
+
+<span class="cm"># 能力上限: "看懂已有代码库并精确改一处"</span>
+bottleneck = [<span class="st">"定位精度"</span>, <span class="st">"局部编辑正确性"</span>]</pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+<rect x="20" y="20" width="90" height="40" rx="7" fill="#17131f" stroke="#61afef"/>
+<text x="65" y="38" fill="#61afef" font-size="9" text-anchor="middle">issue</text>
+<text x="65" y="52" fill="#6b6b80" font-size="7" text-anchor="middle">+ repo (只读)</text>
+<path d="M110 40 l30 0" stroke="#5c6370" stroke-width="1.3" marker-end=""/>
+<path d="M112 40 l24 0 M132 36 l6 4 l-6 4" stroke="#5c6370" fill="none" stroke-width="1.2"/>
+<rect x="142" y="20" width="90" height="40" rx="7" fill="#17131f" stroke="#c678dd"/>
+<text x="187" y="44" fill="#c678dd" font-size="9" text-anchor="middle">生成 patch</text>
+<path d="M234 40 l24 0 M254 36 l6 4 l-6 4" stroke="#5c6370" fill="none" stroke-width="1.2"/>
+<rect x="262" y="20" width="46" height="40" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="285" y="38" fill="#fda4af" font-size="8" text-anchor="middle">测试</text>
+<text x="285" y="50" fill="#fda4af" font-size="8" text-anchor="middle">判分</text>
+<text x="160" y="100" fill="#e0e0ea" font-size="10" text-anchor="middle">单向流水线 · 无反馈回路</text>
+<rect x="60" y="120" width="200" height="30" rx="6" fill="#11111a" stroke="#1e1e30"/>
+<text x="160" y="139" fill="#c4c4d8" font-size="9" text-anchor="middle">SWE-bench Verified: 500 可解任务</text>
+<text x="160" y="176" fill="#6b6b80" font-size="8" text-anchor="middle">CWM 65.8 (tts) · OpenSWE-72B 66.0</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>补丁范式的特征</h3>
+<p><strong>世界静态</strong>:repo 快照不因 agent 动作改变,不需要预测"我这么改会发生什么"。</p>
+<p><strong>oracle 外包</strong>:done 的定义由隐藏测试给,agent 无需自己判断完成度。</p>
+<p><strong>分数已高但天花板明确</strong>:<code>davinci_env.html</code> 的 OpenSWE-72B 达 66.0、<code>cwm.html</code> 的 CWM 达 65.8——但这些数字衡量的都是"定点手术"能力。</p>
+<div class="key-point"><strong>为什么它不够</strong>:补丁范式假设"任务已被拆成一个可测的小改动"。真实工程里,"拆解"本身才是难的部分——而这正是下一阶段要处理的。</div>
+</div>
+</div>
+
+<h2>3. 阶段二 · 长程工程:闭环控制</h2>
+<p>当任务变成"跨模块、跨服务、需要真实环境交互、专业工程师要数小时到数天完成",条件生成就失效了。此时是<strong>闭环控制</strong>:每一步动作 $a_t=\pi(s_t)$ 都改变世界状态,而下一步基于被自己改过的状态 $s_{t+1}=f(s_t,a_t)$。代表评测:<strong>SWE-Bench Pro</strong>(长程 + 抗污染)、<strong>DeepSWE</strong>(113 个原创长程任务)、<strong>Terminal-Bench</strong>(完整终端环境)。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 长程 = 闭环控制 (状态被自己改变)</span>
+s = env.<span class="fn">reset</span>(task)
+<span class="kw">for</span> t <span class="kw">in</span> <span class="fn">range</span>(<span class="num">300</span>):        <span class="cm"># 数百步量级</span>
+    a = policy(s, memory)        <span class="cm"># bash/edit/create/test</span>
+    s = env.<span class="fn">step</span>(a)           <span class="cm"># 世界状态更新</span>
+    memory.<span class="fn">append</span>(a, s.obs)   <span class="cm"># 必须记住 200 步前的决策</span>
+    <span class="kw">if</span> policy.<span class="fn">thinks_done</span>(s): <span class="kw">break</span>
+
+<span class="cm"># 致命点: 第 50 步工具调用失败没 recover</span>
+<span class="cm"># → 后续 250 步全建立在错误状态上</span>
+robustness = P(tool_ok) ** horizon   <span class="cm"># 指数衰减</span>
+
+<span class="cm"># 落差量化 (CWM): 补丁强 ≠ 长程强</span>
+swebench_verified = <span class="num">65.8</span>
+terminal_bench    = <span class="num">26.3</span>   <span class="cm"># 撑不住长状态</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 220" xmlns="http://www.w3.org/2000/svg">
+<circle cx="90" cy="70" r="30" fill="#17131f" stroke="#c678dd"/>
+<text x="90" y="68" fill="#c678dd" font-size="9" text-anchor="middle">policy</text>
+<text x="90" y="80" fill="#6b6b80" font-size="7" text-anchor="middle">π(sₜ)</text>
+<circle cx="230" cy="70" r="30" fill="#17131f" stroke="#98c379"/>
+<text x="230" y="68" fill="#98c379" font-size="9" text-anchor="middle">env</text>
+<text x="230" y="80" fill="#6b6b80" font-size="7" text-anchor="middle">f(sₜ,aₜ)</text>
+<path d="M118 58 Q160 34 202 58" stroke="#fb7185" fill="none" stroke-width="1.4" marker-end=""/>
+<path d="M200 58 l4 -1 M203 62 l1 -4" stroke="#fb7185" stroke-width="1.4"/>
+<text x="160" y="34" fill="#fb7185" font-size="8" text-anchor="middle">action aₜ</text>
+<path d="M202 84 Q160 108 118 84" stroke="#61afef" fill="none" stroke-width="1.4"/>
+<path d="M120 84 l-4 1 M117 80 l-1 4" stroke="#61afef" stroke-width="1.4"/>
+<text x="160" y="112" fill="#61afef" font-size="8" text-anchor="middle">state sₜ₊₁ + obs</text>
+<rect x="55" y="130" width="210" height="24" rx="6" fill="#11111a" stroke="#1e1e30"/>
+<text x="160" y="146" fill="#c4c4d8" font-size="8.5" text-anchor="middle">memory: 跨百步维持目标栈</text>
+<rect x="30" y="164" width="120" height="42" rx="6" fill="#17131f" stroke="#61afef"/>
+<text x="90" y="181" fill="#61afef" font-size="8" text-anchor="middle">SWE-Bench Pro</text>
+<text x="90" y="195" fill="#6b6b80" font-size="7" text-anchor="middle">企业级/抗污染</text>
+<rect x="170" y="164" width="120" height="42" rx="6" fill="#17131f" stroke="#d19a66"/>
+<text x="230" y="181" fill="#d19a66" font-size="8" text-anchor="middle">DeepSWE / Terminal</text>
+<text x="230" y="195" fill="#6b6b80" font-size="7" text-anchor="middle">原创长程/终端</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>范式已经切换</h3>
+<p><strong>补丁 → 长程 不是量变</strong>:$p(\text{patch}\mid\text{issue})$ 的一次采样,变成 $\prod_t \pi(a_t\mid s_t)$ 的长序列决策。前者像"阅读理解",后者像"项目管理"。</p>
+<p><strong>鲁棒性指数级要求</strong>:补丁里工具错了大不了废掉这条;长程里第 50 步没 recover,后面全崩。所以长程 agent 对<em>错误恢复</em>的要求指数于补丁。</p>
+<div class="key-point"><span class="nov nov-scale">证据</span><code>cwm.html</code> 的 CWM 在 SWE-bench Verified 有 65.8、Terminal-Bench 却只有 26.3。这个落差<strong>量化了"补丁强 ≠ 长程强"</strong>——不是不会改代码,是撑不住那么长的状态一致性。SWE-Bench Pro / DeepSWE 用抗污染的原创长任务,正是为了逼出这道鸿沟。</div>
+</div>
+</div>
+
+<h2>4. 阶段三 · 自主构建:自定目标 + 世界模型</h2>
+<p>终点是"从零自主构建软件":没有现成 issue、没有现成测试当 oracle。agent 必须<strong>自己生成验收标准</strong>(写测试、定义 done 的条件),再自己去满足。两个关键技术底座:① <strong>自博弈</strong>(SSR / Agent0)——自己出题自己判分,把训练从人工标注 issue 解放出来;② <strong>代码世界模型</strong>(CWM)——能在脑内 rollout "这么改、测试会不会挂",把补丁生成升级成可规划的闭环。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 自博弈: 自己定义任务与 oracle (SSR / Agent0)</span>
+<span class="kw">while</span> training:
+    task  = <span class="fn">proposer</span>(base)      <span class="cm"># 出越来越难的题</span>
+    spec  = <span class="fn">write_tests</span>(task)    <span class="cm"># 自己造验收标准 ← 关键</span>
+    traj  = <span class="fn">solver</span>(task, env)
+    R     = <span class="fn">verify</span>(traj, spec)   <span class="cm"># 自己判分, 无人工</span>
+    base  = <span class="fn">RL_update</span>(base, R)
+<span class="cm"># 自举: 30% → 37% → 43% (SSR 观测)</span>
+
+<span class="cm"># 世界模型: 规划前先预测环境反馈 (CWM)</span>
+<span class="kw">def</span> <span class="fn">plan</span>(goal, s):
+    <span class="kw">for</span> a <span class="kw">in</span> candidate_actions(s):
+        s_hat = world_model(s, a)   <span class="cm"># s' = f(s,a), 想象</span>
+        <span class="kw">if</span> <span class="fn">reaches</span>(s_hat, goal): <span class="kw">return</span> a
+    <span class="cm"># 无需真跑就能剪枝 → 长程规划可行</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 220" xmlns="http://www.w3.org/2000/svg">
+<text x="160" y="18" fill="#fda4af" font-size="11" text-anchor="middle">自博弈闭环 (自主度引擎)</text>
+<rect x="30" y="34" width="110" height="34" rx="7" fill="#17131f" stroke="#c678dd"/>
+<text x="85" y="52" fill="#c678dd" font-size="9" text-anchor="middle">proposer</text>
+<text x="85" y="63" fill="#6b6b80" font-size="7" text-anchor="middle">出题+造测试</text>
+<path d="M140 51 l40 0 M172 47 l8 4 l-8 4" stroke="#5c6370" fill="none" stroke-width="1.2"/>
+<rect x="182" y="34" width="108" height="34" rx="7" fill="#17131f" stroke="#61afef"/>
+<text x="236" y="52" fill="#61afef" font-size="9" text-anchor="middle">solver</text>
+<text x="236" y="63" fill="#6b6b80" font-size="7" text-anchor="middle">解 + 自验证</text>
+<path d="M236 68 l0 24 M232 84 l4 8 l4 -8" stroke="#5c6370" fill="none" stroke-width="1.2"/>
+<rect x="182" y="92" width="108" height="30" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="236" y="111" fill="#fda4af" font-size="9" text-anchor="middle">verify → R</text>
+<path d="M182 107 Q90 107 85 72" stroke="#f43f5e" fill="none" stroke-width="1.3" stroke-dasharray="3 2"/>
+<text x="120" y="122" fill="#f43f5e" font-size="7">RL 更新 base</text>
+<rect x="40" y="140" width="240" height="24" rx="6" fill="#11111a" stroke="#1e1e30"/>
+<text x="160" y="156" fill="#c4c4d8" font-size="8.5" text-anchor="middle">世界模型: sₜ₊₁=f(sₜ,aₜ) 在脑内 rollout</text>
+<rect x="55" y="172" width="210" height="34" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="160" y="189" fill="#fda4af" font-size="9" text-anchor="middle">从零构建: 需求→架构→实现→交付</text>
+<text x="160" y="201" fill="#6b6b80" font-size="7" text-anchor="middle">done 由 agent 自己定义</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>两个底座缺一不可</h3>
+<p><span class="nov nov-new">自主度</span><strong>自博弈解放数据</strong>:<code>ssr.html</code> 的 30%→37%→43% 自举曲线,本质是"自主度"被 RL 一点点抬高;<code>agent0</code>(arXiv 2511.16043)用 curriculum/executor 双 agent 从零数据共演化,同一思路。</p>
+<p><span class="nov nov-combo">规划</span><strong>世界模型使规划可行</strong>:<code>cwm.html</code> 押注 $s_{t+1}=f(s_t,a_t)$,让 agent 不真跑就能预测反馈、剪枝搜索——这是长程规划的前提。</p>
+<div class="key-point"><strong>分水岭</strong>:greenfield 没有外部 oracle,"写测试定义 done" 从工具变成核心能力。谁能自己出题、自己判分、自己收敛,谁才真正跨过"自主构建"这道线。</div>
+</div>
+</div>
+
+<h2>5. 拉长 Horizon 硬性要求的四件套</h2>
+<p>从补丁走到自主构建,不是把模型放大,而是要同时补齐四项能力。任何一项跟不上,horizon 就在那里断掉。</p>
+
+<table>
+<tr><th>能力</th><th>补丁生成</th><th>长程工程</th><th>自主构建</th></tr>
+<tr><td><strong>长上下文</strong></td><td>相关文件即可 (~8k)</td><td>跨模块 + 历史决策 (128k)</td><td>128k+ 外加外部记忆/工作区</td></tr>
+<tr><td><strong>多轮工具</strong></td><td>可选, 错了废掉重来</td><td>必须, 错误恢复关键</td><td>必须, 长链路零崩 + 环境自建</td></tr>
+<tr><td><strong>分层规划</strong></td><td>几乎不需要</td><td>子任务分解</td><td>需求→架构→模块的多层规划</td></tr>
+<tr><td><strong>自我验证</strong></td><td>外部 oracle 代劳</td><td>部分自查 + 外部测试</td><td>自己写测试定义 done ← 核心</td></tr>
+</table>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># ① 长上下文 ≠ 塞更多代码, 而是不失忆</span>
+<span class="cm">#   补丁: ctx ≈ 相关文件</span>
+<span class="cm">#   长程: ctx ≈ "我 200 步前为什么选这架构"</span>
+external_memory = TODO_md + README + scratchpad
+<span class="cm"># 突破单次上下文天花板的关键</span>
+
+<span class="cm"># ② 多轮工具: 鲁棒性是长程地基</span>
+success = P(tool_ok) ** H     <span class="cm"># H 越大越脆</span>
+<span class="kw">need</span>: retry / rollback / 环境自建 (RepoAgent)
+
+<span class="cm"># ③ 分层规划: 目标栈</span>
+plan = decompose(goal) -&gt; [sub1, sub2, ...]
+<span class="kw">while</span> stack: execute(stack.pop()); replan_if_drift()
+
+<span class="cm"># ④ 自我验证: greenfield 无 oracle</span>
+spec = write_acceptance_tests(goal)   <span class="cm"># 自造标尺</span>
+done = all(run(spec))                 <span class="cm"># 自己判完成</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 220" xmlns="http://www.w3.org/2000/svg">
+<text x="160" y="16" fill="#e0e0ea" font-size="10" text-anchor="middle">四件套 → 支撑 horizon</text>
+<g font-size="8" text-anchor="middle">
+<rect x="24" y="30" width="130" height="40" rx="7" fill="#17131f" stroke="#61afef"/><text x="89" y="47" fill="#61afef">长上下文</text><text x="89" y="60" fill="#6b6b80" font-size="7">131k + 外部记忆</text>
+<rect x="166" y="30" width="130" height="40" rx="7" fill="#17131f" stroke="#c678dd"/><text x="231" y="47" fill="#c678dd">多轮工具</text><text x="231" y="60" fill="#6b6b80" font-size="7">鲁棒+错误恢复</text>
+<rect x="24" y="78" width="130" height="40" rx="7" fill="#17131f" stroke="#98c379"/><text x="89" y="95" fill="#98c379">分层规划</text><text x="89" y="108" fill="#6b6b80" font-size="7">目标栈+replan</text>
+<rect x="166" y="78" width="130" height="40" rx="7" fill="#17131f" stroke="#d19a66"/><text x="231" y="95" fill="#d19a66">自我验证</text><text x="231" y="108" fill="#6b6b80" font-size="7">自写测试定义 done</text>
+</g>
+<path d="M89 118 L160 150 M231 118 L160 150 M89 70 L160 150 M231 70 L160 150" stroke="#2a2a3a" stroke-width="1"/>
+<rect x="95" y="150" width="130" height="28" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="160" y="169" fill="#fda4af" font-size="9" text-anchor="middle">agentic 而非补丁</text>
+<text x="160" y="200" fill="#6b6b80" font-size="8" text-anchor="middle">缺一项 → horizon 在该处断裂</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>关键澄清</h3>
+<p><strong>长上下文不是终点</strong>:纯靠 context window 撑长程有天花板,真正的长程 agent 靠<em>外部记忆</em>(把决策写进文件/TODO)突破单次上下文。</p>
+<p><strong>为什么是 agentic 而非补丁生成</strong>:补丁只需一次条件采样;这四件套合起来描述的是一个"感知-规划-行动-自查"的持续控制回路——本质是 agent,不是 generator。</p>
+<div class="key-point"><span class="nov nov-combo">外溢证据</span><code>davinci_env.html</code>:纯 SWE 训练带来 MATH-500 <strong>+12.2</strong> / MMLU-Pro <strong>+8.9</strong> 跨域正迁移,而事实召回(MMLU/TriviaQA)几乎不动。说明这四件套训练的是<strong>通用的多步问题求解回路</strong>,不是窄代码技能——这也是"code agent 外溢成 general agent"的根据。</div>
+</div>
+</div>
+
+<h2>6. 自主构建之后:未来发展</h2>
+<p>当"从零造一个软件"成为常规能力,竞争焦点会再次上移。下面五条是我认为的下一段主线——从单 agent 造软件,到<strong>组织级、自演化、有边界、可对齐</strong>的软件生产系统。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># ① 单 agent → 多 agent 软件工厂</span>
+factory = <span class="fn">Org</span>(
+    pm=planner, archs=[architect],
+    devs=[coder]*N, qa=[tester], sre=[ops])
+<span class="cm"># 关注: 角色分工 / 通信协议 / 冲突消解 / 成本</span>
+
+<span class="cm"># ② 持续自演化 (不再一次性交付)</span>
+<span class="kw">while</span> product.alive:               <span class="cm"># 长期运维</span>
+    telemetry = monitor(prod)
+    task = self_propose(telemetry) <span class="cm"># 自己发现要做什么</span>
+    ship(solve(task)); learn(outcome)  <span class="cm"># 在线学习</span>
+
+<span class="cm"># ③ human-in-the-loop 边界 (越强越要停)</span>
+<span class="kw">if</span> action <span class="kw">in</span> {pay, deploy_prod, delete_data,
+              sign, change_auth}:
+    stage_for_human_approval()     <span class="cm"># money-movement guard</span>
+
+<span class="cm"># ④ 可验证性 = 增长瓶颈</span>
+throughput ∝ 1 / cost(verify)      <span class="cm"># 判分比生成更贵</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+<text x="160" y="16" fill="#fda4af" font-size="10" text-anchor="middle">构建之后的五条主线</text>
+<rect x="20" y="28" width="135" height="34" rx="7" fill="#17131f" stroke="#c678dd"/>
+<text x="87" y="45" fill="#c678dd" font-size="8.5" text-anchor="middle">① 多 agent 工厂</text>
+<text x="87" y="57" fill="#6b6b80" font-size="7" text-anchor="middle">角色分工/协议</text>
+<rect x="165" y="28" width="135" height="34" rx="7" fill="#17131f" stroke="#61afef"/>
+<text x="232" y="45" fill="#61afef" font-size="8.5" text-anchor="middle">② 持续自演化</text>
+<text x="232" y="57" fill="#6b6b80" font-size="7" text-anchor="middle">在线学习/运维</text>
+<rect x="20" y="70" width="135" height="34" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="87" y="87" fill="#fda4af" font-size="8.5" text-anchor="middle">③ 人机边界</text>
+<text x="87" y="99" fill="#6b6b80" font-size="7" text-anchor="middle">高危动作须批准</text>
+<rect x="165" y="70" width="135" height="34" rx="7" fill="#17131f" stroke="#98c379"/>
+<text x="232" y="87" fill="#98c379" font-size="8.5" text-anchor="middle">④ 可验证瓶颈</text>
+<text x="232" y="99" fill="#6b6b80" font-size="7" text-anchor="middle">判分>生成</text>
+<rect x="92" y="112" width="135" height="34" rx="7" fill="#17131f" stroke="#d19a66"/>
+<text x="159" y="129" fill="#d19a66" font-size="8.5" text-anchor="middle">⑤ 经济与对齐</text>
+<text x="159" y="141" fill="#6b6b80" font-size="7" text-anchor="middle">责任/安全/组织</text>
+<line x1="160" y1="150" x2="160" y2="168" stroke="#2a2a3a"/>
+<rect x="55" y="168" width="210" height="30" rx="7" fill="#3f1220" stroke="#f43f5e"/>
+<text x="160" y="187" fill="#fda4af" font-size="9" text-anchor="middle">自主软件生产系统</text>
+<text x="160" y="220" fill="#6b6b80" font-size="8" text-anchor="middle">horizon → ∞: 从"造一次" 到 "持续运营一个产品"</text>
+<text x="160" y="238" fill="#6b6b80" font-size="7.5" text-anchor="middle">瓶颈从"能不能造" 移到 "能不能信/能不能验/谁负责"</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>五条主线</h3>
+<p><span class="nov nov-new">1</span><strong>多 agent 软件工厂</strong>:单体造软件 → 拟组织的角色分工(PM/架构/开发/QA/SRE),难点从"会不会写"变成"通信协议、冲突消解、成本/延迟均衡"。</p>
+<p><span class="nov nov-new">2</span><strong>持续自演化</strong>:交付不再是终点。agent 长期盯着线上遥测,自己发现该做什么、在线学习——horizon 从"造一次"趋于无穷("运营一个产品")。</p>
+<p><span class="nov nov-new">3</span><strong>人机边界</strong>:能力越强,"何时停手交人"越是核心。<code>Construction-Finance</code>(arXiv 2606.22000)的 <em>money-movement guard</em> 就是范例:付款/部署/删数据/改权限等不可逆动作必须暂停待批。</p>
+<div class="key-point"><span class="nov nov-scale">4·5</span><strong>可验证性成为增长瓶颈</strong>:当生成几乎免费,吞吐由"判分成本"决定——自动化验证/形式化规约会成为新战场。<strong>经济与对齐</strong>:代码责任归属、供应链安全、对"自造软件"的审计与红队,将和能力本身一样重要。</div>
+</div>
+</div>
+
+<footer>Generated 2026.07.20 · 补丁→长程→自主构建:SWE 智能体 Horizon 演进综述 · 交叉参考 cwm.html / ssr.html / davinci_env.html · SWE-Bench Pro (2509.16941) · DeepSWE (2607.07946) · Agent0 (2511.16043)</footer>
+</div>
+</body>
+</html>
