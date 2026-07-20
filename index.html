@@ -437,6 +437,11 @@ const DEFAULT_LAYOUT = [
                 "page": "deepswe.html",
                 "label": "DeepSWE-Preview (纯 RL)",
                 "color": "#6366f1"
+            },
+            {
+                "page": "swe_presentation.html",
+                "label": "SWE Presentation (一轴三瓶颈)",
+                "color": "#ec4899"
             }
         ]
     },
@@ -1366,6 +1371,7 @@ function renderWelcomeCards(layout) {
         'cwm.html': 'Meta FAIR CWM(代码世界模型) — 32B dense/局部全局注意力3:1(8k/131k)/单张80G H100; 核心让LLM学代码执行动态而非静态文本, mid-training灌入Python逐行执行轨迹(状态=局部变量/动作=代码行, 自定义token, 120M函数级+仓库级+自然语言75M)+ForagerAgent Docker智能体轨迹3M(mutate-fix/issue-fix, 不按成败过滤); RepoAgent+Activ造>35k可执行镜像; 三段训练8T+5T+SFT+联合GRPO变体RL(四类环境/自举30→43); SWE-bench Verified 65.8(tts)/53.9, CruxEval-O 94, 独有执行轨迹/终止(HaltEval 0.94)/复杂度预测(BigOBench)评测; neural debugger愿景, 开放权重供研究',
         'swe_evolution.html': '补丁→长程→自主构建 · SWE 智能体任务 Horizon 演进综述 — 以"任务时间跨度"为主轴串三阶段: ①补丁生成(SWE-bench Verified, 条件采样 p(patch|issue,repo), 世界静态/oracle外包) ②长程工程(SWE-Bench Pro/DeepSWE/Terminal-Bench, 闭环控制 aₜ=π(sₜ)/sₜ₊₁=f, 状态维护+错误恢复, CWM 落差 65.8 vs 26.3) ③自主构建(SSR/Agent0 自博弈自出题自判分+CWM 世界模型脑内 rollout, 自定义 done); 四件套=长上下文+多轮工具+分层规划+自我验证, agentic 而非补丁, 佐 davinci 跨域外溢 +12.2/+8.9; 未来五线=多agent软件工厂/持续自演化/human-in-loop边界(money-movement guard)/可验证瓶颈/经济与对齐. 交叉链接 cwm+ssr+davinci_env',
         'deepswe.html': 'DeepSWE-Preview (Agentica+Together AI) — 纯 RL(无SFT/无蒸馏, R1-Zero式)从 Qwen/Qwen3-32B 训编码智能体; 4.5k R2E-Gym 真实SWE任务(剔除与SWE-Bench-Verified同源仓库如sympy)/64×H100/6天/框架rLLM; 环境=R2E-Gym四工具(bash/search/file_editor/finish)+稀疏ORM奖励(Pass2Pass+Fail2Pass全过且≤5min→1); K8s扩rollout(单迭代512容器=BS64×8pass, dockerd崩→K8s自动伸缩, 节点200核/6TB NVMe); GRPO++七改(ClipHigh/NoKL/NoRewardStd/LengthNorm/RLOO/CompactFiltering/NoEntropy)+Compact Filtering(mask超长/超步/超时20min→防reward collapse+思考跨步摊薄); TTS扩token无效(>32K≤2%)/扩rollout有效, 混合验证器(执行无关DeepSWE-Verifier+执行相关)K=16→59.0%; 结果 SWE-Bench-Verified 42.2 Pass@1 / 71.0 Pass@16 / 59.0 TTS(开源SOTA); 涌现自补边界+回归测试/自适应思考; 失败=SFT冷启动/non-thinking; DeepScaleR→DeepCoder→DeepSWE 系列, 全开源. 交叉链接 davinci_env+swe_evolution',
+        'swe_presentation.html': 'SWE 智能体 Presentation 逻辑设计稿 — 串联 deepswe/ssr/cwm/swe_evolution 四篇的组织框架; 主轴=任务 horizon(补丁→长程→自主), 判据两问(谁判定done+世界模型在哪); 分析负载=horizon 每拉长一量级撞一堵墙, 三篇各答一堵: 墙①长程信用分配/训练不稳→DeepSWE(GRPO++/Compact Filtering, 42.2/59.0), 墙②环境数据枯竭→SSR(自博弈自出题自判), 墙③执行昂贵/静态≠动态→CWM(世界模型脑内rollout, 65.8/HaltEval0.94); 三者非竞品而是自主自演化agent三条腿(训练算法+数据自生+世界模型), 合流成自演化飞轮(SSR出题→CWM推演→执行→DeepSWE更新→能力涨); 四幕倒三角编排~20页(框架2+主轴3+三段9+对比1+合流2+未来3), 未来五线(多agent工厂/持续自演化/human-in-loop边界/可验证瓶颈/经济与对齐). 交叉链接 deepswe+ssr+cwm+swe_evolution',
         'glm5.html': 'Z.ai GLM-5 (744B/40B MoE) — 从 vibe coding 到 agentic engineering, MLA+Muon Split + MTP参数共享 + DSA 稀疏注意力(20B tok continued pretrain), 全异步 Agentic RL (slime+TITO+双侧IS), SWE/Terminal-Bench 逼近 Claude Opus 4.5',
         'lt_synthetic_data.html': '长文本合成数据方法全景 — 文档拼接/Self-Synthesis/证据散布+RL/层次化框架, 2024-2026',
         'lt_longtracerl.html': '证据散布三大Pipeline — LongTraceRL(分层干扰128K+GRPO) / ACC(Agent轨迹编译SFT) / LONGBLOCKS(三类任务统一框架)',

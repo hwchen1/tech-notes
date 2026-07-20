@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWE 智能体 Presentation — 一轴三瓶颈:DeepSWE × SSR × CWM</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'$',right:'$',display:true},{left:'\\(',right:'\\)',display:false}]});"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'SF Pro Display', sans-serif; background: #0a0a0f; color: #e0e0ea; line-height: 1.7; }
+.container { max-width: 100%; margin: 0; padding: 40px 40px; }
+h1 { font-size: 2.6rem; font-weight: 700; background: linear-gradient(135deg, #ec4899, #f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; }
+.subtitle { color: #6b6b80; font-size: 1rem; margin-bottom: 50px; }
+h2 { font-size: 1.8rem; color: #fff; margin: 50px 0 20px; padding-left: 16px; border-left: 4px solid #ec4899; }
+h3 { font-size: 1.2rem; color: #c4c4d8; margin: 24px 0 12px; }
+p { color: #a8a8be; font-size: 0.92rem; margin-bottom: 12px; }
+.svg-block { background: #11111a; border: 1px solid #1e1e30; border-radius: 16px; padding: 36px; margin: 24px 0; overflow-x: auto; }
+.svg-block svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 560px; }
+pre { background: #12121c; border: 1px solid #2a2a3a; border-radius: 10px; padding: 20px; margin: 0; overflow-x: auto; font-size: 0.78rem; line-height: 1.6; color: #c4c4e0; height: 100%; }
+.kw { color: #c678dd; } .fn { color: #61afef; } .cm { color: #5c6370; font-style: italic; } .num { color: #d19a66; } .st { color: #98c379; }
+.key-point { background: #ec48990a; border: 1px solid #ec489922; border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 0.9rem; color: #b8b8d0; }
+.key-point strong { color: #f9a8d4; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.85rem; }
+th { background: #431431; color: #f9a8d4; padding: 10px 14px; text-align: left; }
+td { padding: 8px 14px; border-bottom: 1px solid #1a1a28; color: #c4c4d4; }
+tr:hover td { background: #241320; }
+code { background: #1a1a2a; color: #d19a66; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #1a1a28; color: #444; font-size: 0.8rem; text-align: center; }
+.three-col { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr; gap: 20px; margin: 24px 0; align-items: start; }
+.three-col > * { min-width: 0; }
+.col-code { overflow-x: auto; }
+.col-code pre { margin: 0; }
+.col-caption h3 { margin-top: 0; }
+.nov { display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 1px 7px; border-radius: 20px; margin-right: 6px; vertical-align: middle; letter-spacing: 0.3px; }
+.nov-new { background: #ec489922; color: #f9a8d4; border: 1px solid #ec489955; }
+.nov-scale { background: #61afef22; color: #93c5fd; border: 1px solid #61afef55; }
+.nov-combo { background: #5c637022; color: #9ca3af; border: 1px solid #5c637055; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>一轴三瓶颈:从补丁到自主软件智能体</h1>
+<p class="subtitle">Presentation 逻辑设计稿 · 串联 <code>swe_evolution</code> / <code>deepswe</code> / <code>ssr</code> / <code>cwm</code> 四篇笔记 | 主轴 = 任务 horizon(补丁→长程→自主),分析负载 = horizon 每拉长一个量级就撞上一堵墙,DeepSWE / SSR / CWM 各答一堵 · 三者非竞品而是"自主可自演化 agent"的三条腿:训练算法 + 数据自生 + 世界模型 · 建议四幕结构,A(horizon 主轴)打骨架 + B(三维对比)作高潮</p>
+
+<h2>0. 核心框架:一句话总纲</h2>
+<p>不要做成"三篇论文摘要拼盘"。整场的价值句是:<strong>SWE 智能体沿任务时间跨度(horizon)演进,每延长一个量级就暴露一个新瓶颈;DeepSWE、SSR、CWM 各回答一个瓶颈,合起来正好是"自主可自演化 agent"的三条腿。</strong></p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># Presentation 总纲(伪结构)</span>
+spine   = <span class="st">"任务 horizon: 补丁 → 长程 → 自主"</span>
+
+<span class="cm"># horizon 拉长撞三堵墙, 各有答主</span>
+walls = {
+  <span class="st">"长程信用分配 & 训练不稳"</span>: <span class="st">"DeepSWE"</span>,
+  <span class="st">"环境/数据枯竭, 题从哪来"</span>: <span class="st">"SSR"</span>,
+  <span class="st">"执行昂贵, 静态文本≠动态语义"</span>: <span class="st">"CWM"</span>,
+}
+
+<span class="cm"># 三条腿合起来 = 自主自演化 agent</span>
+legs = {
+  <span class="st">"训练算法"</span>: <span class="st">"DeepSWE (纯RL/GRPO++)"</span>,
+  <span class="st">"数据自生"</span>: <span class="st">"SSR (自博弈自出题)"</span>,
+  <span class="st">"世界模型"</span>: <span class="st">"CWM (脑内 rollout)"</span>,
+}
+<span class="kw">assert</span> presentation != <span class="st">"three summaries"</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+<line x1="30" y1="60" x2="300" y2="60" stroke="#2a2a3a" stroke-width="1.5"/>
+<path d="M300 60 l-8 -4 l0 8 z" fill="#8a8aa0"/>
+<text x="270" y="52" fill="#6b6b80" font-size="8">horizon →</text>
+<g font-size="8.5" text-anchor="middle">
+<circle cx="70" cy="60" r="5" fill="#61afef"/><text x="70" y="80" fill="#61afef">补丁</text>
+<circle cx="165" cy="60" r="5" fill="#ec4899"/><text x="165" y="80" fill="#f9a8d4">长程</text>
+<circle cx="265" cy="60" r="5" fill="#98c379"/><text x="265" y="80" fill="#98c379">自主</text>
+</g>
+<text x="70" y="94" fill="#6b6b80" font-size="6.5" text-anchor="middle">单步 · oracle</text>
+<text x="165" y="94" fill="#6b6b80" font-size="6.5" text-anchor="middle">多步闭环</text>
+<text x="265" y="94" fill="#6b6b80" font-size="6.5" text-anchor="middle">自定义 done</text>
+<text x="160" y="122" fill="#c4c4d8" font-size="9" text-anchor="middle">三条腿撑起自主 agent</text>
+<g font-size="8" text-anchor="middle">
+<rect x="20" y="136" width="90" height="52" rx="7" fill="#17131f" stroke="#c678dd"/><text x="65" y="156" fill="#c678dd">训练算法</text><text x="65" y="172" fill="#6b6b80" font-size="7.5">DeepSWE</text><text x="65" y="182" fill="#6b6b80" font-size="7.5">GRPO++</text>
+<rect x="115" y="136" width="90" height="52" rx="7" fill="#17131f" stroke="#98c379"/><text x="160" y="156" fill="#98c379">数据自生</text><text x="160" y="172" fill="#6b6b80" font-size="7.5">SSR</text><text x="160" y="182" fill="#6b6b80" font-size="7.5">自博弈</text>
+<rect x="210" y="136" width="90" height="52" rx="7" fill="#17131f" stroke="#06b6d4"/><text x="255" y="156" fill="#22d3ee">世界模型</text><text x="255" y="172" fill="#6b6b80" font-size="7.5">CWM</text><text x="255" y="182" fill="#6b6b80" font-size="7.5">脑内rollout</text>
+</g>
+<path d="M65 188 Q160 214 160 214 M160 188 L160 214 M255 188 Q160 214 160 214" stroke="#5c6370" fill="none" stroke-width="1"/>
+<rect x="100" y="214" width="120" height="28" rx="7" fill="#431431" stroke="#ec4899"/>
+<text x="160" y="232" fill="#f9a8d4" font-size="9" text-anchor="middle">自主 · 可自演化</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>为什么这样立框架</h3>
+<p><strong>有主轴不散</strong>:horizon 是听众唯一需要记住的线,补丁/长程/自主是三个锚点。</p>
+<p><strong>有分析不水</strong>:把每篇论文钉在"它解决 horizon 变长后的哪堵墙",避免平铺直叙。</p>
+<div class="key-point"><span class="nov nov-new">价值句</span>开场和结尾都要回到这句总纲:<strong>三篇不是三选一,而是拼一个完整 agent 的三块拼图</strong>。这是全场记忆点。判据统一为两问:<em>谁判定做完了没</em> + <em>世界模型在哪</em>。</div>
+</div>
+</div>
+<h2>1. 第一幕 · Horizon 主轴与判据(swe_evolution)</h2>
+<p>开场用 3 页立住主轴。补丁阶段只作背景快速带过:世界是静态的,测试(oracle)由外部给,agent 只做一次条件采样 $p(\text{patch}\mid\text{issue},\text{repo})$。真正的戏在 horizon 拉长之后——用两个判据把三阶段区分开。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 阶段判据: 两个问题定位任意一篇工作</span>
+<span class="kw">def</span> <span class="fn">stage</span>(work):
+    <span class="cm"># ① 谁判定"做完了没"?</span>
+    <span class="cm"># ② 世界模型在哪?</span>
+    <span class="kw">if</span> work.judge == <span class="st">"外部 oracle 测试"</span> \
+       <span class="kw">and</span> work.horizon == <span class="st">"单步"</span>:
+        <span class="kw">return</span> <span class="st">"补丁生成"</span>       <span class="cm"># SWE-bench</span>
+    <span class="kw">if</span> work.judge == <span class="st">"外部测试"</span> \
+       <span class="kw">and</span> work.horizon == <span class="st">"多步闭环"</span>:
+        <span class="kw">return</span> <span class="st">"长程工程"</span>       <span class="cm"># DeepSWE</span>
+    <span class="kw">if</span> work.judge == <span class="st">"自判/自出题"</span> \
+       <span class="kw">or</span> work.world == <span class="st">"内部模型"</span>:
+        <span class="kw">return</span> <span class="st">"自主构建"</span>       <span class="cm"># SSR / CWM</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 240" xmlns="http://www.w3.org/2000/svg">
+<g font-size="8.5">
+<rect x="16" y="26" width="288" height="54" rx="8" fill="#12121c" stroke="#61afef"/>
+<text x="30" y="46" fill="#61afef" font-size="10">① 补丁生成</text>
+<text x="30" y="63" fill="#6b6b80" font-size="7.5">静态世界 · oracle 外包 · 一次采样 · SWE-bench Verified</text>
+<rect x="16" y="90" width="288" height="54" rx="8" fill="#12121c" stroke="#ec4899"/>
+<text x="30" y="110" fill="#f9a8d4" font-size="10">② 长程工程</text>
+<text x="30" y="127" fill="#6b6b80" font-size="7.5">多步闭环 aₜ=π(sₜ) · 状态维护+错误恢复 · DeepSWE / Terminal-Bench</text>
+<rect x="16" y="154" width="288" height="60" rx="8" fill="#12121c" stroke="#98c379"/>
+<text x="30" y="174" fill="#98c379" font-size="10">③ 自主构建</text>
+<text x="30" y="191" fill="#6b6b80" font-size="7.5">自出题+自判分(SSR) · 内部世界模型脑内 rollout(CWM)</text>
+<text x="30" y="205" fill="#6b6b80" font-size="7.5">自定义 done · 无需外部 oracle</text>
+</g>
+<path d="M160 80 l0 10 M155 84 l5 6 l5 -6" stroke="#5c6370" fill="none" stroke-width="1.1"/>
+<path d="M160 144 l0 10 M155 148 l5 6 l5 -6" stroke="#5c6370" fill="none" stroke-width="1.1"/>
+<text x="160" y="230" fill="#6b6b80" font-size="8" text-anchor="middle">判据: 谁判定 done · 世界模型在哪</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>开场怎么讲</h3>
+<p><strong>一句话钩子</strong>:"过去我们让模型写一个补丁;现在我们让它自己开一个项目。中间发生了什么?"——直接把 horizon 摆上台。</p>
+<p><strong>两个判据先抛出</strong>:后面每引一篇论文,都用这两问快速定位,听众不会迷路。</p>
+<div class="key-point"><strong>落差数据当悬念</strong>:CWM 在 SWE-bench Verified 拿 65.8,但 Terminal-Bench 类长程只有 26.3——用这个落差引出"长程 ≠ 补丁的放大",顺势进第二幕。</div>
+</div>
+</div>
+<h2>2. 第二幕 · 三堵墙 × 三个答案</h2>
+<p>主体。每篇论文讲成一个"瓶颈 → 方法 → 证据"的三段小故事,各 2-3 页,节奏统一。关键是<strong>先讲墙(问题),再讲论文(答案)</strong>——听众先痛,才记得住解药。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 三段统一模板: 墙 → 药 → 证据</span>
+
+<span class="cm"># 墙①: horizon 长 → 信用分配 & 训练崩</span>
+DeepSWE = {
+  <span class="st">"药"</span>: <span class="st">"纯RL + GRPO++ + Compact Filtering"</span>,
+  <span class="st">"钩"</span>: <span class="st">"只奖励主动干净解完, 防 reward collapse"</span>,
+  <span class="st">"证据"</span>: <span class="st">"42.2 Pass@1 / 59.0 TTS"</span>,
+}
+<span class="cm"># 墙②: 环境/数据枯竭 → 题从哪来</span>
+SSR = {
+  <span class="st">"药"</span>: <span class="st">"自博弈: 自出题 + 自判分"</span>,
+  <span class="st">"钩"</span>: <span class="st">"摆脱人工环境, 数据随能力共同进化"</span>,
+}
+<span class="cm"># 墙③: 执行昂贵 & 静态文本≠动态语义</span>
+CWM = {
+  <span class="st">"药"</span>: <span class="st">"代码世界模型, 脑内 rollout 预测执行"</span>,
+  <span class="st">"钩"</span>: <span class="st">"少跑真环境也能想清后果"</span>,
+  <span class="st">"证据"</span>: <span class="st">"65.8 (tts) / HaltEval 0.94"</span>,
+}</pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 250" xmlns="http://www.w3.org/2000/svg">
+<text x="160" y="16" fill="#f9a8d4" font-size="10" text-anchor="middle">horizon 长了会撞的三堵墙</text>
+<g font-size="8">
+<rect x="18" y="30" width="284" height="58" rx="8" fill="#12121c" stroke="#ec4899"/>
+<text x="30" y="49" fill="#ec4899" font-size="9">墙① 长程信用分配 / 训练不稳</text>
+<text x="30" y="65" fill="#c4c4d8" font-size="8">→ DeepSWE: GRPO++ · Compact Filtering</text>
+<text x="30" y="79" fill="#61afef" font-size="7.5">证据 42.2 / 59.0 TTS</text>
+<rect x="18" y="96" width="284" height="58" rx="8" fill="#12121c" stroke="#98c379"/>
+<text x="30" y="115" fill="#98c379" font-size="9">墙② 环境 / 数据枯竭</text>
+<text x="30" y="131" fill="#c4c4d8" font-size="8">→ SSR: 自博弈 自出题 自判分</text>
+<text x="30" y="145" fill="#d19a66" font-size="7.5">数据随能力共同进化</text>
+<rect x="18" y="162" width="284" height="58" rx="8" fill="#12121c" stroke="#06b6d4"/>
+<text x="30" y="181" fill="#22d3ee" font-size="9">墙③ 执行昂贵 / 静态文本≠动态</text>
+<text x="30" y="197" fill="#c4c4d8" font-size="8">→ CWM: 代码世界模型 脑内 rollout</text>
+<text x="30" y="211" fill="#61afef" font-size="7.5">证据 65.8 · HaltEval 0.94</text>
+</g>
+<text x="160" y="238" fill="#6b6b80" font-size="8" text-anchor="middle">每堵墙先讲痛, 再上药, 末给数字</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>三段的讲法要点</h3>
+<p><span class="nov nov-new">DeepSWE</span>重点讲 <strong>Compact Filtering</strong> 的反直觉:只奖励主动 finish、mask 掉超长/超步/超时——防止"歪打正着"被强化,并让思考跨步摊薄。这是长程 RL 最出彩的一招。</p>
+<p><span class="nov nov-combo">SSR</span>重点讲 <strong>自出题的闭环</strong>:题目难度随策略能力自动上移,不再依赖固定环境池,回答"数据从哪来"。</p>
+<p><span class="nov nov-scale">CWM</span>重点讲 <strong>世界模型 vs 静态文本</strong>:mid-training 灌执行轨迹让模型学"代码运行会发生什么",从而能脑内推演、预测终止(HaltEval)。</p>
+<div class="key-point"><strong>顺序建议</strong>:DeepSWE(怎么稳定训长程)→ SSR(题从哪来)→ CWM(能否内化世界)。这是"先能训 → 再有料 → 再变聪明"的递进,也从"外部反馈"平滑过渡到"内部模型",为第三幕合流铺垫。</div>
+</div>
+</div>
+
+<table>
+<tr><th>维度</th><th>DeepSWE-Preview</th><th>SSR (自博弈)</th><th>CWM (世界模型)</th></tr>
+<tr><td>解决的墙</td><td>长程信用分配 / 训练稳定</td><td>环境·数据枯竭</td><td>执行昂贵 / 静态≠动态</td></tr>
+<tr><td>reward 来源</td><td>外部测试(稀疏 ORM)</td><td><strong>自判 / 自出题</strong></td><td>执行轨迹 + RL 变体</td></tr>
+<tr><td>世界模型在哪</td><td>外部环境(真跑)</td><td>外部环境(自造)</td><td><strong>模型内部(脑内 rollout)</strong></td></tr>
+<tr><td>数据来源</td><td>R2E-Gym 真实任务</td><td><strong>自生成</strong></td><td>120M 执行轨迹 + ForagerAgent 3M</td></tr>
+<tr><td>horizon 覆盖</td><td>长程多步</td><td>长程 + 自主(出题)</td><td>长程 + 自主(预测)</td></tr>
+<tr><td>代表数字</td><td>42.2 / 59.0 TTS</td><td>自举提升</td><td>65.8 tts / HaltEval 0.94</td></tr>
+</table>
+<h2>3. 第三幕 · 横切综合:三条腿合流</h2>
+<p>这是全场分析高潮(把框架 B 的三维对比放这里)。前面三篇是并列的,这一幕要把它们<strong>拧成一个 agent</strong>:三者恰好补齐"自主自演化"缺的三块——DeepSWE 给稳定的训练算法,SSR 给自生的数据/课程,CWM 给内部世界模型。缺任一条腿,长程自主 agent 都站不稳。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 合流: 一个理想 agent 需要三者同时在场</span>
+<span class="kw">class</span> <span class="fn">AutonomousSWEAgent</span>:
+    trainer     = DeepSWE   <span class="cm"># 长程 RL 稳定收敛</span>
+    curriculum  = SSR       <span class="cm"># 自出题, 难度随能力涨</span>
+    world_model = CWM       <span class="cm"># 脑内 rollout 少跑真环境</span>
+
+    <span class="kw">def</span> <span class="fn">improve</span>(self):
+        task = self.curriculum.<span class="fn">propose</span>()   <span class="cm"># SSR</span>
+        plan = self.world_model.<span class="fn">rollout</span>(task)<span class="cm"># CWM</span>
+        traj = self.<span class="fn">act</span>(task, plan)
+        self.trainer.<span class="fn">update</span>(traj)          <span class="cm"># DeepSWE</span>
+        <span class="cm"># 数据自生 + 内部模拟 + 稳定RL → 飞轮</span>
+
+<span class="cm"># 缺腿的后果</span>
+without_SSR  = <span class="st">"数据天花板"</span>
+without_CWM  = <span class="st">"每步都得真跑, 慢且贵"</span>
+without_RL   = <span class="st">"训不稳 / reward collapse"</span></pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 240" xmlns="http://www.w3.org/2000/svg">
+<polygon points="160,36 268,196 52,196" fill="none" stroke="#2a2a3a" stroke-width="1.2"/>
+<g font-size="8.5" text-anchor="middle">
+<circle cx="160" cy="36" r="7" fill="#ec4899"/><text x="160" y="26" fill="#f9a8d4">DeepSWE</text><text x="160" y="18" fill="#6b6b80" font-size="7">训练算法</text>
+<circle cx="52" cy="196" r="7" fill="#98c379"/><text x="52" y="216" fill="#98c379">SSR</text><text x="52" y="226" fill="#6b6b80" font-size="7">数据自生</text>
+<circle cx="268" cy="196" r="7" fill="#06b6d4"/><text x="268" y="216" fill="#22d3ee">CWM</text><text x="268" y="226" fill="#6b6b80" font-size="7">世界模型</text>
+</g>
+<text x="160" y="140" fill="#c4c4d8" font-size="9" text-anchor="middle">自主 · 自演化</text>
+<text x="160" y="155" fill="#6b6b80" font-size="7" text-anchor="middle">飞轮</text>
+<g font-size="6.5" fill="#6b6b80" text-anchor="middle">
+<text x="98" y="112">自出题喂训练</text>
+<text x="222" y="112">脑内推演省真跑</text>
+<text x="160" y="205">造题+模拟 闭环</text>
+</g>
+<path d="M154 43 L58 189 M166 43 L262 189 M60 196 L260 196" stroke="#5c6370" fill="none" stroke-width="0.8" stroke-dasharray="3 2"/>
+</svg>
+</div>
+<div class="col-caption">
+<h3>合流一页怎么说</h3>
+<p><strong>把并列变递进再变闭环</strong>:SSR 出题 → CWM 脑内推演可行方案 → agent 执行 → DeepSWE 用轨迹稳定更新 → 能力涨 → SSR 出更难的题。这就是<strong>自演化飞轮</strong>。</p>
+<p><strong>用"缺腿"反证互补</strong>:缺 SSR 撞数据天花板;缺 CWM 每步真跑又慢又贵;缺 DeepSWE 式稳定 RL 直接 reward collapse。三者不可互相替代。</p>
+<div class="key-point"><span class="nov nov-new">高潮句</span>"这三篇不是让你三选一,而是在告诉你——一个能自己找活干、想清后果、还越训越强的软件智能体,需要哪三块拼图。"呼应开场总纲,完成闭环。</div>
+</div>
+</div>
+
+<h2>4. 编排节奏 · 未来 · Takeaways</h2>
+<p>控制在 ~18-22 页 / 25-30 分钟。节奏"倒三角":框架短促开场,主体三段等长,合流拔高,未来收束。每段留一句"回到主轴"的过渡句,防止听众在细节里丢线。</p>
+
+<div class="three-col">
+<div class="col-code"><pre><span class="cm"># 建议页数分配 (总 ~20 页)</span>
+plan = {
+  <span class="st">"0 框架总纲"</span>:   <span class="num">2</span>,   <span class="cm"># 价值句 + 两判据</span>
+  <span class="st">"1 horizon 主轴"</span>: <span class="num">3</span>,   <span class="cm"># 补丁背景 + 落差悬念</span>
+  <span class="st">"2 DeepSWE"</span>:      <span class="num">3</span>,
+  <span class="st">"2 SSR"</span>:          <span class="num">2</span>,
+  <span class="st">"2 CWM"</span>:          <span class="num">3</span>,
+  <span class="st">"2 对比表"</span>:       <span class="num">1</span>,
+  <span class="st">"3 合流飞轮"</span>:     <span class="num">2</span>,   <span class="cm"># 分析高潮</span>
+  <span class="st">"4 未来五线"</span>:     <span class="num">2</span>,
+  <span class="st">"收尾 回主轴"</span>:    <span class="num">1</span>,
+}
+
+<span class="cm"># 未来五线 (来自 swe_evolution)</span>
+future = [<span class="st">"多agent软件工厂"</span>, <span class="st">"持续自演化"</span>,
+  <span class="st">"human-in-loop 边界(money-movement guard)"</span>,
+  <span class="st">"可验证性瓶颈"</span>, <span class="st">"经济与对齐"</span>]</pre></div>
+<div class="col-svg svg-block">
+<svg viewBox="0 0 320 230" xmlns="http://www.w3.org/2000/svg">
+<text x="160" y="16" fill="#f9a8d4" font-size="10" text-anchor="middle">四幕节奏(倒三角)</text>
+<g font-size="8" text-anchor="middle">
+<rect x="70" y="28" width="180" height="26" rx="6" fill="#12121c" stroke="#61afef"/><text x="160" y="45" fill="#61afef">0-1 框架+主轴 (5)</text>
+<rect x="40" y="62" width="240" height="40" rx="6" fill="#12121c" stroke="#ec4899"/><text x="160" y="80" fill="#f9a8d4">2 三堵墙×三答案 (9)</text><text x="160" y="94" fill="#6b6b80" font-size="7">主体, 等长节奏</text>
+<rect x="70" y="110" width="180" height="30" rx="6" fill="#12121c" stroke="#98c379"/><text x="160" y="129" fill="#98c379">3 合流飞轮 (2) ← 高潮</text>
+<rect x="90" y="148" width="140" height="26" rx="6" fill="#12121c" stroke="#d19a66"/><text x="160" y="165" fill="#d19a66">4 未来+收尾 (3)</text>
+</g>
+<path d="M160 54 l0 8 M160 102 l0 8 M160 140 l0 8" stroke="#5c6370" fill="none" stroke-width="1"/>
+<text x="160" y="192" fill="#6b6b80" font-size="7.5" text-anchor="middle">每段结尾一句"回到 horizon 主轴"过渡</text>
+<text x="160" y="210" fill="#6b6b80" font-size="7.5" text-anchor="middle">开场价值句 = 收尾价值句(首尾呼应)</text>
+</svg>
+</div>
+<div class="col-caption">
+<h3>三条 takeaway(结尾板)</h3>
+<p><strong>① horizon 是主线</strong>:能力边界由"能自主推进多长的任务"定义,不是单点准确率。</p>
+<p><strong>② 三块拼图缺一不可</strong>:稳定长程 RL(DeepSWE)+ 数据自生(SSR)+ 内部世界模型(CWM)。</p>
+<p><strong>③ 下一步是合流</strong>:把三者拧成自演化飞轮,同时逼近"可验证性 / human-in-loop 边界 / 对齐"这些真正的天花板。</p>
+<div class="key-point"><strong>可选加强</strong>:若时间够,合流页后加一页"当前还缺什么"——如跨仓库/超长 horizon 的可验证奖励、money-movement 类高风险动作的护栏——把 presentation 从"综述"抬成"研究议程"。交叉参考 <code>deepswe.html</code> / <code>cwm.html</code> / <code>ssr.html</code> / <code>swe_evolution.html</code>。</div>
+</div>
+</div>
+
+<footer>Generated 2026.07.20 · SWE 智能体 Presentation 逻辑设计稿 · 一轴(任务 horizon)三瓶颈(长程RL / 数据自生 / 世界模型) · 串联 deepswe · ssr · cwm · swe_evolution 四篇 · 三条腿合流为自演化飞轮</footer>
+
+
+
+</div>
+</body>
+</html>
