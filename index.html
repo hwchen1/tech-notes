@@ -350,7 +350,7 @@
 
 <script>
 const STORAGE_KEY = 'ai-notes-layout';
-const LAYOUT_VERSION = 13;
+const LAYOUT_VERSION = 14;
 let currentPage = null;
 
 const DEFAULT_LAYOUT = [
@@ -389,7 +389,15 @@ const DEFAULT_LAYOUT = [
                 "page": "800v_hvdc.html",
                 "label": "800V HVDC × 涡轮发电",
                 "color": "#f59e0b"
-            },
+            }
+        ]
+    },
+    {
+        "id": "agent",
+        "icon": "🤖",
+        "title": "Agent",
+        "open": true,
+        "items": [
             {
                 "page": "agentfounder.html",
                 "label": "AgentFounder (Agentic CPT)",
